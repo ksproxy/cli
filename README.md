@@ -1,5 +1,7 @@
 # ksproxy
 
+Let AI agents run allowlisted ssh, kubectl and local commands without your credentials.
+
 ## What it does
 
 ksproxy lets an AI agent run commands on ssh servers and Kubernetes clusters without ever holding a credential, and run a short list of commands in a folder on your own machine. You run one command in a terminal, pick the targets, and leave it running; the agent reaches those targets only through a built-in MCP server. Every call is checked against a per-target allowlist that refuses everything by default, every call is logged, and Ctrl-C closes all access.

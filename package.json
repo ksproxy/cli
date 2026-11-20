@@ -1,7 +1,7 @@
 {
   "name": "@ksproxy/cli",
   "version": "0.1.0",
-  "description": "Let an AI agent run allowlisted commands on your ssh servers, Kubernetes clusters and local folders through an MCP server, without giving it a credential",
+  "description": "Let AI agents run allowlisted ssh, kubectl and local commands without your credentials.",
   "keywords": [
     "mcp",
     "model-context-protocol",
