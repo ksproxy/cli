@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ksproxy: let an agent use your servers without your credentials</title>
+<meta name="description" content="ksproxy lets an AI agent run commands on ssh servers and Kubernetes clusters without holding a credential. A per-target allowlist refuses everything by default, and every call is logged.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="ksproxy">
+<meta property="og:description" content="Let an AI agent run commands on ssh servers and Kubernetes clusters without holding a credential. Default-deny allowlist, live log, Ctrl-C closes everything.">
+<meta property="og:url" content="https://ksproxy.github.io/cli/">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<style>
+:root {
+  --bg: #ffffff;
+  --fg: #1b1f24;
+  --muted: #4a5360;
+  --line: #d5dae1;
+  --code-bg: #f3f5f8;
+  --accent: #0b5fd0;
+  --accent-fg: #ffffff;
+  --ok: #17692f;
+  --bad: #b42318;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #101317;
+    --fg: #e6e9ee;
+    --muted: #a3acb8;
+    --line: #2d343d;
+    --code-bg: #181c22;
+    --accent: #6ea8fe;
+    --accent-fg: #101317;
+    --ok: #5fd07f;
+    --bad: #ff8a80;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 1rem/1.65 var(--font);
+}
+a { color: var(--accent); text-underline-offset: 0.18em; }
+a:focus-visible, button:focus-visible, pre:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+.wrap { max-width: 46rem; margin: 0 auto; padding: 0 16px; }
+header { padding: 56px 0 24px; border-bottom: 1px solid var(--line); }
+h1 { font: 700 2.4rem/1.1 var(--mono); margin: 0 0 16px; letter-spacing: -0.02em; }
+h2 { font-size: 1.4rem; line-height: 1.3; margin: 0 0 16px; }
+.lede { font-size: 1.15rem; margin: 0 0 24px; max-width: 38rem; }
+section { padding: 40px 0 0; }
+p, ul, ol { margin: 0 0 16px; }
+ul, ol { padding-left: 1.4rem; }
+li { margin-bottom: 8px; }
+.links { display: flex; flex-wrap: wrap; gap: 8px 24px; margin: 20px 0 0; padding: 0; list-style: none; }
+.links li { margin: 0; }
+code, pre { font-family: var(--mono); font-size: 0.9rem; }
+:not(pre) > code { background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 4px; overflow-wrap: anywhere; }
+.codeblock { position: relative; margin: 0 0 16px; }
+pre {
+  margin: 0;
+  padding: 14px 16px;
+  background: var(--code-bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow-x: auto;
+  line-height: 1.55;
+  tab-size: 2;
+}
+.codeblock.has-copy pre { padding-right: 76px; }
+.copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font: 0.8rem var(--font);
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.copy:hover { border-color: var(--accent); }
+figure { margin: 0 0 16px; }
+figcaption { color: var(--muted); font-size: 0.9rem; margin-top: 8px; }
+.diagram { width: 100%; height: auto; display: block; color: var(--fg); }
+.diagram .box { fill: var(--code-bg); stroke: var(--line); stroke-width: 1.5; }
+.diagram .gate { fill: var(--bg); stroke: var(--accent); stroke-width: 2; }
+.diagram .conn { fill: var(--code-bg); stroke: var(--fg); stroke-width: 1.5; }
+.diagram .line { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.diagram .arrow { fill: var(--muted); }
+.diagram text { fill: var(--fg); font-family: var(--font); font-size: 13px; }
+.diagram .mono { font-family: var(--mono); }
+.diagram .lane { fill: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: 0.06em; }
+.diagram .sub { fill: var(--muted); font-size: 11px; }
+.tablewrap { overflow-x: auto; margin: 0 0 16px; }
+table { border-collapse: collapse; width: 100%; min-width: 30rem; }
+th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+th { font-size: 0.85rem; color: var(--muted); font-weight: 600; }
+td code { white-space: nowrap; }
+.limits li { margin-bottom: 10px; }
+footer { margin-top: 56px; padding: 24px 0 48px; border-top: 1px solid var(--line); color: var(--muted); font-size: 0.95rem; }
+footer ul { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 8px 0 0; }
+footer li { margin: 0; }
+.skip { position: absolute; left: -999px; top: 0; background: var(--accent); color: var(--accent-fg); padding: 8px 12px; z-index: 10; }
+.skip:focus { left: 8px; top: 8px; }
+@media (max-width: 480px) {
+  h1 { font-size: 2rem; }
+  header { padding-top: 40px; }
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header>
+  <div class="wrap">
+    <h1>ksproxy</h1>
+    <p class="lede">Lets an AI agent run commands on ssh servers and Kubernetes clusters without ever holding a credential, through a per-target allowlist that refuses everything by default.</p>
+    <div class="codeblock has-copy">
+      <pre tabindex="0"><code>npm install -g @ksproxy/cli</code></pre>
+    </div>
+    <p>Node.js 24 or later, macOS and Linux, no npm dependencies.</p>
+    <ul class="links">
+      <li><a href="https://github.com/ksproxy/cli">GitHub</a></li>
+      <li><a href="https://www.npmjs.com/package/@ksproxy/cli">npm</a></li>
+    </ul>
+  </div>
+</header>
+
+<main id="main">
+<div class="wrap">
+
+<section aria-labelledby="problem">
+  <h2 id="problem">The problem</h2>
+  <p>An agent that manages infrastructure normally needs your ssh keys or your kubeconfig. Once it holds them, whatever the credential allows, the agent can do, and you find out afterwards, if at all. ksproxy moves the credential to your side: you open the connections, and the agent only gets a narrow, logged tool interface.</p>
+</section>
+
+<section aria-labelledby="how">
+  <h2 id="how">How it works</h2>
+  <figure>
+    <svg class="diagram" viewBox="0 0 720 300" role="img" aria-labelledby="dg-title dg-desc">
+      <title id="dg-title">How you and the agent reach your servers through ksproxy</title>
+      <desc id="dg-desc">Two lanes. In the first, you run ksproxy start, which opens ssh connections and kubectl proxies to your servers and clusters. In the second, the agent calls the ksproxy MCP server, which checks each call against the allowlist before using those same connections.</desc>
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path class="arrow" d="M0 0L10 5L0 10z"/>
+        </marker>
+      </defs>
+      <text class="lane" x="10" y="20">YOU</text>
+      <rect class="box" x="10" y="32" width="110" height="52" rx="6"/>
+      <text x="65" y="63" text-anchor="middle">You</text>
+      <rect class="box" x="170" y="32" width="150" height="52" rx="6"/>
+      <text class="mono" x="245" y="63" text-anchor="middle">ksproxy start</text>
+      <line class="line" x1="120" y1="58" x2="168" y2="58" marker-end="url(#ah)"/>
+      <line class="line" x1="320" y1="58" x2="378" y2="100" marker-end="url(#ah)"/>
+
+      <rect class="conn" x="380" y="104" width="170" height="92" rx="6"/>
+      <text x="465" y="130" text-anchor="middle">ssh connections</text>
+      <text class="sub" x="465" y="147" text-anchor="middle">ControlMaster</text>
+      <text x="465" y="172" text-anchor="middle">kubectl proxies</text>
+      <text class="sub" x="465" y="187" text-anchor="middle">one per cluster</text>
+
+      <line class="line" x1="550" y1="150" x2="598" y2="150" marker-end="url(#ah)"/>
+      <rect class="box" x="600" y="118" width="110" height="64" rx="6"/>
+      <text x="655" y="147" text-anchor="middle">Your servers</text>
+      <text x="655" y="165" text-anchor="middle">and clusters</text>
+
+      <text class="lane" x="10" y="226">AGENT</text>
+      <rect class="box" x="10" y="238" width="110" height="52" rx="6"/>
+      <text x="65" y="269" text-anchor="middle">Agent</text>
+      <rect class="box" x="170" y="238" width="120" height="52" rx="6"/>
+      <text class="mono" x="230" y="269" text-anchor="middle">MCP server</text>
+      <rect class="gate" x="340" y="238" width="130" height="52" rx="6"/>
+      <text x="405" y="269" text-anchor="middle">Allowlist check</text>
+      <line class="line" x1="120" y1="264" x2="168" y2="264" marker-end="url(#ah)"/>
+      <line class="line" x1="290" y1="264" x2="338" y2="264" marker-end="url(#ah)"/>
+      <line class="line" x1="440" y1="236" x2="460" y2="198" marker-end="url(#ah)"/>
+    </svg>
+    <figcaption>The agent never connects to a server. It can only call the MCP server, which uses the connections you opened.</figcaption>
+  </figure>
+  <ol>
+    <li>You run <code>ksproxy start</code> in a terminal, pick the targets, and leave it running. It opens the ssh connections (ssh may ask for your password or key passphrase in that terminal) and the <code>kubectl proxy</code> processes. A third kind, <code>local</code>, lets the agent run allowlisted commands in a folder on your own machine; opening it only checks that the folder exists, can be resolved, and is not your home directory, the root, ksproxy's own folders or a folder holding an inventory kubeconfig.</li>
+    <li>Your agent talks to the built-in MCP server, <code>ksproxy mcp</code>. Each call is checked against the target's allowlist, and refused unless a rule allows it.</li>
+    <li>Every call and event appears in your terminal as it happens. Ctrl-C closes every connection and stops every proxy.</li>
+  </ol>
+</section>
+
+<section aria-labelledby="tools">
+  <h2 id="tools">What the agent gets</h2>
+  <p>Four MCP tools. Timeouts are 1 to 600 seconds (default 60), and stdout and stderr are each capped at 256 KiB.</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th scope="col">Tool</th><th scope="col">What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>list_targets</code></td><td>Lists the targets you opened, with their descriptions and allowed rules.</td></tr>
+        <tr><td><code>ssh_exec</code></td><td>Runs a command on an ssh target: <code>server</code>, <code>command</code>, optional <code>timeout_seconds</code>.</td></tr>
+        <tr><td><code>kubectl</code></td><td>Runs kubectl against a cluster through its local proxy: <code>cluster</code>, <code>args</code>, optional <code>timeout_seconds</code>.</td></tr>
+        <tr><td><code>local_exec</code></td><td>Runs an allowlisted command on your machine in a local target's folder: <code>target</code>, <code>command</code>, optional <code>timeout_seconds</code>. No shell is involved. A wildcard in a local rule matches only plain names and paths, never a flag (flags and anything else must be written literally in the rule), and each plain value, links followed, must stay inside the folder. A file outside it is reachable only if you write it literally into a rule (<code>cat /etc/hosts</code>).</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section aria-labelledby="allow">
+  <h2 id="allow">You decide what it may run</h2>
+  <p>Targets live in <code>~/.config/ksproxy/inventory.json</code>. Each has an <code>allow</code> list; a target with no <code>allow</code> refuses everything.</p>
+  <div class="codeblock has-copy">
+    <pre tabindex="0"><code>{
+  "ssh": [
+    {
+      "name": "web1",
+      "host": "web1.example.com",
+      "description": "production web box",
+      "allow": ["systemctl status *", "journalctl -u myapp ...", "df -h"]
+    }
+  ],
+  "kubernetes": [
+    {
+      "name": "lab",
+      "kubeconfig": "~/.kube/lab-agent.yaml",
+      "proxyPort": 8001,
+      "manifestRoots": ["~/projects/lab/manifests"],
+      "description": "lab cluster",
+      "allow": ["get ...", "describe ...", "logs ...", "rollout status ...", "apply -f *"]
+    }
+  ],
+  "local": [
+    {
+      "name": "infra",
+      "cwd": "~/projects/infra",
+      "description": "terraform repo",
+      "allow": ["git status", "git log --oneline -n * ...", "terraform plan", "ls -l ..."]
+    }
+  ]
+}</code></pre>
+  </div>
+  <p>A rule is whitespace-separated tokens matched against the command's arguments:</p>
+  <ul>
+    <li>A literal matches an argument equal to it. <code>df -h</code> allows exactly <code>df -h</code>.</li>
+    <li><code>*</code> matches exactly one argument that does not start with <code>-</code>. <code>systemctl status *</code> allows <code>systemctl status nginx</code>.</li>
+    <li><code>...</code> matches zero or more arguments of any shape, and only as the last token. <code>journalctl -u myapp ...</code> allows <code>journalctl -u myapp --since today -n 50</code>.</li>
+  </ul>
+  <p>ssh commands are split into tokens and every character is checked: quotes, <code>; | &amp; $</code>, backticks, redirects, globs and newlines are refused outright, so no shell syntax reaches the remote host. Kubernetes arguments pass a fixed verb-and-flag allowlist first, which refuses <code>exec</code>, <code>port-forward</code>, credential-flags and secret resources whatever your rules say. Files given with <code>-f</code> must sit inside <code>manifestRoots</code>.</p>
+  <p>Try a rule without opening anything:</p>
+  <div class="codeblock has-copy">
+    <pre tabindex="0"><code>ksproxy check ssh web1 systemctl status nginx
+ksproxy check kube lab get secrets
+ksproxy check local infra git status</code></pre>
+  </div>
+</section>
+
+<section aria-labelledby="log">
+  <h2 id="log">You see everything</h2>
+  <p><code>ksproxy start</code> prints one line per agent call and per event, and <code>ksproxy log</code> shows the same lines later. A refused call shows a short reason; the agent receives the full explanation with the allowed rules. Every call is also kept as a JSON line in <code>audit.log</code> (command and decision, not output).</p>
+  <div class="codeblock has-copy">
+    <pre tabindex="0"><code>12:18:40 ssh  web1       OPENING         web1
+12:18:41 ssh  web1       UP
+12:18:43 --   session    READY           2 targets, pid 31973
+12:19:19 ssh  web1       ok       0.1s   uptime
+12:19:20 ssh  web1       DENIED          cat /etc/shadow  [not on allowlist]
+12:19:23 kube lab        DENIED          get secrets -A  [secret resource]
+12:41:00 --   session    CLOSING         Ctrl-C
+12:41:01 --   session    CLOSED          3 calls: 1 ok, 0 failed, 2 denied</code></pre>
+  </div>
+</section>
+
+<section aria-labelledby="start">
+  <h2 id="start">Quick start</h2>
+  <p>Write a sample inventory. It never overwrites an existing file.</p>
+  <div class="codeblock has-copy">
+    <pre tabindex="0"><code>ksproxy init</code></pre>
+  </div>
+  <p>Edit it: your own targets, and an <code>allow</code> list for each.</p>
+  <div class="codeblock has-copy">
+    <pre tabindex="0"><code>$EDITOR ~/.config/ksproxy/inventory.json</code></pre>
+  </div>
+  <p>Start a session, pick targets, and leave the terminal open. Ctrl-C ends it.</p>
+  <div class="codeblock has-copy">
+    <pre tabindex="0"><code>ksproxy start</code></pre>
+  </div>
+  <p>Add the MCP server to your agent once. The summary printed by <code>start</code> shows the exact line; for Claude Code it has this shape:</p>
+  <div class="codeblock has-copy">
+    <pre tabindex="0"><code>claude mcp add ksproxy -- &lt;node&gt; &lt;path to bin/ksproxy.js&gt; mcp</code></pre>
+  </div>
+  <p>Check the session at any time.</p>
+  <div class="codeblock has-copy">
+    <pre tabindex="0"><code>ksproxy status</code></pre>
+  </div>
+</section>
+
+<section aria-labelledby="limits">
+  <h2 id="limits">What it does not do</h2>
+  <p>The allowlist is a second lock; the first is that the agent never holds a credential. These limits are in the project README and matter when you decide what to allow.</p>
+  <ul class="limits">
+    <li>The allowlist binds only the MCP path. An agent that also has an unrestricted local shell can use the ssh sockets and proxy ports directly.</li>
+    <li>An agent that can edit the inventory or the session files can widen its own rules.</li>
+    <li>A rule is only as safe as the program it allows. <code>find ...</code>, <code>awk ...</code>, <code>vim</code>, <code>less</code> and <code>sudo ...</code> can run other commands.</li>
+    <li>Command output is returned as-is. A program that prints a secret leaks it to the agent. Replacing local paths and proxy addresses in the output is not redaction.</li>
+    <li>The remote user's permissions and Kubernetes RBAC remain the boundary. A workload the identity may create, such as a Pod that mounts a Secret or a service-account token, is not inspected by this tool.</li>
+    <li>With <code>"allow": "any"</code> on an ssh target, the command is sent as written, so pipes and redirects work. Local targets refuse <code>"any"</code>.</li>
+    <li>A local command runs as you, on the machine that holds your keys, so give local targets the shortest allow list of all. The "inside the folder" check looks at arguments only: a program can still read elsewhere through its own configuration, includes or a file that names another file; hard links inside the folder cannot be detected; a file can change between the check and the program opening it; a literal in a rule is exempt, including a flag that runs a command or changes directory; a recursive program (<code>grep -r</code>, <code>ls -R</code>) reads everything in the folder, and one that follows links (<code>-R</code>, <code>-L</code>) leaves the folder through links inside it; on a case-sensitive volume on macOS, names that differ only in letter case are treated as the same by the folder check; some programs execute code they find in the folder or in your home configuration (<code>git</code> helpers and hooks, <code>terraform plan</code> data sources, <code>make</code>, <code>npm</code>); a rule that lets the agent write files in the folder, together with a rule that runs something from the folder, lets the agent run its own code; and a program that leaves its process group (<code>setsid</code>) survives the timeout kill. Allow only programs and flags you would run on that folder yourself.</li>
+    <li>Protected locations are those recorded by <code>ksproxy start</code> (its own state and configuration folders and every inventory kubeconfig), not whatever the agent host's environment says. Programs are found through the absolute entries of your <code>PATH</code>; relative entries and entries inside any local target's folder are dropped. The folder path is replaced in output, also when its letter case differs; a path cut by the 256 KiB output limit may be only partly replaced.</li>
+    <li>After a SIGKILL or power loss, connections and proxies it opened can outlive it until the next <code>ksproxy start</code> closes them.</li>
+    <li>Out of scope: creating server users, sudoers rules, RBAC, tokens or kubeconfigs; file transfer; interactive shells; port forwarding for the agent; redacting secrets from output; Windows.</li>
+  </ul>
+  <p>Reliable setups for the agent side are an agent with no general shell, or one whose shell runs in a sandbox that cannot read <code>~/.ksproxy</code> or <code>~/.config/ksproxy</code> and cannot reach local sockets and ports.</p>
+</section>
+
+</div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>ksproxy is released under the MIT licence.</p>
+    <ul>
+      <li><a href="https://github.com/ksproxy/cli/blob/main/LICENSE">Licence</a></li>
+      <li><a href="https://github.com/ksproxy/cli#readme">README</a></li>
+      <li><a href="https://github.com/ksproxy/cli/blob/main/SECURITY.md">Security policy</a></li>
+      <li><a href="https://github.com/ksproxy/cli/blob/main/CHANGELOG.md">Changelog</a></li>
+      <li><a href="https://github.com/ksproxy/cli/blob/main/docs/LOGIC.md">Logic diagrams</a></li>
+    </ul>
+  </div>
+</footer>
+
+<script>
+(function () {
+  if (!navigator.clipboard) return;
+  var blocks = document.querySelectorAll(".codeblock.has-copy");
+  for (var i = 0; i < blocks.length; i++) {
+    (function (block) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "copy";
+      b.textContent = "Copy";
+      b.addEventListener("click", function () {
+        var text = block.querySelector("code").textContent;
+        navigator.clipboard.writeText(text).then(function () {
+          b.textContent = "Copied";
+          setTimeout(function () { b.textContent = "Copy"; }, 1500);
+        });
+      });
+      block.appendChild(b);
+    })(blocks[i]);
+  }
+})();
+</script>
+</body>
+</html>

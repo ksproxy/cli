@@ -1,0 +1,52 @@
+{
+  "name": "@ksproxy/cli",
+  "version": "0.1.0",
+  "description": "Let an AI agent run allowlisted commands on your ssh servers, Kubernetes clusters and local folders through an MCP server, without giving it a credential",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ai-agent",
+    "ssh",
+    "kubernetes",
+    "kubectl",
+    "allowlist",
+    "proxy",
+    "audit-log",
+    "cli"
+  ],
+  "homepage": "https://ksproxy.github.io/cli/",
+  "bugs": {
+    "url": "https://github.com/ksproxy/cli/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ksproxy/cli.git"
+  },
+  "license": "MIT",
+  "author": "ksproxy",
+  "type": "module",
+  "bin": {
+    "ksproxy": "bin/ksproxy.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "test": "node --test --experimental-test-coverage --test-coverage-include='src/**' --test-coverage-include='bin/**' --test-coverage-lines=100 --test-coverage-branches=100 --test-coverage-functions=100 'test/*.test.js'",
+    "test:plain": "node --test 'test/*.test.js'"
+  }
+}
