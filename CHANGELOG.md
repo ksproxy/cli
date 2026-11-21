@@ -5,6 +5,28 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.3.0] - 2026-11-22
+
+### Added
+
+- Nine kinds of target for services, run through a new broker: `http`, `command`, `elasticsearch`, `rabbitmq`, `redis`, `postgres`, `mysql`, `mongodb` and `kafka`. Each has a flag for `ksproxy start`, an MCP tool (`http_request`, `command_exec`, `elasticsearch_request`, `rabbitmq_request`, `redis_command`, `postgres_query`, `mysql_query`, `mongodb_command`, `kafka_exec`), a strict reader and fixed refusals that no rule can lift. The reference is `docs/SERVICES.md`.
+- The broker: `ksproxy start` reads the credentials of service targets from environment variables, keeps them in its own memory, decides and carries out each call, and writes the audit entry. `ksproxy mcp` forwards the call over a private socket in the socket folder, and every failure on that path is a refusal. The tool of a service kind is listed only when the inventory holds a target of that kind.
+- `regex(...)` rules: a rule written as `regex(...)`, as the whole rule, is tried on the words of a command joined by single spaces. A pattern that can be very slow gets a warning at `ksproxy start` and `ksproxy check`. Every match stops after 100 ms and counts as no match, and a regex rule is not tried on a command longer than 1000 characters. A regex rule of a `command` or `kafka` target may not use a lookaround.
+- `\*` in a rule matches a literal star. In the inventory file it is written `\\*`. The SQL kinds warn when a bare `*` follows `select` or `(`.
+- In a word rule of the `postgres` and `mysql` kinds, `*` matches one value: a number (`42`, `-1`, `1.5`) or one string in single quotes, never a name or a keyword, so `where id = *` does not allow `where id = id`. A `*` right after `from`, `join`, `into`, `update`, `table` or `describe` gets a warning, as it can never match. Every other kind keeps `*` as one word.
+- `ksproxy` keeps the Node inspector closed on `SIGUSR1`.
+- `ksproxy start` warns when a secret of a service target, or a part of one that is hidden on its own (such as the password inside a connection string), is shorter than 8 characters, naming the variable or the file, because hiding so short a value in the output can give it away. A variable that holds only a user name gets no warning.
+- `maxOutputKiB`, an optional field of a target of any kind, raises the output limit of each stream for that target from 256 KiB to at most 4096 KiB; `list_targets` and `AGENT.md` show a raised limit, and the answer line of a service call may now be up to 16 MiB.
+
+### Changed
+
+- Internal: each kind of target now lives in its own folder under `src/kinds/` behind one interface. There is no change in behaviour for ssh, kubernetes and local, except the inspector and the regex limits listed under Added.
+- A session file edited by hand to hold a target of an unknown kind is now reported with the state `error` by `ksproxy status` and `list_targets`, instead of failing.
+- Rules on every kind, ssh, kubernetes and local included: a rule that starts with `regex(` is now read as a regex rule, and the text `regex(` anywhere else in a rule is an inventory error, as is a regex rule that is empty or does not compile. Such a rule used to be an ordinary word rule.
+- The rule word `\*` now matches only the argument `*`. On a Kubernetes target it used to match only the two-character argument `\*`. On ssh and local targets the tokenizer refuses both characters, so nothing changes there.
+
 ## [0.2.0] - 2026-11-21
 
 ### Added
@@ -47,5 +69,6 @@ First release.
 - `ksproxy init`, `ksproxy status` and `ksproxy check <ssh|kube|local> <name> <command...>` to create an inventory, inspect the session, and test a rule without opening anything.
 - No npm dependencies. Requires Node.js 24 or later, on macOS or Linux.
 
+[0.3.0]: https://github.com/ksproxy/cli/releases/tag/v0.3.0
 [0.2.0]: https://github.com/ksproxy/cli/releases/tag/v0.2.0
 [0.1.0]: https://github.com/ksproxy/cli/releases/tag/v0.1.0

@@ -1,0 +1,206 @@
+{
+  "tools": [
+    {
+      "name": "list_targets",
+      "description": "List the ssh servers, Kubernetes clusters, local folders and service targets (databases, queues and HTTP APIs) the user has opened, with their state and the commands allowed on each.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "ssh_exec",
+      "description": "Run one command on an open ssh server. The command is checked against that server's allowlist.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "server",
+          "command"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "server": {
+            "type": "string",
+            "description": "Target name from list_targets"
+          },
+          "command": {
+            "type": "string",
+            "description": "Command to run on the server"
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 600,
+            "default": 60
+          }
+        }
+      }
+    },
+    {
+      "name": "kubectl",
+      "description": "Run kubectl against an open Kubernetes cluster. The arguments are checked against that cluster's allowlist.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "cluster",
+          "args"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "cluster": {
+            "type": "string",
+            "description": "Target name from list_targets"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "description": "kubectl arguments, verb first, one array element per argument, e.g. [\"get\",\"pods\",\"-n\",\"web\"]"
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 600,
+            "default": 60
+          }
+        }
+      }
+    },
+    {
+      "name": "local_exec",
+      "description": "Run one command on this machine in an open local target's folder. The command is checked against that target's allowlist; shell syntax is not accepted.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "target",
+          "command"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "Target name from list_targets"
+          },
+          "command": {
+            "type": "string",
+            "description": "Command and arguments, separated by spaces"
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 600,
+            "default": 60
+          }
+        }
+      }
+    }
+  ],
+  "reply": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "result": {
+      "tools": [
+        {
+          "name": "list_targets",
+          "description": "List the ssh servers, Kubernetes clusters, local folders and service targets (databases, queues and HTTP APIs) the user has opened, with their state and the commands allowed on each.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "ssh_exec",
+          "description": "Run one command on an open ssh server. The command is checked against that server's allowlist.",
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "server",
+              "command"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "server": {
+                "type": "string",
+                "description": "Target name from list_targets"
+              },
+              "command": {
+                "type": "string",
+                "description": "Command to run on the server"
+              },
+              "timeout_seconds": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 600,
+                "default": 60
+              }
+            }
+          }
+        },
+        {
+          "name": "kubectl",
+          "description": "Run kubectl against an open Kubernetes cluster. The arguments are checked against that cluster's allowlist.",
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "cluster",
+              "args"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "cluster": {
+                "type": "string",
+                "description": "Target name from list_targets"
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "description": "kubectl arguments, verb first, one array element per argument, e.g. [\"get\",\"pods\",\"-n\",\"web\"]"
+              },
+              "timeout_seconds": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 600,
+                "default": 60
+              }
+            }
+          }
+        },
+        {
+          "name": "local_exec",
+          "description": "Run one command on this machine in an open local target's folder. The command is checked against that target's allowlist; shell syntax is not accepted.",
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "target",
+              "command"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "target": {
+                "type": "string",
+                "description": "Target name from list_targets"
+              },
+              "command": {
+                "type": "string",
+                "description": "Command and arguments, separated by spaces"
+              },
+              "timeout_seconds": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 600,
+                "default": 60
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

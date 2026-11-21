@@ -1,7 +1,7 @@
 {
   "name": "@ksproxy/cli",
-  "version": "0.2.0",
-  "description": "Let AI agents run allowlisted ssh, kubectl and local commands without your credentials.",
+  "version": "0.3.0",
+  "description": "Let AI agents run allowlisted ssh, kubectl, local, database, queue and HTTP API calls without your credentials.",
   "keywords": [
     "mcp",
     "model-context-protocol",
@@ -9,6 +9,10 @@
     "ssh",
     "kubernetes",
     "kubectl",
+    "database",
+    "http-api",
+    "postgres",
+    "redis",
     "allowlist",
     "proxy",
     "audit-log",

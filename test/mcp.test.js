@@ -5,6 +5,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { handleMessage, SERVER_INFO } from '../src/mcp.js';
+import { mcpConfig } from '../src/agent-md.js';
 import { writeSession } from '../src/session.js';
 
 const fakeSsh = fileURLToPath(new URL('./fixtures/fake-ssh.js', import.meta.url));
@@ -18,7 +19,7 @@ function emptyEnv() {
 
 test('SERVER_INFO', () => {
   assert.equal(SERVER_INFO.name, 'ksproxy');
-  assert.equal(SERVER_INFO.version, '0.2.0');
+  assert.equal(SERVER_INFO.version, '0.3.0');
 });
 
 test('initialize echoes a known protocol version', async () => {
@@ -29,7 +30,7 @@ test('initialize echoes a known protocol version', async () => {
   assert.equal(r.result.protocolVersion, '2025-03-26');
   assert.ok(r.result.capabilities.tools);
   assert.equal(r.result.serverInfo.name, 'ksproxy');
-  assert.equal(typeof r.result.instructions, 'string');
+  assert.ok(r.result.instructions.startsWith('Run commands on the ssh servers, Kubernetes clusters, local folders and service targets (databases, queues and HTTP APIs) the user has opened. '));
 });
 
 test('initialize falls back for an unknown protocol version', async () => {
@@ -142,6 +143,56 @@ test('the stdio server answers in order and writes only JSON', async () => {
     assert.ok(parsed[3].result.content[0].text.includes('ran web1 uptime'));
   } finally {
     child.kill('SIGKILL');
+  }
+});
+
+test('SIGUSR1 does not open the inspector of the stdio server, and it keeps serving', async () => {
+  const child = spawn(process.execPath, [bin, 'mcp'], { env: emptyEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
+  try {
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (c) => { stdout += c; });
+    child.stderr.on('data', (c) => { stderr += c; });
+    const exit = new Promise((resolve) => child.on('close', resolve));
+    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' })}\n`);
+    for (let i = 0; i < 300 && stdout === ''; i += 1) await new Promise((resolve) => setTimeout(resolve, 50));
+    child.kill('SIGUSR1');
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    assert.ok(!/Debugger listening/.test(stderr), stderr);
+    assert.equal(child.exitCode, null);
+    child.stdin.end(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' })}\n`);
+    assert.equal(await exit, 0);
+    assert.deepEqual(stdout.split('\n').filter(Boolean).map((l) => JSON.parse(l).id), [1, 2]);
+  } finally {
+    child.kill('SIGKILL');
+  }
+});
+
+// Signals SIGUSR1 delay ms after spawn and says whether the inspector opened. The process may die of the signal
+// when it comes before the listener is in place: that is fine, as long as no inspector opens.
+async function inspectorOpens(command, args, delay) {
+  const child = spawn(command, args, { env: emptyEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
+  const closed = new Promise((resolve) => { child.on('close', resolve); });
+  let stderr = '';
+  child.stderr.on('data', (c) => { stderr += c; });
+  await new Promise((resolve) => setTimeout(resolve, delay));
+  child.kill('SIGUSR1');
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  child.kill('SIGKILL');
+  await closed;
+  return /Debugger listening/.test(stderr);
+}
+
+test('SIGUSR1 in the first milliseconds never opens the inspector, by the shebang or as the MCP config runs it', async () => {
+  const config = mcpConfig(process.execPath, bin).mcpServers.ksproxy;
+  for (const delay of [5, 15, 20, 25, 30, 35, 40, 50, 60]) {
+    const opened = await Promise.all([
+      inspectorOpens(bin, ['mcp'], delay),
+      inspectorOpens(bin, ['mcp'], delay),
+      inspectorOpens(config.command, config.args, delay),
+      inspectorOpens(config.command, config.args, delay),
+    ]);
+    assert.deepEqual(opened, [false, false, false, false], `${delay} ms after spawn`);
   }
 });
 

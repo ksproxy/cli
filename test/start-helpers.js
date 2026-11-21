@@ -160,8 +160,12 @@ export async function makeWorld({
     });
   }
   fs.writeFileSync(path.join(configDir, 'inventory.json'), JSON.stringify({ ssh, kubernetes: kube, local: localEntries }));
+  // HOME is a folder of the world, so that a fake client that writes under its home folder never writes in the real one.
+  const home = path.join(base, 'home');
+  fs.mkdirSync(home);
   const env = {
     ...process.env,
+    HOME: home,
     KSPROXY_CONFIG_DIR: configDir,
     KSPROXY_STATE_DIR: path.join(base, 'st'),
     KSPROXY_SSH: fakeSsh,

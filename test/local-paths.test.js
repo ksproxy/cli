@@ -3,12 +3,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { callTool, decideLocal, scrubOutput } from '../src/tools.js';
+import { callTool, scrubOutput } from '../src/tools.js';
+import localKind from '../src/kinds/local/index.js';
 import { run } from '../src/exec.js';
 import { writeSession } from '../src/session.js';
 import {
   cleanPath, localFolderProblem, realish, sessionProtected, valueProblem,
-} from '../src/local.js';
+} from '../src/kinds/local/folder.js';
+
+const decideLocal = localKind.decide;
 
 let base;
 let cwd;
@@ -431,43 +434,80 @@ test('B1: the home folder and ksproxy folders given in the Data spelling are ref
   assert.equal(d.short, 'folder not allowed');
 });
 
-test('B2: a command with 2,000 arguments and 50 protected entries is decided in under 2 seconds', () => {
+// The filesystem calls one decision makes, counted on the fs functions the local kind uses, and its result.
+function counted(t, decideIt) {
+  let calls = 0;
+  for (const [owner, name] of [[fs, 'lstatSync'], [fs, 'statSync'], [fs.realpathSync, 'native']]) {
+    const real = owner[name];
+    t.mock.method(owner, name, (...args) => {
+      calls += 1;
+      return real(...args);
+    });
+  }
+  try {
+    const decision = decideIt();
+    return { calls, decision };
+  } finally {
+    t.mock.restoreAll();
+  }
+}
+
+// A wall-clock limit only as a last guard against a run that never ends; the counts above prove the cost, and they
+// do not depend on the load of the machine.
+const LAST_GUARD_MS = 15000;
+
+test('B2: a command with 2,000 arguments and 50 protected entries checks each distinct argument once', (t) => {
   const protectedList = Array.from({ length: 50 }, (_, i) => (i % 2 === 0 ? path.join(base, `kube-${i}.yaml`) : path.join(base, 'cfg', `kube-${i}.yaml`)));
   const args = Array.from({ length: 2000 }, (_, i) => (i % 2 === 0 ? 'a' : '.'));
   const command = `cat ${args.join(' ')}`;
   assert.ok(Buffer.byteLength(command) <= 4096);
+  const decideFor = (text) => () => decideLocal(target({ allow: ['cat ...'], protected: protectedList }), text, env);
+  const two = counted(t, decideFor('cat a .'));
   const started = Date.now();
-  const d = decideLocal(target({ allow: ['cat ...'], protected: protectedList }), command, env);
+  const many = counted(t, decideFor(command));
   const elapsed = Date.now() - started;
-  assert.equal(d.allowed, true, d.reason);
-  assert.equal(d.argv.length, 2001);
-  assert.ok(elapsed < 2000, `took ${elapsed} ms`);
+  assert.equal(many.decision.allowed, true, many.decision.reason);
+  assert.equal(many.decision.argv.length, 2001);
+  assert.equal(many.calls, two.calls, 'the same two distinct arguments cost the same, however often they come');
+  assert.ok(elapsed < LAST_GUARD_MS, `took ${elapsed} ms`);
 });
 
-test('B2: about 1,300 distinct arguments and 50 protected entries are decided in under 2 seconds', () => {
+test('B2: about 1,300 distinct arguments and 50 protected entries cost the same per argument, not per protected entry', (t) => {
   const protectedList = Array.from({ length: 50 }, (_, i) => path.join(base, `kube-${i}.yaml`));
   const args = Array.from({ length: 1296 }, (_, i) => i.toString(36));
   assert.equal(new Set(args).size, 1296);
   const command = `cat ${args.join(' ')}`;
   assert.ok(Buffer.byteLength(command) <= 4096);
+  const decideFor = (text, list) => () => decideLocal(target({ allow: ['cat ...'], protected: list }), text, env);
+  const none = counted(t, decideFor('cat', protectedList));
+  const one = counted(t, decideFor('cat zz', protectedList));
+  const perArgument = one.calls - none.calls;
   const started = Date.now();
-  const d = decideLocal(target({ allow: ['cat ...'], protected: protectedList }), command, env);
+  const all = counted(t, decideFor(command, protectedList));
   const elapsed = Date.now() - started;
-  assert.equal(d.allowed, true, d.reason);
-  assert.ok(elapsed < 2000, `took ${elapsed} ms`);
+  assert.equal(all.decision.allowed, true, all.decision.reason);
+  assert.ok(perArgument >= 1, 'an argument is checked on the filesystem');
+  assert.equal(all.calls - none.calls, perArgument * 1296, 'each argument costs the same calls, whatever the protected list');
+  const fewer = counted(t, decideFor(command, protectedList.slice(0, 1)));
+  const fewerNone = counted(t, decideFor('cat', protectedList.slice(0, 1)));
+  assert.equal(fewer.calls - fewerNone.calls, all.calls - none.calls, 'the protected entries add nothing per argument');
+  assert.ok(elapsed < LAST_GUARD_MS, `took ${elapsed} ms`);
 });
 
-test('B2: rules that all match loosely do not repeat the work for the same argument', () => {
+test('B2: rules that all match loosely do not repeat the work for the same argument', (t) => {
   const protectedList = Array.from({ length: 50 }, (_, i) => path.join(base, `kube-${i}.yaml`));
   const args = Array.from({ length: 2000 }, (_, i) => (i % 2 === 0 ? 'a' : '.'));
+  const decideWith = (rules, text) => () => decideLocal(target({ allow: rules, protected: protectedList }), text, env);
   const rules = Array.from({ length: 30 }, () => 'cat ...');
   const started = Date.now();
-  const refused = decideLocal(target({ allow: rules, protected: protectedList }), `cat ${args.join(' ')} sub/../x`, env);
-  const allowed = decideLocal(target({ allow: rules, protected: protectedList }), `cat ${args.join(' ')}`, env);
+  const refused = counted(t, decideWith(rules, `cat ${args.join(' ')} sub/../x`));
+  const allowed = counted(t, decideWith(rules, `cat ${args.join(' ')}`));
   const elapsed = Date.now() - started;
-  assert.equal(refused.short, 'contains ".."');
-  assert.equal(allowed.allowed, true);
-  assert.ok(elapsed < 2000, `took ${elapsed} ms`);
+  assert.equal(refused.decision.short, 'contains ".."');
+  assert.equal(allowed.decision.allowed, true);
+  assert.equal(allowed.calls, counted(t, decideWith(['cat ...'], `cat ${args.join(' ')}`)).calls, '30 rules cost what one rule costs');
+  assert.equal(allowed.calls, counted(t, decideWith(['cat ...'], 'cat a .')).calls, 'and 2,000 arguments what two cost');
+  assert.ok(elapsed < LAST_GUARD_MS, `took ${elapsed} ms`);
 });
 
 test('B3 cleanPath: an entry inside any local target folder is dropped, entries elsewhere stay', () => {

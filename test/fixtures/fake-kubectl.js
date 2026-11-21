@@ -17,7 +17,10 @@ if (argv.includes('proxy')) {
     res.end('{}');
   });
   server.listen(port, '127.0.0.1');
+  // With KSPROXY_FAKE_KUBECTL_IGNORE_TERM the proxy is one that is slow to close: it stays up after SIGTERM, so a
+  // test that kills it at a close limit kills a running proxy, never one that is writing its coverage file as it exits.
   process.on('SIGTERM', () => {
+    if (process.env.KSPROXY_FAKE_KUBECTL_IGNORE_TERM) return;
     server.close();
     process.exit(0);
   });

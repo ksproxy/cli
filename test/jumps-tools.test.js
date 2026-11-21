@@ -3,8 +3,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { callTool, decideSsh } from '../src/tools.js';
+import { callTool } from '../src/tools.js';
+import sshKind from '../src/kinds/ssh/index.js';
 import { writeSession } from '../src/session.js';
+
+const decideSsh = sshKind.decide;
 
 const fakeSsh = fileURLToPath(new URL('./fixtures/fake-ssh.js', import.meta.url));
 

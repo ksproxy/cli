@@ -5,10 +5,10 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import {
   ensureDir, kubectlBin, socketDir as socketDirOf, socketPath, writeFileAtomic,
-} from './paths.js';
-import { clip } from './audit.js';
-import { processStartTime, psEnv } from './session.js';
-import { closeMaster, openMaster } from './ssh.js';
+} from '../../paths.js';
+import { clip } from '../../text.js';
+import { processStartTime, psEnv } from '../../session.js';
+import { closeMaster, openMaster } from '../ssh/master.js';
 
 export const REJECT_PATHS = '^/api/.*/pods/.*/exec,^/api/.*/pods/.*/attach,^/api/.*/pods/.*/portforward,^/api/.*/secrets,^/api/.*/serviceaccounts/.*/token';
 

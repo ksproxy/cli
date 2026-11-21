@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   masterArgs, controlArgs, sshConfigText, execArgs, openMaster, checkMaster, closeMaster,
-} from '../src/ssh.js';
+} from '../src/kinds/ssh/master.js';
 
 const fakeSsh = fileURLToPath(new URL('./fixtures/fake-ssh.js', import.meta.url));
 

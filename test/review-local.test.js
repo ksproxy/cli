@@ -2,9 +2,12 @@ import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { localScope, reviewProblem } from '../src/local.js';
-import { callTool, decideLocal } from '../src/tools.js';
+import { localScope, reviewProblem } from '../src/kinds/local/folder.js';
+import localKind from '../src/kinds/local/index.js';
+import { callTool } from '../src/tools.js';
 import { writeSession } from '../src/session.js';
+
+const decideLocal = localKind.decide;
 
 let base;
 let dir;

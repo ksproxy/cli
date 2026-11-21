@@ -4,8 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  isCaseInsensitive, isInside, localFolderProblem, plainValues, protectedPaths, realish, valueProblem, wildcardProblem,
-} from '../src/local.js';
+  isInside, localFolderProblem, plainValues, protectedPaths, realish, valueProblem, wildcardProblem,
+} from '../src/kinds/local/folder.js';
+import { isCaseInsensitive } from '../src/paths.js';
 
 let base;
 let home;

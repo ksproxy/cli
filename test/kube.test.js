@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import {
   REJECT_PATHS, kubeconfigText, proxyArgs, kubectlArgs, hardRefusal, hardRefusalDetail,
   portListening, probeVersion, openCluster, closeCluster,
-} from '../src/kube.js';
+} from '../src/kinds/kubernetes/cluster.js';
 
 const fakeKubectl = fileURLToPath(new URL('./fixtures/fake-kubectl.js', import.meta.url));
 const fakeSsh = fileURLToPath(new URL('./fixtures/fake-ssh.js', import.meta.url));

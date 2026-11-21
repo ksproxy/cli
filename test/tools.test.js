@@ -5,9 +5,15 @@ import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  TOOLS, callTool, decideKube, decideSsh, scrubOutput,
+  callTool, scrubOutput, toolDefinitions,
 } from '../src/tools.js';
+import sshKind from '../src/kinds/ssh/index.js';
+import kubernetesKind from '../src/kinds/kubernetes/index.js';
 import { writeSession } from '../src/session.js';
+
+const TOOLS = toolDefinitions();
+const decideSsh = sshKind.decide;
+const decideKube = kubernetesKind.decide;
 
 const fakeSsh = fileURLToPath(new URL('./fixtures/fake-ssh.js', import.meta.url));
 const fakeKubectl = fileURLToPath(new URL('./fixtures/fake-kubectl.js', import.meta.url));

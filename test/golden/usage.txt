@@ -1,0 +1,463 @@
+### --help
+code: 0
+--- stdout
+Usage: ksproxy <command>
+
+Commands:
+  init                                      write a sample inventory (never overwrites)
+  start [--ssh a,b] [--kube x,y] [--local a,b] [--all] [-v|--verbose]
+        [--http x,y] [--command a,b] [--es x,y] [--mq a,b] [--redis x,y]
+        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y]
+                                            pick targets, open them, stay in the foreground
+  status                                    show the live session and each target's state
+  log [-n N] [--denied] [--json]            show the last N log entries (default 50)
+  check <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
+        <name> <command...>
+                                            say whether a command would be allowed
+  mcp                                       run the MCP server on stdio (started by the agent)
+
+Options:
+  -h, --help                                show this help
+  --version                                 show the version
+--- stderr
+
+### help is not a command
+code: 2
+--- stdout
+--- stderr
+unknown command: help
+Usage: ksproxy <command>
+
+Commands:
+  init                                      write a sample inventory (never overwrites)
+  start [--ssh a,b] [--kube x,y] [--local a,b] [--all] [-v|--verbose]
+        [--http x,y] [--command a,b] [--es x,y] [--mq a,b] [--redis x,y]
+        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y]
+                                            pick targets, open them, stay in the foreground
+  status                                    show the live session and each target's state
+  log [-n N] [--denied] [--json]            show the last N log entries (default 50)
+  check <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
+        <name> <command...>
+                                            say whether a command would be allowed
+  mcp                                       run the MCP server on stdio (started by the agent)
+
+Options:
+  -h, --help                                show this help
+  --version                                 show the version
+
+### start --bogus
+code: 2
+--- stdout
+--- stderr
+unknown option for start: --bogus
+Usage: ksproxy <command>
+
+Commands:
+  init                                      write a sample inventory (never overwrites)
+  start [--ssh a,b] [--kube x,y] [--local a,b] [--all] [-v|--verbose]
+        [--http x,y] [--command a,b] [--es x,y] [--mq a,b] [--redis x,y]
+        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y]
+                                            pick targets, open them, stay in the foreground
+  status                                    show the live session and each target's state
+  log [-n N] [--denied] [--json]            show the last N log entries (default 50)
+  check <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
+        <name> <command...>
+                                            say whether a command would be allowed
+  mcp                                       run the MCP server on stdio (started by the agent)
+
+Options:
+  -h, --help                                show this help
+  --version                                 show the version
+
+### start --ssh without a list
+code: 2
+--- stdout
+--- stderr
+--ssh needs a comma-separated list of names
+Usage: ksproxy <command>
+
+Commands:
+  init                                      write a sample inventory (never overwrites)
+  start [--ssh a,b] [--kube x,y] [--local a,b] [--all] [-v|--verbose]
+        [--http x,y] [--command a,b] [--es x,y] [--mq a,b] [--redis x,y]
+        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y]
+                                            pick targets, open them, stay in the foreground
+  status                                    show the live session and each target's state
+  log [-n N] [--denied] [--json]            show the last N log entries (default 50)
+  check <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
+        <name> <command...>
+                                            say whether a command would be allowed
+  mcp                                       run the MCP server on stdio (started by the agent)
+
+Options:
+  -h, --help                                show this help
+  --version                                 show the version
+
+### start --kube without a list
+code: 2
+--- stdout
+--- stderr
+--kube needs a comma-separated list of names
+Usage: ksproxy <command>
+
+Commands:
+  init                                      write a sample inventory (never overwrites)
+  start [--ssh a,b] [--kube x,y] [--local a,b] [--all] [-v|--verbose]
+        [--http x,y] [--command a,b] [--es x,y] [--mq a,b] [--redis x,y]
+        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y]
+                                            pick targets, open them, stay in the foreground
+  status                                    show the live session and each target's state
+  log [-n N] [--denied] [--json]            show the last N log entries (default 50)
+  check <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
+        <name> <command...>
+                                            say whether a command would be allowed
+  mcp                                       run the MCP server on stdio (started by the agent)
+
+Options:
+  -h, --help                                show this help
+  --version                                 show the version
+
+### start --local without a list
+code: 2
+--- stdout
+--- stderr
+--local needs a comma-separated list of names
+Usage: ksproxy <command>
+
+Commands:
+  init                                      write a sample inventory (never overwrites)
+  start [--ssh a,b] [--kube x,y] [--local a,b] [--all] [-v|--verbose]
+        [--http x,y] [--command a,b] [--es x,y] [--mq a,b] [--redis x,y]
+        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y]
+                                            pick targets, open them, stay in the foreground
+  status                                    show the live session and each target's state
+  log [-n N] [--denied] [--json]            show the last N log entries (default 50)
+  check <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
+        <name> <command...>
+                                            say whether a command would be allowed
+  mcp                                       run the MCP server on stdio (started by the agent)
+
+Options:
+  -h, --help                                show this help
+  --version                                 show the version
+
+### log -n 0
+code: 2
+--- stdout
+--- stderr
+-n needs a number from 1 to 5000
+Usage: ksproxy <command>
+
+Commands:
+  init                                      write a sample inventory (never overwrites)
+  start [--ssh a,b] [--kube x,y] [--local a,b] [--all] [-v|--verbose]
+        [--http x,y] [--command a,b] [--es x,y] [--mq a,b] [--redis x,y]
+        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y]
+                                            pick targets, open them, stay in the foreground
+  status                                    show the live session and each target's state
+  log [-n N] [--denied] [--json]            show the last N log entries (default 50)
+  check <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
+        <name> <command...>
+                                            say whether a command would be allowed
+  mcp                                       run the MCP server on stdio (started by the agent)
+
+Options:
+  -h, --help                                show this help
+  --version                                 show the version
+
+### check ssh web1 uptime
+code: 0
+--- stdout
+ALLOWED by rule: uptime
+--- stderr
+
+### check ssh web1 df -h
+code: 0
+--- stdout
+ALLOWED by rule: df -h
+--- stderr
+
+### check ssh web1 rm -rf /
+code: 1
+--- stdout
+NOT ON THE ALLOWLIST: a running session asks reviewer "r1"
+--- stderr
+
+### check ssh web1 free
+code: 1
+--- stdout
+NOT ON THE ALLOWLIST: a running session asks reviewer "r1"
+--- stderr
+
+### check ssh web1 LD_PRELOAD=x uptime
+code: 1
+--- stdout
+REFUSED: not on the allowlist for this target. Allowed: uptime; df -h. It was not sent to the reviewer: the first word sets an environment variable on the server.
+--- stderr
+
+### check ssh web1 ls;
+code: 1
+--- stdout
+REFUSED: character ";" is not allowed: this target only accepts plain commands made of letters, digits and _ @ % + = : , . / - (no quotes, pipes, redirects or shell syntax)
+--- stderr
+
+### check ssh web2 free
+code: 1
+--- stdout
+REFUSED: not on the allowlist for this target. Allowed: uptime
+--- stderr
+
+### check ssh jmp uptime
+code: 0
+--- stdout
+ALLOWED by rule: uptime
+sent to jmp.example.com: ssh -T -o BatchMode=yes -i .ssh/key -o ConnectTimeout=10 user@bastion -- uptime
+--- stderr
+
+### check ssh jmp uptime =x
+code: 1
+--- stdout
+REFUSED: a word may not start with "=" or contain "==" or ":=" on a target with jumps
+--- stderr
+
+### check ssh jmp free
+code: 1
+--- stdout
+REFUSED: not on the allowlist for this target. Allowed: uptime
+--- stderr
+
+### check ssh anyx ls -la
+code: 0
+--- stdout
+ALLOWED by rule: any
+--- stderr
+
+### check ssh nope uptime
+code: 2
+--- stdout
+--- stderr
+unknown ssh target "nope"; known: web1, web2, jmp, anyx
+
+### check kube lab get pods
+code: 0
+--- stdout
+ALLOWED by rule: get ...
+--- stderr
+
+### check kube lab top nodes
+code: 1
+--- stdout
+NOT ON THE ALLOWLIST: a running session asks reviewer "r1"
+--- stderr
+
+### check kube lab delete pod x
+code: 1
+--- stdout
+REFUSED: not on the allowlist for this target. Allowed: get .... It was not sent to the reviewer: only read verbs are reviewed, and delete is not one.
+--- stderr
+
+### check kube lab get pods -l a"b
+code: 0
+--- stdout
+ALLOWED by rule: get ...
+--- stderr
+
+### check kube plain get secrets
+code: 1
+--- stdout
+REFUSED: secret resources are never allowed
+--- stderr
+
+### check kube plain top nodes
+code: 1
+--- stdout
+REFUSED: not on the allowlist for this target. Allowed: get ...
+--- stderr
+
+### check kube plain get pods -n web
+code: 0
+--- stdout
+ALLOWED by rule: get ...
+--- stderr
+
+### check kube nope get pods
+code: 2
+--- stdout
+--- stderr
+unknown kube target "nope"; known: lab, plain
+
+### check local infra cat a.txt
+code: 0
+--- stdout
+ALLOWED by rule: cat *
+--- stderr
+
+### check local infra ls -a
+code: 1
+--- stdout
+REFUSED: the argument -a is not a plain name or path; a wildcard in a local rule only matches those. Flags and anything else must be written into the rule literally
+--- stderr
+
+### check local infra git status
+code: 1
+--- stdout
+REFUSED: not on the allowlist for this target. Allowed: cat *; ls .... It was not sent to the reviewer: the program git is not one the reviewer may approve for this target.
+--- stderr
+
+### check local infra cat vault/x
+code: 1
+--- stdout
+REFUSED: the argument vault/x is, lies inside or contains a path this target protects
+--- stderr
+
+### check local infra cat /etc/hosts
+code: 1
+--- stdout
+REFUSED: the argument /etc/hosts is not a plain name or path; a wildcard in a local rule only matches those. Flags and anything else must be written into the rule literally
+--- stderr
+
+### check local infra ls; id
+code: 1
+--- stdout
+REFUSED: character ";" is not allowed: this target only accepts plain commands made of letters, digits and _ @ % + = : , . / - (no quotes, pipes, redirects or shell syntax)
+--- stderr
+
+### check local infra rm a.txt
+code: 1
+--- stdout
+REFUSED: not on the allowlist for this target. Allowed: cat *; ls .... It was not sent to the reviewer: the program rm is not one the reviewer may approve for this target.
+--- stderr
+
+### check local bad ls
+code: 1
+--- stdout
+REFUSED: folder contains a kubeconfig named in the inventory
+--- stderr
+
+### check local broad ls
+code: 1
+--- stdout
+REFUSED: folder is too broad: pick a project folder, not /
+--- stderr
+
+### check local plainl cat <tmp>/kube.yaml
+code: 1
+--- stdout
+REFUSED: the argument <tmp>/kube.yaml is not a plain name or path; a wildcard in a local rule only matches those. Flags and anything else must be written into the rule literally
+--- stderr
+
+### check local nope ls
+code: 2
+--- stdout
+--- stderr
+unknown local target "nope"; known: infra, bad, broad, plainl
+
+### check without arguments
+code: 2
+--- stdout
+--- stderr
+usage: ksproxy check <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka> <name> <command...>
+Usage: ksproxy <command>
+
+Commands:
+  init                                      write a sample inventory (never overwrites)
+  start [--ssh a,b] [--kube x,y] [--local a,b] [--all] [-v|--verbose]
+        [--http x,y] [--command a,b] [--es x,y] [--mq a,b] [--redis x,y]
+        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y]
+                                            pick targets, open them, stay in the foreground
+  status                                    show the live session and each target's state
+  log [-n N] [--denied] [--json]            show the last N log entries (default 50)
+  check <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
+        <name> <command...>
+                                            say whether a command would be allowed
+  mcp                                       run the MCP server on stdio (started by the agent)
+
+Options:
+  -h, --help                                show this help
+  --version                                 show the version
+
+### check with an unknown kind
+code: 2
+--- stdout
+--- stderr
+usage: ksproxy check <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka> <name> <command...>
+Usage: ksproxy <command>
+
+Commands:
+  init                                      write a sample inventory (never overwrites)
+  start [--ssh a,b] [--kube x,y] [--local a,b] [--all] [-v|--verbose]
+        [--http x,y] [--command a,b] [--es x,y] [--mq a,b] [--redis x,y]
+        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y]
+                                            pick targets, open them, stay in the foreground
+  status                                    show the live session and each target's state
+  log [-n N] [--denied] [--json]            show the last N log entries (default 50)
+  check <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
+        <name> <command...>
+                                            say whether a command would be allowed
+  mcp                                       run the MCP server on stdio (started by the agent)
+
+Options:
+  -h, --help                                show this help
+  --version                                 show the version
+
+### check without a command
+code: 2
+--- stdout
+--- stderr
+usage: ksproxy check <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka> <name> <command...>
+Usage: ksproxy <command>
+
+Commands:
+  init                                      write a sample inventory (never overwrites)
+  start [--ssh a,b] [--kube x,y] [--local a,b] [--all] [-v|--verbose]
+        [--http x,y] [--command a,b] [--es x,y] [--mq a,b] [--redis x,y]
+        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y]
+                                            pick targets, open them, stay in the foreground
+  status                                    show the live session and each target's state
+  log [-n N] [--denied] [--json]            show the last N log entries (default 50)
+  check <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
+        <name> <command...>
+                                            say whether a command would be allowed
+  mcp                                       run the MCP server on stdio (started by the agent)
+
+Options:
+  -h, --help                                show this help
+  --version                                 show the version
+
+### status without a session
+code: 1
+--- stdout
+no session — run: ksproxy start
+--- stderr
+
+### status with a session
+code: 1
+--- stdout
+session pid <pid>, started 2026-11-20T00:00:00.000Z
+  up    ssh   web1
+  down  ssh   web2
+  down  kube  lab
+  up    loc   infra
+  down  loc   gone
+--- stderr
+
+### status with a log
+code: 1
+--- stdout
+session pid <pid>, started 2026-11-20T00:00:00.000Z
+  up    ssh   web1
+  down  ssh   web2
+  down  kube  lab
+  up    loc   infra
+  down  loc   gone
+  last call 09:05:07 · 2 calls this session
+--- stderr
+
+### status with everything up
+code: 0
+--- stdout
+session pid <pid>, started 2026-11-20T00:00:00.000Z
+  up    ssh   web1
+  up    loc   infra
+--- stderr
+

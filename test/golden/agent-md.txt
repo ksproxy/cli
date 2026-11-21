@@ -1,0 +1,197 @@
+# ksproxy session
+
+The user has opened the servers, clusters and folders below for you. You reach them only through the ksproxy MCP tools. Call `list_targets` first to see what is open right now.
+
+## Tools
+
+- `list_targets` - the open targets, their state and their allowed commands.
+- `ssh_exec { server, command, timeout_seconds? }` - run one command on an ssh server.
+- `kubectl { cluster, args, timeout_seconds? }` - run kubectl against a cluster.
+- `local_exec { target, command, timeout_seconds? }` - run one command on this machine in a target's folder.
+
+Every call is checked against the target's allowlist and written to an audit log that the user is watching. A refused call tells you what is allowed.
+
+## Open targets
+
+### ssh server `web1` - web box
+
+- Tool: `ssh_exec` with `server: "web1"`
+- Allowed commands: uptime; df -h
+- A command is plain words only: letters, digits and `_ @ % + = : , . / -`. No quotes, pipes, redirects, variables or other shell syntax.
+- `*` in a rule matches exactly one argument that does not start with `-`; `...` matches any remaining arguments.
+
+### ssh server `any1`
+
+- Tool: `ssh_exec` with `server: "any1"`
+- Allowed commands: any command
+
+### ssh server `jmp` - behind a bastion
+
+- Tool: `ssh_exec` with `server: "jmp"`
+- Allowed commands: uptime
+- A command is plain words only: letters, digits and `_ @ % + = : , . / -`. No quotes, pipes, redirects, variables or other shell syntax.
+- `*` in a rule matches exactly one argument that does not start with `-`; `...` matches any remaining arguments.
+- This server is reached through a further ssh step that the user set up; your command runs on the final server.
+
+### ssh server `rev` - reviewed
+
+- Tool: `ssh_exec` with `server: "rev"`
+- Allowed commands: uptime
+- A command is plain words only: letters, digits and `_ @ % + = : , . / -`. No quotes, pipes, redirects, variables or other shell syntax.
+- `*` in a rule matches exactly one argument that does not start with `-`; `...` matches any remaining arguments.
+- A command that is not on this list is reviewed before it runs and may be refused.
+
+### ssh server `none`
+
+- Tool: `ssh_exec` with `server: "none"`
+- Allowed commands: nothing (empty allowlist)
+- A command is plain words only: letters, digits and `_ @ % + = : , . / -`. No quotes, pipes, redirects, variables or other shell syntax.
+- `*` in a rule matches exactly one argument that does not start with `-`; `...` matches any remaining arguments.
+- This server is reached through a further ssh step that the user set up; your command runs on the final server.
+- A command that is not on this list is reviewed before it runs and may be refused.
+
+### Kubernetes cluster `lab` - lab cluster
+
+- Tool: `kubectl` with `cluster: "lab"`
+- Allowed commands: get ...
+- Pass `args` as an array with the verb first, one element per argument, for example `["get","pods","-n","web"]`.
+- Write short flags separately (`-o json`, not `-ojson`).
+- kubectl takes the verb first and only a fixed set of flags; any other verb or flag is refused. Output formats are `json`, `yaml`, `wide`, `name`, `jsonpath=...`, `jsonpath-as-json=...` and `custom-columns=...`.
+- `-f` and `--patch-file` each take one regular file (not a directory) inside: /srv/m, /srv/n
+
+### Kubernetes cluster `noroots`
+
+- Tool: `kubectl` with `cluster: "noroots"`
+- Allowed commands: get ...
+- Pass `args` as an array with the verb first, one element per argument, for example `["get","pods","-n","web"]`.
+- Write short flags separately (`-o json`, not `-ojson`).
+- kubectl takes the verb first and only a fixed set of flags; any other verb or flag is refused. Output formats are `json`, `yaml`, `wide`, `name`, `jsonpath=...`, `jsonpath-as-json=...` and `custom-columns=...`.
+- File flags (`-f`, `--patch-file`) are refused: this cluster has no manifest folders configured.
+
+### Kubernetes cluster `downk`
+
+- Tool: `kubectl` with `cluster: "downk"`
+- Allowed commands: get ...
+- Pass `args` as an array with the verb first, one element per argument, for example `["get","pods","-n","web"]`.
+- Write short flags separately (`-o json`, not `-ojson`).
+- kubectl takes the verb first and only a fixed set of flags; any other verb or flag is refused. Output formats are `json`, `yaml`, `wide`, `name`, `jsonpath=...`, `jsonpath-as-json=...` and `custom-columns=...`.
+- File flags (`-f`, `--patch-file`) are refused: this cluster has no manifest folders configured.
+- Connection state is `down`: calls may fail until the user fixes it.
+- A command that is not on this list is reviewed before it runs and may be refused.
+
+### Kubernetes cluster `authk` - no access
+
+- Tool: `kubectl` with `cluster: "authk"`
+- Allowed commands: nothing (empty allowlist)
+- Pass `args` as an array with the verb first, one element per argument, for example `["get","pods","-n","web"]`.
+- Write short flags separately (`-o json`, not `-ojson`).
+- kubectl takes the verb first and only a fixed set of flags; any other verb or flag is refused. Output formats are `json`, `yaml`, `wide`, `name`, `jsonpath=...`, `jsonpath-as-json=...` and `custom-columns=...`.
+- `-f` and `--patch-file` each take one regular file (not a directory) inside: /srv/m
+- Connection state is `auth`: calls may fail until the user fixes it.
+
+### Local folder `infra` - terraform repo
+
+- Tool: `local_exec` with `target: "infra"`
+- Allowed commands: git status; ls ...
+- Files that usually hold secrets (such as .env and key files) and paths the user protected are refused unless an allowed command above names the file exactly. Do not look for another way to read them.
+- A command is plain words only: letters, digits and `_ @ % + = : , . / -`. No quotes, pipes, redirects, variables or other shell syntax; no shell runs it.
+- `*` in a rule matches exactly one plain argument and `...` any number of them: a name or relative path made of letters, digits and `_ . / -`, not starting with `-`. A wildcard never matches a flag (`-n`, `--oneline`, `--flag=value`); flags and anything else are refused unless the user wrote them into a rule literally.
+- Every plain argument is resolved with links followed and must stay inside the target's folder; `..`, links that lead out and links that cannot be resolved are refused.
+- The first word of a command is the program, named by the rules. ksproxy's own files are always refused. An argument longer than 512 bytes is refused.
+- A bare program name is found through the user's absolute PATH entries only; a file in this folder is never found by name, so a rule that runs one names it with its path (for example `./run.sh`).
+
+### Local folder `downl`
+
+- Tool: `local_exec` with `target: "downl"`
+- Allowed commands: ls
+- Files that usually hold secrets (such as .env and key files) and paths the user protected are refused unless an allowed command above names the file exactly. Do not look for another way to read them.
+- A command is plain words only: letters, digits and `_ @ % + = : , . / -`. No quotes, pipes, redirects, variables or other shell syntax; no shell runs it.
+- `*` in a rule matches exactly one plain argument and `...` any number of them: a name or relative path made of letters, digits and `_ . / -`, not starting with `-`. A wildcard never matches a flag (`-n`, `--oneline`, `--flag=value`); flags and anything else are refused unless the user wrote them into a rule literally.
+- Every plain argument is resolved with links followed and must stay inside the target's folder; `..`, links that lead out and links that cannot be resolved are refused.
+- The first word of a command is the program, named by the rules. ksproxy's own files are always refused. An argument longer than 512 bytes is refused.
+- A bare program name is found through the user's absolute PATH entries only; a file in this folder is never found by name, so a rule that runs one names it with its path (for example `./run.sh`).
+- The folder is not available (`down`): calls may fail until the user fixes it.
+- A command that is not on this list is reviewed before it runs and may be refused. Only these programs can be reviewed: ls. Flags must be simple (`-x`, `--word`), with any value as a separate argument.
+
+### Local folder `revl` - reviewed
+
+- Tool: `local_exec` with `target: "revl"`
+- Allowed commands: ls
+- Files that usually hold secrets (such as .env and key files) and paths the user protected are refused unless an allowed command above names the file exactly. Do not look for another way to read them.
+- A command is plain words only: letters, digits and `_ @ % + = : , . / -`. No quotes, pipes, redirects, variables or other shell syntax; no shell runs it.
+- `*` in a rule matches exactly one plain argument and `...` any number of them: a name or relative path made of letters, digits and `_ . / -`, not starting with `-`. A wildcard never matches a flag (`-n`, `--oneline`, `--flag=value`); flags and anything else are refused unless the user wrote them into a rule literally.
+- Every plain argument is resolved with links followed and must stay inside the target's folder; `..`, links that lead out and links that cannot be resolved are refused.
+- The first word of a command is the program, named by the rules. ksproxy's own files are always refused. An argument longer than 512 bytes is refused.
+- A bare program name is found through the user's absolute PATH entries only; a file in this folder is never found by name, so a rule that runs one names it with its path (for example `./run.sh`).
+- A command that is not on this list is reviewed before it runs and may be refused. Only these programs can be reviewed: git, ls. Flags must be simple (`-x`, `--word`), with any value as a separate argument.
+
+## Off limits
+
+- Do not run `ssh`, `kubectl`, `curl` or any other program to reach these targets yourself; use the tools above.
+- Do not read or change anything in this folder, the ksproxy state folder or the ksproxy configuration folder.
+- Do not try to widen your access: no shell syntax in ssh or local commands, no identity or cluster flags, no secret resources, no exec, attach, cp, port-forward or proxy.
+- Command output is returned to you as written. Do not print credentials you happen to find.
+- If a command you need is not allowed, say so and ask the user; do not look for a way around the list.
+=====
+# ksproxy session
+
+The user has opened the servers, clusters and folders below for you. You reach them only through the ksproxy MCP tools. Call `list_targets` first to see what is open right now.
+
+## Tools
+
+- `list_targets` - the open targets, their state and their allowed commands.
+- `ssh_exec { server, command, timeout_seconds? }` - run one command on an ssh server.
+- `kubectl { cluster, args, timeout_seconds? }` - run kubectl against a cluster.
+- `local_exec { target, command, timeout_seconds? }` - run one command on this machine in a target's folder.
+
+Every call is checked against the target's allowlist and written to an audit log that the user is watching. A refused call tells you what is allowed.
+
+## Open targets
+
+### Local folder `infra` - terraform repo
+
+- Tool: `local_exec` with `target: "infra"`
+- Allowed commands: git status; ls ...
+- Files that usually hold secrets (such as .env and key files) and paths the user protected are refused unless an allowed command above names the file exactly. Do not look for another way to read them.
+- A command is plain words only: letters, digits and `_ @ % + = : , . / -`. No quotes, pipes, redirects, variables or other shell syntax; no shell runs it.
+- `*` in a rule matches exactly one plain argument and `...` any number of them: a name or relative path made of letters, digits and `_ . / -`, not starting with `-`. A wildcard never matches a flag (`-n`, `--oneline`, `--flag=value`); flags and anything else are refused unless the user wrote them into a rule literally.
+- Every plain argument is resolved with links followed and must stay inside the target's folder; `..`, links that lead out and links that cannot be resolved are refused.
+- The first word of a command is the program, named by the rules. ksproxy's own files are always refused. An argument longer than 512 bytes is refused.
+- A bare program name is found through the user's absolute PATH entries only; a file in this folder is never found by name, so a rule that runs one names it with its path (for example `./run.sh`).
+
+### ssh server `web1` - web box
+
+- Tool: `ssh_exec` with `server: "web1"`
+- Allowed commands: uptime; df -h
+- A command is plain words only: letters, digits and `_ @ % + = : , . / -`. No quotes, pipes, redirects, variables or other shell syntax.
+- `*` in a rule matches exactly one argument that does not start with `-`; `...` matches any remaining arguments.
+
+### Kubernetes cluster `lab` - lab cluster
+
+- Tool: `kubectl` with `cluster: "lab"`
+- Allowed commands: get ...
+- Pass `args` as an array with the verb first, one element per argument, for example `["get","pods","-n","web"]`.
+- Write short flags separately (`-o json`, not `-ojson`).
+- kubectl takes the verb first and only a fixed set of flags; any other verb or flag is refused. Output formats are `json`, `yaml`, `wide`, `name`, `jsonpath=...`, `jsonpath-as-json=...` and `custom-columns=...`.
+- `-f` and `--patch-file` each take one regular file (not a directory) inside: /srv/m, /srv/n
+
+### Local folder `downl`
+
+- Tool: `local_exec` with `target: "downl"`
+- Allowed commands: ls
+- Files that usually hold secrets (such as .env and key files) and paths the user protected are refused unless an allowed command above names the file exactly. Do not look for another way to read them.
+- A command is plain words only: letters, digits and `_ @ % + = : , . / -`. No quotes, pipes, redirects, variables or other shell syntax; no shell runs it.
+- `*` in a rule matches exactly one plain argument and `...` any number of them: a name or relative path made of letters, digits and `_ . / -`, not starting with `-`. A wildcard never matches a flag (`-n`, `--oneline`, `--flag=value`); flags and anything else are refused unless the user wrote them into a rule literally.
+- Every plain argument is resolved with links followed and must stay inside the target's folder; `..`, links that lead out and links that cannot be resolved are refused.
+- The first word of a command is the program, named by the rules. ksproxy's own files are always refused. An argument longer than 512 bytes is refused.
+- A bare program name is found through the user's absolute PATH entries only; a file in this folder is never found by name, so a rule that runs one names it with its path (for example `./run.sh`).
+- The folder is not available (`down`): calls may fail until the user fixes it.
+- A command that is not on this list is reviewed before it runs and may be refused. Only these programs can be reviewed: ls. Flags must be simple (`-x`, `--word`), with any value as a separate argument.
+
+## Off limits
+
+- Do not run `ssh`, `kubectl`, `curl` or any other program to reach these targets yourself; use the tools above.
+- Do not read or change anything in this folder, the ksproxy state folder or the ksproxy configuration folder.
+- Do not try to widen your access: no shell syntax in ssh or local commands, no identity or cluster flags, no secret resources, no exec, attach, cp, port-forward or proxy.
+- Command output is returned to you as written. Do not print credentials you happen to find.
+- If a command you need is not allowed, say so and ask the user; do not look for a way around the list.

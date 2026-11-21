@@ -2,8 +2,10 @@ import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { TOOLS, callTool, scrubOutput, targetState } from '../src/tools.js';
+import { callTool, scrubOutput, targetState, toolDefinitions } from '../src/tools.js';
 import { writeSession } from '../src/session.js';
+
+const TOOLS = toolDefinitions();
 
 let base;
 let cwd;

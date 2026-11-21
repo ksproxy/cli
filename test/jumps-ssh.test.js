@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   JUMP_SETTINGS, MAX_JUMPS, jumpPrefix, parseJump, zshEqualsWord,
-} from '../src/ssh.js';
+} from '../src/kinds/ssh/master.js';
 
 test('one jump gives the exact prefix', () => {
   assert.equal(

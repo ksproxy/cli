@@ -1,9 +1,10 @@
 import fs from 'node:fs';
-import { tokenizeSshCommand } from './allowlist.js';
-import { run } from './exec.js';
-import { sshBin } from './paths.js';
+import path from 'node:path';
+import { tokenizeSshCommand } from '../../allowlist.js';
+import { HOST_RE } from '../../checks.js';
+import { run } from '../../exec.js';
+import { CALL_SOCKET_NAME, REVIEW_SOCKET_NAME, sshBin } from '../../paths.js';
 
-export const HOST_RE = /^[A-Za-z0-9][A-Za-z0-9._@-]*$/;
 export const MAX_JUMPS = 5;
 const JUMP_OPTIONS = ['-i', '-p', '-l', '-o', '-J'];
 export const JUMP_SETTINGS = [
@@ -135,4 +136,17 @@ export async function openMaster({ socket, host, extra = [] }, env = process.env
     return { ok: false, error: 'the connection did not stay open' };
   }
   return { ok: true };
+}
+
+export async function closeStaleSockets(dir, env) {
+  let names;
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (name.endsWith('.pid') || name === REVIEW_SOCKET_NAME || name === CALL_SOCKET_NAME) continue;
+    await closeMaster({ socket: path.join(dir, name), host: 'stale' }, env);
+  }
 }

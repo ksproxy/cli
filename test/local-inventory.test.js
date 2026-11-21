@@ -3,8 +3,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { InventoryError, SAMPLE_INVENTORY, validateInventory } from '../src/inventory.js';
-import { decideLocal } from '../src/tools.js';
+import { InventoryError, sampleInventory, validateInventory } from '../src/inventory.js';
+import localKind from '../src/kinds/local/index.js';
+
+const SAMPLE_INVENTORY = sampleInventory();
+const decideLocal = localKind.decide;
 
 function rejects(raw, pattern) {
   assert.throws(() => validateInventory(raw), (err) => {
@@ -65,7 +68,7 @@ test('defaults: allow and description', () => {
 
 test('an empty inventory has an empty local list, and the folder is tidied', () => {
   assert.deepEqual(validateInventory({}), {
-    ssh: [], kubernetes: [], local: [], reviewers: {},
+    ssh: [], kubernetes: [], local: [], http: [], command: [], elasticsearch: [], rabbitmq: [], redis: [], postgres: [], mysql: [], mongodb: [], kafka: [], reviewers: {},
   });
   assert.equal(validateInventory({ local: [{ name: 'a', cwd: '/srv/a/' }] }).local[0].cwd, '/srv/a');
   assert.equal(validateInventory({ local: [{ name: 'a', cwd: '/srv/b/../a' }] }).local[0].cwd, '/srv/a');

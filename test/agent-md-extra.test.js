@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { agentMdText, mcpConfig } from '../src/agent-md.js';
 
-test('mcpConfig names the node binary and the bin script', () => {
+test('mcpConfig names the node binary, the flag that turns the inspector signal off, and the bin script', () => {
   assert.deepEqual(mcpConfig('/usr/bin/node', '/x/bin/ksproxy.js'), {
-    mcpServers: { ksproxy: { command: '/usr/bin/node', args: ['/x/bin/ksproxy.js', 'mcp'] } },
+    mcpServers: { ksproxy: { command: '/usr/bin/node', args: ['--disable-sigusr1', '/x/bin/ksproxy.js', 'mcp'] } },
   });
 });
 

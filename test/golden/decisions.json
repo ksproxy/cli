@@ -1,0 +1,4194 @@
+{
+  "cases": [
+    {
+      "kind": "ssh",
+      "label": "literal rule",
+      "input": "uptime",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "uptime",
+        "command": "uptime"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "star rule",
+      "input": "systemctl status nginx",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "systemctl status *",
+        "command": "systemctl status nginx"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "star rule with a flag",
+      "input": "systemctl status -x",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: uptime; systemctl status *; journalctl -u app ...; df -h; echo ...",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "argv": [
+          "systemctl",
+          "status",
+          "-x"
+        ]
+      },
+      "routeOn": {
+        "argv": [
+          "systemctl",
+          "status",
+          "-x"
+        ]
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "star rule without an argument",
+      "input": "systemctl status",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: uptime; systemctl status *; journalctl -u app ...; df -h; echo ...",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "argv": [
+          "systemctl",
+          "status"
+        ]
+      },
+      "routeOn": {
+        "argv": [
+          "systemctl",
+          "status"
+        ]
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "dots rule",
+      "input": "journalctl -u app -n 20 --no-pager",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "journalctl -u app ...",
+        "command": "journalctl -u app -n 20 --no-pager"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "dots rule with no rest",
+      "input": "journalctl -u app",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "journalctl -u app ...",
+        "command": "journalctl -u app"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "literal rule with a flag",
+      "input": "df -h",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "df -h",
+        "command": "df -h"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "not on the allowlist",
+      "input": "rm -rf /",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: uptime; systemctl status *; journalctl -u app ...; df -h; echo ...",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "argv": [
+          "rm",
+          "-rf",
+          "/"
+        ]
+      },
+      "routeOn": {
+        "argv": [
+          "rm",
+          "-rf",
+          "/"
+        ]
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "not on the allowlist with spaces and tabs",
+      "input": "df\t -h",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "df -h",
+        "command": "df -h"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "empty allowlist",
+      "input": "uptime",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "the allowlist for this target is empty, so every command is refused",
+        "short": "allowlist is empty",
+        "unmatched": true,
+        "argv": [
+          "uptime"
+        ]
+      },
+      "routeOn": {
+        "argv": [
+          "uptime"
+        ]
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "plain: not a string",
+      "input": 42,
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "command must be a string",
+        "short": "invalid command"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "plain: too long",
+      "input": "<string of 5007 characters starting uptime a>",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "command is longer than 4096 bytes",
+        "short": "command too long"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "plain: empty",
+      "input": "",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "command is empty",
+        "short": "empty command"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "plain: blank",
+      "input": "   ",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "command is empty",
+        "short": "empty command"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "plain: semicolon",
+      "input": "ls;",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "character \";\" is not allowed: this target only accepts plain commands made of letters, digits and _ @ % + = : , . / - (no quotes, pipes, redirects or shell syntax)",
+        "short": "character \";\" not allowed"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "plain: dollar",
+      "input": "ls $HOME",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "character \"$\" is not allowed: this target only accepts plain commands made of letters, digits and _ @ % + = : , . / - (no quotes, pipes, redirects or shell syntax)",
+        "short": "character \"$\" not allowed"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "plain: quote",
+      "input": "ls \"x\"",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "character \"\"\" is not allowed: this target only accepts plain commands made of letters, digits and _ @ % + = : , . / - (no quotes, pipes, redirects or shell syntax)",
+        "short": "character \"\"\" not allowed"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "plain: pipe",
+      "input": "ls | grep x",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "character \"|\" is not allowed: this target only accepts plain commands made of letters, digits and _ @ % + = : , . / - (no quotes, pipes, redirects or shell syntax)",
+        "short": "character \"|\" not allowed"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "plain: non-ascii",
+      "input": "ls é",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "character U+00E9 is not allowed: this target only accepts plain commands made of letters, digits and _ @ % + = : , . / - (no quotes, pipes, redirects or shell syntax)",
+        "short": "character U+00E9 not allowed"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "plain: control character",
+      "input": "ls a\u0001",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "character U+0001 is not allowed: this target only accepts plain commands made of letters, digits and _ @ % + = : , . / - (no quotes, pipes, redirects or shell syntax)",
+        "short": "character U+0001 not allowed"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "plain: starts with a dash",
+      "input": "-rf",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "command may not start with \"-\"",
+        "short": "starts with \"-\""
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "any: a pipeline",
+      "input": "ls | grep x | wc -l",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "any",
+        "command": "ls | grep x | wc -l"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "any: quotes",
+      "input": "echo \"a b\"",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "any",
+        "command": "echo \"a b\""
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "any: not a string",
+      "input": 42,
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "command must be a string",
+        "short": "invalid command"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "any: too long",
+      "input": "<string of 5000 characters starting aaaaaaaa>",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "command is longer than 4096 bytes",
+        "short": "command too long"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "any: empty",
+      "input": "",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "command is empty",
+        "short": "empty command"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "any: blank",
+      "input": "   ",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "command is empty",
+        "short": "empty command"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "any: NUL",
+      "input": "a\u0000b",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "command contains a NUL byte",
+        "short": "control character"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "any: newline",
+      "input": "a\nb",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "command contains a control character",
+        "short": "control character"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "any: delete character",
+      "input": "ab",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "command contains a control character",
+        "short": "control character"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "any: starts with a dash",
+      "input": " -rf",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "command may not start with \"-\"",
+        "short": "starts with \"-\""
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "any: tab is fine",
+      "input": "a\tb",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "any",
+        "command": "a\tb"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "jumps: literal rule",
+      "input": "uptime",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "uptime",
+        "command": "uptime",
+        "prefix": "ssh -T -o BatchMode=yes -i .ssh/key -o ConnectTimeout=10 user@bastion --"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "jumps: two jumps",
+      "input": "uptime",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "uptime",
+        "command": "uptime",
+        "prefix": "ssh -T -o BatchMode=yes -i a -o ConnectTimeout=10 u@b -- ssh -T -o BatchMode=yes -p 2222 -o Port=22 -o ConnectTimeout=10 v@c --"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "jumps: not on the allowlist",
+      "input": "rm x",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: uptime; systemctl status *; journalctl -u app ...; df -h; echo ...",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "argv": [
+          "rm",
+          "x"
+        ],
+        "prefix": "ssh -T -o BatchMode=yes -i .ssh/key -o ConnectTimeout=10 user@bastion --"
+      },
+      "routeOn": {
+        "argv": [
+          "rm",
+          "x"
+        ]
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "jumps: starts with equals",
+      "input": "echo =x",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "a word may not start with \"=\" or contain \"==\" or \":=\" on a target with jumps",
+        "short": "unsafe \"=\" word"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "jumps: double equals",
+      "input": "echo a==b",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "a word may not start with \"=\" or contain \"==\" or \":=\" on a target with jumps",
+        "short": "unsafe \"=\" word"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "jumps: colon equals",
+      "input": "echo a:=b",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "a word may not start with \"=\" or contain \"==\" or \":=\" on a target with jumps",
+        "short": "unsafe \"=\" word"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "jumps: an equals word is checked before the allowlist",
+      "input": "rm =x",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "a word may not start with \"=\" or contain \"==\" or \":=\" on a target with jumps",
+        "short": "unsafe \"=\" word"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "no jumps: an equals word is fine",
+      "input": "echo =x",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "echo ...",
+        "command": "echo =x"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "jumps: allow any",
+      "input": "ls",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "a target with jumps needs a list of rules, not \"any\"",
+        "short": "allowlist is \"any\""
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "jumps: empty list",
+      "input": "uptime",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "this target's jumps are not usable; ask the user to restart ksproxy start",
+        "short": "jumps not usable"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "jumps: null",
+      "input": "uptime",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "this target's jumps are not usable; ask the user to restart ksproxy start",
+        "short": "jumps not usable"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "jumps: not usable option",
+      "input": "uptime",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "this target's jumps are not usable; ask the user to restart ksproxy start",
+        "short": "jumps not usable"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "jumps: six",
+      "input": "uptime",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "this target's jumps are not usable; ask the user to restart ksproxy start",
+        "short": "jumps not usable"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "jumps: not a list",
+      "input": "uptime",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "this target's jumps are not usable; ask the user to restart ksproxy start",
+        "short": "jumps not usable"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "jumps: not usable, allow any, empty command",
+      "input": "",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "this target's jumps are not usable; ask the user to restart ksproxy start",
+        "short": "jumps not usable"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "review: unlisted command goes to the reviewer",
+      "input": "df",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: uptime; systemctl status *; journalctl -u app ...; df -h; echo ...",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "argv": [
+          "df"
+        ]
+      },
+      "routeOn": {
+        "argv": [
+          "df"
+        ]
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "review: unlisted command with jumps",
+      "input": "df",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: uptime; systemctl status *; journalctl -u app ...; df -h; echo ...",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "argv": [
+          "df"
+        ],
+        "prefix": "ssh -T -o BatchMode=yes -i .ssh/key -o ConnectTimeout=10 user@bastion --"
+      },
+      "routeOn": {
+        "argv": [
+          "df"
+        ]
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "review: listed command",
+      "input": "uptime",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": true,
+        "rule": "uptime",
+        "command": "uptime"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "review: sixty four words",
+      "input": "<string of 130 characters starting echo a a>",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: uptime",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "argv": [
+          "echo",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a"
+        ]
+      },
+      "routeOn": {
+        "argv": [
+          "echo",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a"
+        ]
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "review: sixty five words",
+      "input": "<string of 132 characters starting echo a a>",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: uptime",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "argv": [
+          "echo",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a"
+        ]
+      },
+      "routeOn": {
+        "note": "It was not sent to the reviewer: the command has more than 64 words."
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "review: a word of two hundred characters",
+      "input": "<string of 205 characters starting echo aaa>",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: uptime",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "argv": [
+          "echo",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ]
+      },
+      "routeOn": {
+        "argv": [
+          "echo",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ]
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "review: a word of two hundred and one characters",
+      "input": "<string of 206 characters starting echo aaa>",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: uptime",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "argv": [
+          "echo",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ]
+      },
+      "routeOn": {
+        "note": "It was not sent to the reviewer: a word is longer than 200 characters."
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "review: a word that starts with equals",
+      "input": "df =x",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: uptime; systemctl status *; journalctl -u app ...; df -h; echo ...",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "argv": [
+          "df",
+          "=x"
+        ]
+      },
+      "routeOn": {
+        "note": "It was not sent to the reviewer: a word starts with \"=\", which the server's shell may expand."
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "review: a word with double equals",
+      "input": "df a==b",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: uptime; systemctl status *; journalctl -u app ...; df -h; echo ...",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "argv": [
+          "df",
+          "a==b"
+        ]
+      },
+      "routeOn": {
+        "note": "It was not sent to the reviewer: a word contains \"==\" or \":=\", which the server's shell may rewrite."
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "review: a word with colon equals",
+      "input": "df a:=b",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: uptime; systemctl status *; journalctl -u app ...; df -h; echo ...",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "argv": [
+          "df",
+          "a:=b"
+        ]
+      },
+      "routeOn": {
+        "note": "It was not sent to the reviewer: a word contains \"==\" or \":=\", which the server's shell may rewrite."
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "review: first word sets a variable",
+      "input": "LD_PRELOAD=x uptime",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: uptime; systemctl status *; journalctl -u app ...; df -h; echo ...",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "argv": [
+          "LD_PRELOAD=x",
+          "uptime"
+        ]
+      },
+      "routeOn": {
+        "note": "It was not sent to the reviewer: the first word sets an environment variable on the server."
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "review: a later word with one equals",
+      "input": "df a=b",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: uptime; systemctl status *; journalctl -u app ...; df -h; echo ...",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "argv": [
+          "df",
+          "a=b"
+        ]
+      },
+      "routeOn": {
+        "argv": [
+          "df",
+          "a=b"
+        ]
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "review: empty allowlist",
+      "input": "df -h",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "the allowlist for this target is empty, so every command is refused",
+        "short": "allowlist is empty",
+        "unmatched": true,
+        "argv": [
+          "df",
+          "-h"
+        ]
+      },
+      "routeOn": {
+        "argv": [
+          "df",
+          "-h"
+        ]
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "review: tokenizer refusal is never reviewed",
+      "input": "df;",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "character \";\" is not allowed: this target only accepts plain commands made of letters, digits and _ @ % + = : , . / - (no quotes, pipes, redirects or shell syntax)",
+        "short": "character \";\" not allowed"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "ssh",
+      "label": "review: review false is not review",
+      "input": "df",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: uptime; systemctl status *; journalctl -u app ...; df -h; echo ...",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "argv": [
+          "df"
+        ]
+      },
+      "routeOn": {
+        "argv": [
+          "df"
+        ]
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "get with a namespace",
+      "input": [
+        "get",
+        "pods",
+        "-n",
+        "web"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "get ..."
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "describe",
+      "input": [
+        "describe",
+        "pod",
+        "x"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "describe ..."
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "logs",
+      "input": [
+        "logs",
+        "pod/x",
+        "--tail",
+        "20"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "logs ..."
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "rollout status",
+      "input": [
+        "rollout",
+        "status",
+        "deploy/x"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "rollout status ..."
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "rollout restart is not listed",
+      "input": [
+        "rollout",
+        "restart",
+        "deploy/x"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: get ...; describe ...; logs ...; rollout status ...; apply -f *; auth can-i ...",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "argv": [
+          "rollout",
+          "restart",
+          "deploy/x"
+        ]
+      },
+      "routeOn": {
+        "note": "It was not sent to the reviewer: only read verbs are reviewed, and rollout is not one."
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "output json",
+      "input": [
+        "get",
+        "pods",
+        "-o",
+        "json"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "get ..."
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "output jsonpath",
+      "input": [
+        "get",
+        "pods",
+        "-o",
+        "jsonpath={.items[0].metadata.name}"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "get ..."
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "output with an equals sign",
+      "input": [
+        "get",
+        "pods",
+        "--output=wide"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "get ..."
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "flag with underscores",
+      "input": [
+        "get",
+        "pods",
+        "--all_namespaces"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "get ..."
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "auth can-i",
+      "input": [
+        "auth",
+        "can-i",
+        "get",
+        "pods"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "auth can-i ..."
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "apply a manifest",
+      "input": [
+        "apply",
+        "-f",
+        "<tmp>/manifests/app.yaml"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "apply -f *"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "apply with the long flag",
+      "input": [
+        "apply",
+        "--filename=<tmp>/manifests/app.yaml"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: get ...; describe ...; logs ...; rollout status ...; apply -f *; auth can-i ...",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "argv": [
+          "apply",
+          "--filename=<tmp>/manifests/app.yaml"
+        ]
+      },
+      "routeOn": {
+        "note": "It was not sent to the reviewer: only read verbs are reviewed, and apply is not one."
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "logs -f is not a manifest",
+      "input": [
+        "logs",
+        "pod/x",
+        "-f"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "logs ..."
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "delete is not listed",
+      "input": [
+        "delete",
+        "pod",
+        "x"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: get ...; describe ...; logs ...; rollout status ...; apply -f *; auth can-i ...",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "argv": [
+          "delete",
+          "pod",
+          "x"
+        ]
+      },
+      "routeOn": {
+        "note": "It was not sent to the reviewer: only read verbs are reviewed, and delete is not one."
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "empty allowlist",
+      "input": [
+        "get",
+        "pods"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "the allowlist for this target is empty, so every command is refused",
+        "short": "allowlist is empty",
+        "unmatched": true,
+        "argv": [
+          "get",
+          "pods"
+        ]
+      },
+      "routeOn": {
+        "argv": [
+          "get",
+          "pods"
+        ]
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "allow any",
+      "input": [
+        "delete",
+        "pod",
+        "x"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "any"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "allow any, still refused when hard",
+      "input": [
+        "exec",
+        "pod",
+        "x"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "the \"exec\" command is not available through this proxy",
+        "short": "verb \"exec\" unavailable"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "args not a list",
+      "input": "get pods",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "arguments must be a non-empty list of non-empty single-line strings without control characters",
+        "short": "invalid arguments"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "args empty",
+      "input": [],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "arguments must be a non-empty list of non-empty single-line strings without control characters",
+        "short": "invalid arguments"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "arg empty",
+      "input": [
+        "get",
+        ""
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "arguments must be a non-empty list of non-empty single-line strings without control characters",
+        "short": "invalid arguments"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "arg not a string",
+      "input": [
+        "get",
+        5
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "arguments must be a non-empty list of non-empty single-line strings without control characters",
+        "short": "invalid arguments"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "arg with a control character",
+      "input": [
+        "get",
+        "pods\u0001"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "arguments must be a non-empty list of non-empty single-line strings without control characters",
+        "short": "invalid arguments"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "arg too long",
+      "input": [
+        "get",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "arguments must be a non-empty list of non-empty single-line strings without control characters",
+        "short": "invalid arguments"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "verb must come first",
+      "input": [
+        "-n",
+        "web",
+        "get",
+        "pods"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "put the verb first (for example: get pods -n web); flags go after it",
+        "short": "verb must come first"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "unknown verb",
+      "input": [
+        "exec",
+        "pod",
+        "x"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "the \"exec\" command is not available through this proxy",
+        "short": "verb \"exec\" unavailable"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "unknown verb, long name",
+      "input": [
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "the \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\" command is not available through this proxy",
+        "short": "verb \"xxxxxxxxxxxxxxxxxxx…\" unavailable"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "create token",
+      "input": [
+        "create",
+        "token",
+        "sa"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "\"create token\" is never allowed: it would hand out a credential",
+        "short": "create token"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "cluster-info dump",
+      "input": [
+        "cluster-info",
+        "dump"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "\"cluster-info dump\" is never allowed: it writes files and dumps cluster state",
+        "short": "cluster-info dump"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "auth other",
+      "input": [
+        "auth",
+        "reconcile"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "only \"auth can-i\" and \"auth whoami\" are available through this proxy",
+        "short": "auth: only can-i, whoami"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "auth without a subcommand",
+      "input": [
+        "auth"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "only \"auth can-i\" and \"auth whoami\" are available through this proxy",
+        "short": "auth: only can-i, whoami"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "apply edit-last-applied",
+      "input": [
+        "apply",
+        "edit-last-applied",
+        "x"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "\"apply edit-last-applied\" is never allowed: it opens an editor",
+        "short": "opens an editor"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "secret resource",
+      "input": [
+        "get",
+        "secrets"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "secret resources are never allowed",
+        "short": "secret resource"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "secret resource by slash",
+      "input": [
+        "get",
+        "secret/x"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "secret resources are never allowed",
+        "short": "secret resource"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "secret in a list",
+      "input": [
+        "get",
+        "pods,secrets"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "secret resources are never allowed",
+        "short": "secret resource"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "secret in a flag value",
+      "input": [
+        "get",
+        "pods",
+        "--field-selector=secret"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "secret resources are never allowed",
+        "short": "secret resource"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "bare double dash",
+      "input": [
+        "get",
+        "pods",
+        "--"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "a bare \"--\" is not allowed",
+        "short": "bare \"--\""
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "combined short flags",
+      "input": [
+        "get",
+        "pods",
+        "-ojson"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "write short flags separately (for example \"-o json\", not \"-ojson\")",
+        "short": "combined short flags"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "short flag with equals is not combined",
+      "input": [
+        "get",
+        "pods",
+        "-n=web"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "get ..."
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "unknown flag",
+      "input": [
+        "get",
+        "pods",
+        "--bogus"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "the flag --bogus is not available through this proxy",
+        "short": "flag --bogus unavailable"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "unknown flag, long name",
+      "input": [
+        "get",
+        "pods",
+        "--bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "the flag --bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb is not available through this proxy",
+        "short": "flag --bbbbbbbbbbbbbbbbbbbbbbbbbbb… unavailable"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "identity flag",
+      "input": [
+        "get",
+        "pods",
+        "--kubeconfig=/x"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "the flag --kubeconfig is not available through this proxy",
+        "short": "flag --kubeconfig unavailable"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "output format missing",
+      "input": [
+        "get",
+        "pods",
+        "-o"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "output format must be one of: json, yaml, wide, name, jsonpath=..., jsonpath-as-json=..., custom-columns=...",
+        "short": "output format"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "output format not allowed",
+      "input": [
+        "get",
+        "pods",
+        "-o",
+        "go-template=x"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "output format must be one of: json, yaml, wide, name, jsonpath=..., jsonpath-as-json=..., custom-columns=...",
+        "short": "output format"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "manifest flag without a path",
+      "input": [
+        "apply",
+        "-f"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "the flag -f needs a path",
+        "short": "-f needs a path"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "manifest from a url",
+      "input": [
+        "apply",
+        "-f",
+        "https://example.com/x.yaml"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "-f only accepts a local path inside the configured manifestRoots",
+        "short": "-f: not a local file"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "manifest from stdin",
+      "input": [
+        "apply",
+        "-f",
+        "-"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "-f only accepts a local path inside the configured manifestRoots",
+        "short": "-f: not a local file"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "manifest without roots",
+      "input": [
+        "apply",
+        "-f",
+        "<tmp>/manifests/app.yaml"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "-f is refused because this target has no manifestRoots configured",
+        "short": "no manifestRoots"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "manifest without a roots key",
+      "input": [
+        "apply",
+        "-f",
+        "<tmp>/manifests/app.yaml"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "-f is refused because this target has no manifestRoots configured",
+        "short": "no manifestRoots"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "manifest not found",
+      "input": [
+        "apply",
+        "-f",
+        "<tmp>/manifests/missing.yaml"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "-f path does not exist: <tmp>/manifests/missing.yaml",
+        "short": "-f: file not found"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "manifest outside the roots",
+      "input": [
+        "apply",
+        "-f",
+        "<tmp>/other.yaml"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "-f path is outside the configured manifestRoots",
+        "short": "-f: outside manifestRoots"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "manifest through a link",
+      "input": [
+        "apply",
+        "-f",
+        "<tmp>/manifests/esc.yaml"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "-f path is outside the configured manifestRoots",
+        "short": "-f: outside manifestRoots"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "manifest a directory",
+      "input": [
+        "apply",
+        "-f",
+        "<tmp>/manifests/dir"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "-f must name a single file inside the configured manifestRoots, not a directory",
+        "short": "-f: not a single file"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "manifest patch-file",
+      "input": [
+        "patch",
+        "deploy/x",
+        "--patch-file",
+        "<tmp>/manifests/app.yaml"
+      ],
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "patch ..."
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "review: read verb",
+      "input": [
+        "get",
+        "pods"
+      ],
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "the allowlist for this target is empty, so every command is refused",
+        "short": "allowlist is empty",
+        "unmatched": true,
+        "argv": [
+          "get",
+          "pods"
+        ]
+      },
+      "routeOn": {
+        "argv": [
+          "get",
+          "pods"
+        ]
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "review: read verb with allowlist",
+      "input": [
+        "top",
+        "nodes"
+      ],
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: get ...; describe ...; logs ...; rollout status ...; apply -f *; auth can-i ...",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "argv": [
+          "top",
+          "nodes"
+        ]
+      },
+      "routeOn": {
+        "argv": [
+          "top",
+          "nodes"
+        ]
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "review: write verb",
+      "input": [
+        "delete",
+        "pod",
+        "x"
+      ],
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: get ...; describe ...; logs ...; rollout status ...; apply -f *; auth can-i ...",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "argv": [
+          "delete",
+          "pod",
+          "x"
+        ]
+      },
+      "routeOn": {
+        "note": "It was not sent to the reviewer: only read verbs are reviewed, and delete is not one."
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "review: scale",
+      "input": [
+        "scale",
+        "deploy/x",
+        "--replicas",
+        "3"
+      ],
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: get ...; describe ...; logs ...; rollout status ...; apply -f *; auth can-i ...",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "argv": [
+          "scale",
+          "deploy/x",
+          "--replicas",
+          "3"
+        ]
+      },
+      "routeOn": {
+        "note": "It was not sent to the reviewer: only read verbs are reviewed, and scale is not one."
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "review: a word with a space",
+      "input": [
+        "get",
+        "pods",
+        "-l",
+        "a b"
+      ],
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": true,
+        "rule": "get ..."
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "review: a word with a quote",
+      "input": [
+        "get",
+        "pods",
+        "-l",
+        "a\"b"
+      ],
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": true,
+        "rule": "get ..."
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "review: sixty five words",
+      "input": [
+        "get",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p",
+        "p"
+      ],
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": true,
+        "rule": "get ..."
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "review: a word of two hundred and one characters",
+      "input": [
+        "get",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ],
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": true,
+        "rule": "get ..."
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "review: a hard refusal is never reviewed",
+      "input": [
+        "get",
+        "secrets"
+      ],
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "secret resources are never allowed",
+        "short": "secret resource"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "kubernetes",
+      "label": "review: allowed",
+      "input": [
+        "get",
+        "pods",
+        "-n",
+        "web"
+      ],
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": true,
+        "rule": "get ..."
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "allowed: cat a file",
+      "input": "cat a.txt",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "cat *",
+        "argv": [
+          "cat",
+          "a.txt"
+        ]
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "allowed: cat in a subfolder",
+      "input": "cat sub/b.txt",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "cat *",
+        "argv": [
+          "cat",
+          "sub/b.txt"
+        ]
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "allowed: cat with ./",
+      "input": "cat ./a.txt",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "cat *",
+        "argv": [
+          "cat",
+          "./a.txt"
+        ]
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "allowed: cat a new file",
+      "input": "cat new.txt",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "cat *",
+        "argv": [
+          "cat",
+          "new.txt"
+        ]
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "allowed: cat the folder",
+      "input": "cat .",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "the argument . is, lies inside or contains a path this target protects",
+        "short": "protected path"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "allowed: cat with a trailing slash",
+      "input": "cat sub/",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "cat *",
+        "argv": [
+          "cat",
+          "sub/"
+        ]
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "allowed: bare ls",
+      "input": "ls",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "ls ...",
+        "argv": [
+          "ls"
+        ]
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "allowed: ls a folder",
+      "input": "ls sub",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "ls ...",
+        "argv": [
+          "ls",
+          "sub"
+        ]
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "allowed: ls -l",
+      "input": "ls -l sub",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "ls -l ...",
+        "argv": [
+          "ls",
+          "-l",
+          "sub"
+        ]
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "allowed: literal rule",
+      "input": "git status",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "git status",
+        "argv": [
+          "git",
+          "status"
+        ]
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "allowed: git log with a range",
+      "input": "git log --oneline -n 20 main..dev",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "git log --oneline -n * ...",
+        "argv": [
+          "git",
+          "log",
+          "--oneline",
+          "-n",
+          "20",
+          "main..dev"
+        ]
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "allowed: a program path",
+      "input": "./run.sh",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "./run.sh",
+        "argv": [
+          "./run.sh"
+        ]
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "allowed: a literal outside path",
+      "input": "cat /etc/hosts",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "cat /etc/hosts",
+        "argv": [
+          "cat",
+          "/etc/hosts"
+        ]
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "allowed: a literal flag with an argument",
+      "input": "curl -d@payload.json example.org",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "curl -d@payload.json *",
+        "argv": [
+          "curl",
+          "-d@payload.json",
+          "example.org"
+        ]
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "allowed: a program that is a link out",
+      "input": "venv/bin/run a.txt",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "venv/bin/run ...",
+        "argv": [
+          "venv/bin/run",
+          "a.txt"
+        ]
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "allowed: an example env file",
+      "input": "cat .env.example",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "cat *",
+        "argv": [
+          "cat",
+          ".env.example"
+        ]
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "refused: an absolute path",
+      "input": "cat /etc/passwd",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "the argument /etc/passwd is not a plain name or path; a wildcard in a local rule only matches those. Flags and anything else must be written into the rule literally",
+        "short": "not a plain argument"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "refused: a flag matched by dots",
+      "input": "ls --color=auto",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "the argument --color=auto is not a plain name or path; a wildcard in a local rule only matches those. Flags and anything else must be written into the rule literally",
+        "short": "not a plain argument"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "refused: a flag matched by a star",
+      "input": "cat -n a.txt",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: cat *; ls ...; ls -l ...; git log ...; git log --oneline -n * ...; git status; ./run.sh; tool ...; venv/bin/run ...; curl -d@payload.json *; cat /etc/hosts",
+        "short": "not on allowlist",
+        "unmatched": true
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "refused: a flag in git log",
+      "input": "git log -p",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "the argument -p is not a plain name or path; a wildcard in a local rule only matches those. Flags and anything else must be written into the rule literally",
+        "short": "not a plain argument"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "refused: odd shapes",
+      "input": "tool --include=a:/etc",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "the argument --include=a:/etc is not a plain name or path; a wildcard in a local rule only matches those. Flags and anything else must be written into the rule literally",
+        "short": "not a plain argument"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "refused: dot dot",
+      "input": "cat ../x",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "the argument ../x contains \"..\"",
+        "short": "contains \"..\""
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "refused: dot dot inside",
+      "input": "cat sub/../../x",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "the argument sub/../../x contains \"..\"",
+        "short": "contains \"..\""
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "refused: a link out",
+      "input": "cat link",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "the argument link points outside this target's folder",
+        "short": "outside the folder"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "refused: through a link folder",
+      "input": "cat dirlink/x",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "the argument dirlink/x points outside this target's folder",
+        "short": "outside the folder"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "refused: a dangling link",
+      "input": "cat dangling",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "the argument dangling is a link that cannot be resolved",
+        "short": "unresolvable link"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "refused: a looping link",
+      "input": "cat loop",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "the argument loop is a link that cannot be resolved",
+        "short": "unresolvable link"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "refused: a link into /proc",
+      "input": "cat procl",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "the argument procl goes through a link into /proc, /dev or /sys",
+        "short": "system link"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "refused: a link to the state folder",
+      "input": "cat stlink/session/session.json",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "ksproxy's own files are off limits",
+        "short": "ksproxy files"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "refused: a link to a kubeconfig",
+      "input": "cat kubelink",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "ksproxy's own files are off limits",
+        "short": "ksproxy files"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "refused: a protected folder",
+      "input": "cat vault/x",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "the argument vault/x is, lies inside or contains a path this target protects",
+        "short": "protected path"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "refused: a protected file",
+      "input": "cat private.txt",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "the argument private.txt is, lies inside or contains a path this target protects",
+        "short": "protected path"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "refused: an env file",
+      "input": "cat .env",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "the argument .env names a file or folder that usually holds secrets",
+        "short": "secret file"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "refused: a key file",
+      "input": "cat secrets.pem",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "the argument secrets.pem names a file or folder that usually holds secrets",
+        "short": "secret file"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "refused: a credentials file",
+      "input": "cat credentials",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "the argument credentials names a file or folder that usually holds secrets",
+        "short": "secret file"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "refused: an env file in a subfolder",
+      "input": "cat sub/.env.local",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "the argument sub/.env.local names a file or folder that usually holds secrets",
+        "short": "secret file"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "refused: an argument over 512 bytes",
+      "input": "<string of 604 characters starting cat aaaa>",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "the argument is too long to check",
+        "short": "argument too long"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "refused: a name too long to examine",
+      "input": "<string of 304 characters starting cat aaaa>",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "the argument aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa cannot be examined",
+        "short": "cannot be examined"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "refused: not on the allowlist",
+      "input": "rm a.txt",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: cat *; ls ...; ls -l ...; git log ...; git log --oneline -n * ...; git status; ./run.sh; tool ...; venv/bin/run ...; curl -d@payload.json *; cat /etc/hosts",
+        "short": "not on allowlist",
+        "unmatched": true
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "refused: too few words",
+      "input": "cat",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: cat *; ls ...; ls -l ...; git log ...; git log --oneline -n * ...; git status; ./run.sh; tool ...; venv/bin/run ...; curl -d@payload.json *; cat /etc/hosts",
+        "short": "not on allowlist",
+        "unmatched": true
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "refused: tokenizer, semicolon",
+      "input": "ls;",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "character \";\" is not allowed: this target only accepts plain commands made of letters, digits and _ @ % + = : , . / - (no quotes, pipes, redirects or shell syntax)",
+        "short": "character \";\" not allowed"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "refused: tokenizer, empty",
+      "input": "",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "command is empty",
+        "short": "empty command"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "refused: tokenizer, too long",
+      "input": "<string of 5003 characters starting ls aaaaa>",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "command is longer than 4096 bytes",
+        "short": "command too long"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "refused: tokenizer, not a string",
+      "input": 42,
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "command must be a string",
+        "short": "invalid command"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "refused: tokenizer, dash",
+      "input": "-rf",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "command may not start with \"-\"",
+        "short": "starts with \"-\""
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "refused: tokenizer, quote",
+      "input": "cat \"a\"",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "character \"\"\" is not allowed: this target only accepts plain commands made of letters, digits and _ @ % + = : , . / - (no quotes, pipes, redirects or shell syntax)",
+        "short": "character \"\"\" not allowed"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "refused: the plain problem is shown last",
+      "input": "cat -x link",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "the argument link points outside this target's folder",
+        "short": "outside the folder"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "empty allowlist",
+      "input": "ls",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "the allowlist for this target is empty, so every command is refused",
+        "short": "allowlist is empty",
+        "unmatched": true
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "allow any is no list",
+      "input": "ls",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "this local target has no usable allowlist",
+        "short": "allowlist is empty"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "allow with only unusable rules",
+      "input": "ls x",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target",
+        "short": "not on allowlist"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "allow with an unusable rule and a usable one",
+      "input": "ls",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "ls",
+        "argv": [
+          "ls"
+        ]
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "allow with a rule that is not a string",
+      "input": "ls",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "ls",
+        "argv": [
+          "ls"
+        ]
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "folder: too broad",
+      "input": "cat a.txt",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "this target's folder is not acceptable; ask the user to run \"ksproxy check local infra\"",
+        "short": "folder not allowed"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "folder: a link into /proc",
+      "input": "cat a.txt",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "this target's folder is not acceptable; ask the user to run \"ksproxy check local infra\"",
+        "short": "folder not allowed"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "folder: overlaps the state folder",
+      "input": "cat a.txt",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "this target's folder is not acceptable; ask the user to run \"ksproxy check local infra\"",
+        "short": "folder not allowed"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "folder: holds a kubeconfig",
+      "input": "cat a.txt",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "this target's folder is not acceptable; ask the user to run \"ksproxy check local infra\"",
+        "short": "folder not allowed"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "folder: protected list entries that are not paths",
+      "input": "cat a.txt",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "cat *",
+        "argv": [
+          "cat",
+          "a.txt"
+        ]
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "folder: protected is not a list",
+      "input": "cat a.txt",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "cat *",
+        "argv": [
+          "cat",
+          "a.txt"
+        ]
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "folder: missing but resolvable",
+      "input": "cat a.txt",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": true,
+        "rule": "cat *",
+        "argv": [
+          "cat",
+          "a.txt"
+        ]
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "review: listed program, plain arguments",
+      "input": "git branch",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: cat *; ls ...; ls -l ...; git log ...; git log --oneline -n * ...; git status; ./run.sh; tool ...; venv/bin/run ...; curl -d@payload.json *; cat /etc/hosts",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "argv": [
+          "git",
+          "branch"
+        ]
+      },
+      "routeOn": {
+        "argv": [
+          "git",
+          "branch"
+        ]
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "review: a simple flag",
+      "input": "git branch -a",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: cat *; ls ...; ls -l ...; git log ...; git log --oneline -n * ...; git status; ./run.sh; tool ...; venv/bin/run ...; curl -d@payload.json *; cat /etc/hosts",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "argv": [
+          "git",
+          "branch",
+          "-a"
+        ]
+      },
+      "routeOn": {
+        "argv": [
+          "git",
+          "branch",
+          "-a"
+        ]
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "review: a flag glued to a file name",
+      "input": "git diff -oout",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: cat *; ls ...; ls -l ...; git log ...; git log --oneline -n * ...; git status; ./run.sh; tool ...; venv/bin/run ...; curl -d@payload.json *; cat /etc/hosts",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "argv": [
+          "git",
+          "diff",
+          "-oout"
+        ]
+      },
+      "routeOn": {
+        "argv": [
+          "git",
+          "diff",
+          "-oout"
+        ]
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "review: a flag glued to a secret name",
+      "input": "git diff -xcredentials",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: cat *; ls ...; ls -l ...; git log ...; git log --oneline -n * ...; git status; ./run.sh; tool ...; venv/bin/run ...; curl -d@payload.json *; cat /etc/hosts",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "notReviewed": "the argument credentials names a file or folder that usually holds secrets"
+      },
+      "routeOn": {
+        "note": "It was not sent to the reviewer: the argument credentials names a file or folder that usually holds secrets."
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "review: a flag glued to a protected name",
+      "input": "git diff -xvault",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: cat *; ls ...; ls -l ...; git log ...; git log --oneline -n * ...; git status; ./run.sh; tool ...; venv/bin/run ...; curl -d@payload.json *; cat /etc/hosts",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "notReviewed": "the argument vault is, lies inside or contains a path this target protects"
+      },
+      "routeOn": {
+        "note": "It was not sent to the reviewer: the argument vault is, lies inside or contains a path this target protects."
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "review: a flag glued to nothing",
+      "input": "git diff -xnothing",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: cat *; ls ...; ls -l ...; git log ...; git log --oneline -n * ...; git status; ./run.sh; tool ...; venv/bin/run ...; curl -d@payload.json *; cat /etc/hosts",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "argv": [
+          "git",
+          "diff",
+          "-xnothing"
+        ]
+      },
+      "routeOn": {
+        "argv": [
+          "git",
+          "diff",
+          "-xnothing"
+        ]
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "review: a plain path argument",
+      "input": "git diff sub/b.txt",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: cat *; ls ...; ls -l ...; git log ...; git log --oneline -n * ...; git status; ./run.sh; tool ...; venv/bin/run ...; curl -d@payload.json *; cat /etc/hosts",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "argv": [
+          "git",
+          "diff",
+          "sub/b.txt"
+        ]
+      },
+      "routeOn": {
+        "argv": [
+          "git",
+          "diff",
+          "sub/b.txt"
+        ]
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "review: a path with dot dot",
+      "input": "git diff ../x",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: cat *; ls ...; ls -l ...; git log ...; git log --oneline -n * ...; git status; ./run.sh; tool ...; venv/bin/run ...; curl -d@payload.json *; cat /etc/hosts",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "notReviewed": "the argument ../x contains \"..\""
+      },
+      "routeOn": {
+        "note": "It was not sent to the reviewer: the argument ../x contains \"..\"."
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "review: a secret path",
+      "input": "git diff .env",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: cat *; ls ...; ls -l ...; git log ...; git log --oneline -n * ...; git status; ./run.sh; tool ...; venv/bin/run ...; curl -d@payload.json *; cat /etc/hosts",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "notReviewed": "the argument .env names a file or folder that usually holds secrets"
+      },
+      "routeOn": {
+        "note": "It was not sent to the reviewer: the argument .env names a file or folder that usually holds secrets."
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "review: a link out",
+      "input": "git diff link",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: cat *; ls ...; ls -l ...; git log ...; git log --oneline -n * ...; git status; ./run.sh; tool ...; venv/bin/run ...; curl -d@payload.json *; cat /etc/hosts",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "notReviewed": "the argument link points outside this target's folder"
+      },
+      "routeOn": {
+        "note": "It was not sent to the reviewer: the argument link points outside this target's folder."
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "review: a program not listed",
+      "input": "rm a.txt",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: cat *; ls ...; ls -l ...; git log ...; git log --oneline -n * ...; git status; ./run.sh; tool ...; venv/bin/run ...; curl -d@payload.json *; cat /etc/hosts",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "notReviewed": "the program rm is not one the reviewer may approve for this target"
+      },
+      "routeOn": {
+        "note": "It was not sent to the reviewer: the program rm is not one the reviewer may approve for this target."
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "review: no programs at all",
+      "input": "git branch",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: cat *; ls ...; ls -l ...; git log ...; git log --oneline -n * ...; git status; ./run.sh; tool ...; venv/bin/run ...; curl -d@payload.json *; cat /etc/hosts",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "notReviewed": "the program git is not one the reviewer may approve for this target"
+      },
+      "routeOn": {
+        "note": "It was not sent to the reviewer: the program git is not one the reviewer may approve for this target."
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "review: a flag with a value",
+      "input": "git branch --format=%H",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: cat *; ls ...; ls -l ...; git log ...; git log --oneline -n * ...; git status; ./run.sh; tool ...; venv/bin/run ...; curl -d@payload.json *; cat /etc/hosts",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "notReviewed": "the argument --format=%H is neither a simple flag nor a plain name or path"
+      },
+      "routeOn": {
+        "note": "It was not sent to the reviewer: the argument --format=%H is neither a simple flag nor a plain name or path."
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "review: an absolute path",
+      "input": "git diff /etc/hosts",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: cat *; ls ...; ls -l ...; git log ...; git log --oneline -n * ...; git status; ./run.sh; tool ...; venv/bin/run ...; curl -d@payload.json *; cat /etc/hosts",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "notReviewed": "the argument /etc/hosts is neither a simple flag nor a plain name or path"
+      },
+      "routeOn": {
+        "note": "It was not sent to the reviewer: the argument /etc/hosts is neither a simple flag nor a plain name or path."
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "review: the folder is missing",
+      "input": "git branch",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: cat *; ls ...; ls -l ...; git log ...; git log --oneline -n * ...; git status; ./run.sh; tool ...; venv/bin/run ...; curl -d@payload.json *; cat /etc/hosts",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "notReviewed": "this target's folder does not exist"
+      },
+      "routeOn": {
+        "note": "It was not sent to the reviewer: this target's folder does not exist."
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "review: a listed command",
+      "input": "git status",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": true,
+        "rule": "git status",
+        "argv": [
+          "git",
+          "status"
+        ]
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "review: a wildcard problem comes first",
+      "input": "cat link",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "the argument link points outside this target's folder",
+        "short": "outside the folder"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "review: the tokenizer refusal is not reviewed",
+      "input": "git branch;",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "character \";\" is not allowed: this target only accepts plain commands made of letters, digits and _ @ % + = : , . / - (no quotes, pipes, redirects or shell syntax)",
+        "short": "character \";\" not allowed"
+      },
+      "routeOn": null,
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "review: sixty five words",
+      "input": "<string of 131 characters starting git a a >",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: cat *; ls ...; ls -l ...; git log ...; git log --oneline -n * ...; git status; ./run.sh; tool ...; venv/bin/run ...; curl -d@payload.json *; cat /etc/hosts",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "argv": [
+          "git",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a",
+          "a"
+        ]
+      },
+      "routeOn": {
+        "note": "It was not sent to the reviewer: the command has more than 64 words."
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "review: a word over two hundred characters",
+      "input": "<string of 205 characters starting git aaaa>",
+      "reviewOnTarget": true,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: cat *; ls ...; ls -l ...; git log ...; git log --oneline -n * ...; git status; ./run.sh; tool ...; venv/bin/run ...; curl -d@payload.json *; cat /etc/hosts",
+        "short": "not on allowlist",
+        "unmatched": true,
+        "argv": [
+          "git",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ]
+      },
+      "routeOn": {
+        "note": "It was not sent to the reviewer: a word is longer than 200 characters."
+      },
+      "routeOff": null
+    },
+    {
+      "kind": "local",
+      "label": "review: review false",
+      "input": "git branch",
+      "reviewOnTarget": false,
+      "decision": {
+        "allowed": false,
+        "reason": "not on the allowlist for this target. Allowed: cat *; ls ...; ls -l ...; git log ...; git log --oneline -n * ...; git status; ./run.sh; tool ...; venv/bin/run ...; curl -d@payload.json *; cat /etc/hosts",
+        "short": "not on allowlist",
+        "unmatched": true
+      },
+      "routeOn": null,
+      "routeOff": null
+    }
+  ],
+  "words": [
+    {
+      "kind": "ssh",
+      "argv": [
+        "df",
+        "-h"
+      ],
+      "problem": null
+    },
+    {
+      "kind": "ssh",
+      "argv": "<64 words starting a>",
+      "problem": null
+    },
+    {
+      "kind": "ssh",
+      "argv": "<65 words starting a>",
+      "problem": "the command has more than 64 words"
+    },
+    {
+      "kind": "ssh",
+      "argv": [
+        "<string of 200 characters starting aaaaaaaa>"
+      ],
+      "problem": null
+    },
+    {
+      "kind": "ssh",
+      "argv": [
+        "<string of 201 characters starting aaaaaaaa>"
+      ],
+      "problem": "a word is longer than 200 characters"
+    },
+    {
+      "kind": "ssh",
+      "argv": [
+        "a b"
+      ],
+      "problem": "a word contains a space, a control character or a double quote"
+    },
+    {
+      "kind": "ssh",
+      "argv": [
+        "a\"b"
+      ],
+      "problem": "a word contains a space, a control character or a double quote"
+    },
+    {
+      "kind": "ssh",
+      "argv": [
+        "a\u0001"
+      ],
+      "problem": "a word contains a space, a control character or a double quote"
+    },
+    {
+      "kind": "ssh",
+      "argv": [
+        "a"
+      ],
+      "problem": "a word contains a space, a control character or a double quote"
+    },
+    {
+      "kind": "ssh",
+      "argv": [
+        "a"
+      ],
+      "problem": "a word contains a space, a control character or a double quote"
+    },
+    {
+      "kind": "ssh",
+      "argv": [
+        "a\tb"
+      ],
+      "problem": "a word contains a space, a control character or a double quote"
+    },
+    {
+      "kind": "ssh",
+      "argv": [
+        "=x"
+      ],
+      "problem": "a word starts with \"=\", which the server's shell may expand"
+    },
+    {
+      "kind": "ssh",
+      "argv": [
+        "a==b"
+      ],
+      "problem": "a word contains \"==\" or \":=\", which the server's shell may rewrite"
+    },
+    {
+      "kind": "ssh",
+      "argv": [
+        "a:=b"
+      ],
+      "problem": "a word contains \"==\" or \":=\", which the server's shell may rewrite"
+    },
+    {
+      "kind": "ssh",
+      "argv": [
+        "A=b",
+        "cmd"
+      ],
+      "problem": "the first word sets an environment variable on the server"
+    },
+    {
+      "kind": "ssh",
+      "argv": [
+        "cmd",
+        "A=b"
+      ],
+      "problem": null
+    },
+    {
+      "kind": "ssh",
+      "argv": [
+        "cmd",
+        "=x"
+      ],
+      "problem": "a word starts with \"=\", which the server's shell may expand"
+    },
+    {
+      "kind": "kubernetes",
+      "argv": [
+        "df",
+        "-h"
+      ],
+      "problem": null
+    },
+    {
+      "kind": "kubernetes",
+      "argv": "<64 words starting a>",
+      "problem": null
+    },
+    {
+      "kind": "kubernetes",
+      "argv": "<65 words starting a>",
+      "problem": "the command has more than 64 words"
+    },
+    {
+      "kind": "kubernetes",
+      "argv": [
+        "<string of 200 characters starting aaaaaaaa>"
+      ],
+      "problem": null
+    },
+    {
+      "kind": "kubernetes",
+      "argv": [
+        "<string of 201 characters starting aaaaaaaa>"
+      ],
+      "problem": "a word is longer than 200 characters"
+    },
+    {
+      "kind": "kubernetes",
+      "argv": [
+        "a b"
+      ],
+      "problem": "a word contains a space, a control character or a double quote"
+    },
+    {
+      "kind": "kubernetes",
+      "argv": [
+        "a\"b"
+      ],
+      "problem": "a word contains a space, a control character or a double quote"
+    },
+    {
+      "kind": "kubernetes",
+      "argv": [
+        "a\u0001"
+      ],
+      "problem": "a word contains a space, a control character or a double quote"
+    },
+    {
+      "kind": "kubernetes",
+      "argv": [
+        "a"
+      ],
+      "problem": "a word contains a space, a control character or a double quote"
+    },
+    {
+      "kind": "kubernetes",
+      "argv": [
+        "a"
+      ],
+      "problem": "a word contains a space, a control character or a double quote"
+    },
+    {
+      "kind": "kubernetes",
+      "argv": [
+        "a\tb"
+      ],
+      "problem": "a word contains a space, a control character or a double quote"
+    },
+    {
+      "kind": "kubernetes",
+      "argv": [
+        "=x"
+      ],
+      "problem": null
+    },
+    {
+      "kind": "kubernetes",
+      "argv": [
+        "a==b"
+      ],
+      "problem": null
+    },
+    {
+      "kind": "kubernetes",
+      "argv": [
+        "a:=b"
+      ],
+      "problem": null
+    },
+    {
+      "kind": "kubernetes",
+      "argv": [
+        "A=b",
+        "cmd"
+      ],
+      "problem": null
+    },
+    {
+      "kind": "kubernetes",
+      "argv": [
+        "cmd",
+        "A=b"
+      ],
+      "problem": null
+    },
+    {
+      "kind": "kubernetes",
+      "argv": [
+        "cmd",
+        "=x"
+      ],
+      "problem": null
+    },
+    {
+      "kind": "local",
+      "argv": [
+        "df",
+        "-h"
+      ],
+      "problem": null
+    },
+    {
+      "kind": "local",
+      "argv": "<64 words starting a>",
+      "problem": null
+    },
+    {
+      "kind": "local",
+      "argv": "<65 words starting a>",
+      "problem": "the command has more than 64 words"
+    },
+    {
+      "kind": "local",
+      "argv": [
+        "<string of 200 characters starting aaaaaaaa>"
+      ],
+      "problem": null
+    },
+    {
+      "kind": "local",
+      "argv": [
+        "<string of 201 characters starting aaaaaaaa>"
+      ],
+      "problem": "a word is longer than 200 characters"
+    },
+    {
+      "kind": "local",
+      "argv": [
+        "a b"
+      ],
+      "problem": "a word contains a space, a control character or a double quote"
+    },
+    {
+      "kind": "local",
+      "argv": [
+        "a\"b"
+      ],
+      "problem": "a word contains a space, a control character or a double quote"
+    },
+    {
+      "kind": "local",
+      "argv": [
+        "a\u0001"
+      ],
+      "problem": "a word contains a space, a control character or a double quote"
+    },
+    {
+      "kind": "local",
+      "argv": [
+        "a"
+      ],
+      "problem": "a word contains a space, a control character or a double quote"
+    },
+    {
+      "kind": "local",
+      "argv": [
+        "a"
+      ],
+      "problem": "a word contains a space, a control character or a double quote"
+    },
+    {
+      "kind": "local",
+      "argv": [
+        "a\tb"
+      ],
+      "problem": "a word contains a space, a control character or a double quote"
+    },
+    {
+      "kind": "local",
+      "argv": [
+        "=x"
+      ],
+      "problem": null
+    },
+    {
+      "kind": "local",
+      "argv": [
+        "a==b"
+      ],
+      "problem": null
+    },
+    {
+      "kind": "local",
+      "argv": [
+        "a:=b"
+      ],
+      "problem": null
+    },
+    {
+      "kind": "local",
+      "argv": [
+        "A=b",
+        "cmd"
+      ],
+      "problem": null
+    },
+    {
+      "kind": "local",
+      "argv": [
+        "cmd",
+        "A=b"
+      ],
+      "problem": null
+    },
+    {
+      "kind": "local",
+      "argv": [
+        "cmd",
+        "=x"
+      ],
+      "problem": null
+    }
+  ],
+  "routes": [
+    {
+      "label": "allowed",
+      "kind": "ssh",
+      "on": null,
+      "off": null
+    },
+    {
+      "label": "allowed",
+      "kind": "kubernetes",
+      "on": null,
+      "off": null
+    },
+    {
+      "label": "allowed",
+      "kind": "local",
+      "on": null,
+      "off": null
+    },
+    {
+      "label": "refused, not unmatched",
+      "kind": "ssh",
+      "on": null,
+      "off": null
+    },
+    {
+      "label": "refused, not unmatched",
+      "kind": "kubernetes",
+      "on": null,
+      "off": null
+    },
+    {
+      "label": "refused, not unmatched",
+      "kind": "local",
+      "on": null,
+      "off": null
+    },
+    {
+      "label": "unmatched, no argv",
+      "kind": "ssh",
+      "on": null,
+      "off": null
+    },
+    {
+      "label": "unmatched, no argv",
+      "kind": "kubernetes",
+      "on": null,
+      "off": null
+    },
+    {
+      "label": "unmatched, no argv",
+      "kind": "local",
+      "on": null,
+      "off": null
+    },
+    {
+      "label": "unmatched, argv not a list",
+      "kind": "ssh",
+      "on": null,
+      "off": null
+    },
+    {
+      "label": "unmatched, argv not a list",
+      "kind": "kubernetes",
+      "on": null,
+      "off": null
+    },
+    {
+      "label": "unmatched, argv not a list",
+      "kind": "local",
+      "on": null,
+      "off": null
+    },
+    {
+      "label": "unmatched with argv",
+      "kind": "ssh",
+      "on": {
+        "argv": [
+          "get",
+          "pods"
+        ]
+      },
+      "off": null
+    },
+    {
+      "label": "unmatched with argv",
+      "kind": "kubernetes",
+      "on": {
+        "argv": [
+          "get",
+          "pods"
+        ]
+      },
+      "off": null
+    },
+    {
+      "label": "unmatched with argv",
+      "kind": "local",
+      "on": {
+        "argv": [
+          "get",
+          "pods"
+        ]
+      },
+      "off": null
+    },
+    {
+      "label": "unmatched, notReviewed",
+      "kind": "ssh",
+      "on": {
+        "note": "It was not sent to the reviewer: because."
+      },
+      "off": null
+    },
+    {
+      "label": "unmatched, notReviewed",
+      "kind": "kubernetes",
+      "on": {
+        "note": "It was not sent to the reviewer: because."
+      },
+      "off": null
+    },
+    {
+      "label": "unmatched, notReviewed",
+      "kind": "local",
+      "on": {
+        "note": "It was not sent to the reviewer: because."
+      },
+      "off": null
+    },
+    {
+      "label": "unmatched, notReviewed not a string",
+      "kind": "ssh",
+      "on": {
+        "argv": [
+          "get",
+          "pods"
+        ]
+      },
+      "off": null
+    },
+    {
+      "label": "unmatched, notReviewed not a string",
+      "kind": "kubernetes",
+      "on": {
+        "argv": [
+          "get",
+          "pods"
+        ]
+      },
+      "off": null
+    },
+    {
+      "label": "unmatched, notReviewed not a string",
+      "kind": "local",
+      "on": {
+        "argv": [
+          "get",
+          "pods"
+        ]
+      },
+      "off": null
+    },
+    {
+      "label": "unmatched, write verb",
+      "kind": "ssh",
+      "on": {
+        "argv": [
+          "delete",
+          "pod",
+          "x"
+        ]
+      },
+      "off": null
+    },
+    {
+      "label": "unmatched, write verb",
+      "kind": "kubernetes",
+      "on": {
+        "note": "It was not sent to the reviewer: only read verbs are reviewed, and delete is not one."
+      },
+      "off": null
+    },
+    {
+      "label": "unmatched, write verb",
+      "kind": "local",
+      "on": {
+        "argv": [
+          "delete",
+          "pod",
+          "x"
+        ]
+      },
+      "off": null
+    },
+    {
+      "label": "unmatched, odd first word",
+      "kind": "ssh",
+      "on": {
+        "note": "It was not sent to the reviewer: the first word sets an environment variable on the server."
+      },
+      "off": null
+    },
+    {
+      "label": "unmatched, odd first word",
+      "kind": "kubernetes",
+      "on": {
+        "note": "It was not sent to the reviewer: only read verbs are reviewed, and A=b is not one."
+      },
+      "off": null
+    },
+    {
+      "label": "unmatched, odd first word",
+      "kind": "local",
+      "on": {
+        "argv": [
+          "A=b",
+          "x"
+        ]
+      },
+      "off": null
+    }
+  ]
+}

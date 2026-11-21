@@ -1,0 +1,157 @@
+{
+  "empty": {
+    "ssh": [],
+    "kubernetes": [],
+    "local": [],
+    "http": [],
+    "command": [],
+    "elasticsearch": [],
+    "rabbitmq": [],
+    "redis": [],
+    "postgres": [],
+    "mysql": [],
+    "mongodb": [],
+    "kafka": [],
+    "reviewers": {}
+  },
+  "full": {
+    "ssh": [
+      {
+        "kind": "ssh",
+        "name": "web1",
+        "host": "web1.example.com",
+        "jumps": [
+          "ssh -i .ssh/key user@bastion",
+          "ssh -p 2222 user2@inner"
+        ],
+        "description": "behind two jumps",
+        "allow": [
+          "uptime",
+          "df -h"
+        ],
+        "review": {
+          "reviewer": "fast",
+          "policy": "read only",
+          "accept": [
+            "sure",
+            "likely"
+          ]
+        }
+      },
+      {
+        "kind": "ssh",
+        "name": "any1",
+        "host": "any1.example.com",
+        "description": "",
+        "allow": "any"
+      },
+      {
+        "kind": "ssh",
+        "name": "bare1",
+        "host": "bare1.example.com",
+        "description": "",
+        "allow": []
+      }
+    ],
+    "kubernetes": [
+      {
+        "kind": "kubernetes",
+        "name": "lab",
+        "kubeconfig": "/srv/kube/lab.yaml",
+        "proxyPort": 18001,
+        "tunnel": {
+          "host": "bastion.example.com",
+          "localPort": 16443,
+          "remote": "127.0.0.1:6443"
+        },
+        "manifestRoots": [
+          "/srv/lab/manifests",
+          "/srv/lab/more"
+        ],
+        "description": "lab cluster",
+        "allow": [
+          "get ...",
+          "apply -f *"
+        ],
+        "review": {
+          "reviewer": "slow",
+          "policy": "read only",
+          "accept": [
+            "sure"
+          ]
+        }
+      },
+      {
+        "kind": "kubernetes",
+        "name": "lab2",
+        "kubeconfig": "/srv/kube/lab2.yaml",
+        "proxyPort": 18002,
+        "tunnel": null,
+        "manifestRoots": [],
+        "description": "",
+        "allow": []
+      }
+    ],
+    "local": [
+      {
+        "kind": "local",
+        "name": "infra",
+        "cwd": "/srv/infra",
+        "description": "terraform repo",
+        "allow": [
+          "git status",
+          "ls ..."
+        ],
+        "review": {
+          "reviewer": "fast",
+          "policy": "p",
+          "accept": [
+            "sure"
+          ],
+          "programs": [
+            "git",
+            "ls"
+          ]
+        },
+        "protect": [
+          "secrets",
+          "a/b"
+        ]
+      },
+      {
+        "kind": "local",
+        "name": "bare",
+        "cwd": "/srv/bare",
+        "description": "",
+        "allow": []
+      }
+    ],
+    "http": [],
+    "command": [],
+    "elasticsearch": [],
+    "rabbitmq": [],
+    "redis": [],
+    "postgres": [],
+    "mysql": [],
+    "mongodb": [],
+    "kafka": [],
+    "reviewers": {
+      "fast": {
+        "name": "fast",
+        "baseUrl": "https://review.example.com/v1/",
+        "model": "m-1",
+        "keyEnv": null,
+        "timeoutSeconds": 10,
+        "maxCalls": 200
+      },
+      "slow": {
+        "name": "slow",
+        "baseUrl": "http://localhost:8080/v1/",
+        "model": "m-2",
+        "keyEnv": "REVIEW_KEY",
+        "timeoutSeconds": 30,
+        "maxCalls": 50
+      }
+    }
+  }
+}

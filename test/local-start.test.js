@@ -354,7 +354,7 @@ test('the home directory and the root are skipped as too broad, a link to nowher
   });
   const home = path.join(world.base, 'home');
   const dangling = path.join(world.base, 'dangling');
-  fs.mkdirSync(home);
+  assert.ok(fs.statSync(home).isDirectory(), 'makeWorld gives the world its own home folder');
   fs.symlinkSync(path.join(world.base, 'no-such-target'), dangling);
   pointAt(world, home, 0);
   pointAt(world, '/', 1);

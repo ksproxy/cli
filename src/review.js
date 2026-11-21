@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import net from 'node:net';
-import { clip } from './audit.js';
+import { clip } from './text.js';
+import { kindByKey } from './kinds/index.js';
 
 const MAX_ANSWER_BYTES = 65536;
 const VERDICTS = ['allow', 'refuse'];
@@ -23,6 +24,7 @@ export const SYSTEM_TEXT = [
   '- Judge only what the command does when it runs.',
   '- A command that could change, delete, restart, install, send data elsewhere, read credentials or start another program does not fit a read-only policy.',
   '- If you cannot tell what the command does, do not allow it.',
+  '- For an HTTP request the command is the method and one word per path segment; each word that starts with ? is one name and value of the query of the request, written as ?name=value.',
   '',
   'Answer with one JSON object and nothing else:',
   '{"verdict":"allow" or "refuse","certainty":"sure" or "likely" or "unsure","reason":"at most 12 words"}',
@@ -137,7 +139,7 @@ const UNAVAILABLE = { allowed: false, short: 'review not available' };
 
 function validSubject(subject) {
   return subject !== null && typeof subject === 'object'
-    && ['ssh', 'kubernetes', 'local'].includes(subject.kind)
+    && kindByKey(subject.kind) !== undefined
     && typeof subject.name === 'string'
     && Array.isArray(subject.argv) && subject.argv.length > 0 && subject.argv.length <= 256
     && subject.argv.every((a) => typeof a === 'string');
@@ -159,10 +161,16 @@ export function startReviewServer({
     } catch {
       return UNAVAILABLE;
     }
+    return answerSubject(subject);
+  };
+
+  // The same checks, cache, budget and verdict for a request from the socket and for one from inside start.
+  const answerSubject = async (subject) => {
     if (!validSubject(subject)) return UNAVAILABLE;
     const entry = targets.get(`${subject.kind}:${subject.name}`);
     if (entry === undefined) return UNAVAILABLE;
-    if (subject.kind === 'local' && !entry.review.programs.includes(subject.argv[0])) return UNAVAILABLE;
+    const { reviewServerCheck } = kindByKey(subject.kind);
+    if (reviewServerCheck !== undefined && reviewServerCheck(entry, subject) === false) return UNAVAILABLE;
     const cacheKey = JSON.stringify([subject.kind, subject.name, subject.argv]);
     if (cache.has(cacheKey)) return cache.get(cacheKey);
     if (pending.has(cacheKey)) return pending.get(cacheKey);
@@ -187,6 +195,8 @@ export function startReviewServer({
     }
   };
 
+  const settled = (promise) => promise.catch(() => UNAVAILABLE);
+
   const server = net.createServer((conn) => {
     open.add(conn);
     let buffered = '';
@@ -204,7 +214,7 @@ export function startReviewServer({
       if (end === -1) return;
       conn.off('data', onData);
       conn.setTimeout(0);
-      answer(buffered.slice(0, end)).catch(() => UNAVAILABLE).then((reply) => conn.end(`${JSON.stringify(reply)}\n`));
+      settled(answer(buffered.slice(0, end))).then((reply) => conn.end(`${JSON.stringify(reply)}\n`));
     };
     conn.on('data', onData);
   });
@@ -225,6 +235,8 @@ export function startReviewServer({
           for (const conn of open) conn.destroy();
           server.close(() => done());
         }),
+        // The answer inside start, read back exactly as askReview reads a reply from the socket.
+        ask: (subject) => settled(answerSubject(subject)).then((reply) => readReply(JSON.stringify(reply))),
       });
     });
   });

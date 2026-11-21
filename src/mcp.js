@@ -1,13 +1,15 @@
 import fs from 'node:fs';
 import readline from 'node:readline';
-import { callTool, TOOLS } from './tools.js';
+import { loadInventory } from './inventory.js';
+import { inventoryPath } from './paths.js';
+import { callTool, toolDefinitions } from './tools.js';
 
 const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
 export const SERVER_INFO = { name: 'ksproxy', version: pkg.version };
 
 const PROTOCOL_VERSIONS = ['2024-11-05', '2025-03-26', '2025-06-18'];
-const INSTRUCTIONS = 'Run commands on the ssh servers, Kubernetes clusters and local folders the user has opened. '
+const INSTRUCTIONS = 'Run commands on the ssh servers, Kubernetes clusters, local folders and service targets (databases, queues and HTTP APIs) the user has opened. '
   + 'Call list_targets first. Every call is checked against a per-target allowlist and logged. '
   + 'If there is no active session, ask the user to run "ksproxy start".';
 
@@ -17,6 +19,19 @@ function failure(id, code, message) {
 
 function success(id, result) {
   return { jsonrpc: '2.0', id, result };
+}
+
+// The inventory as the tool listing needs it. No inventory file holds no target; a file that cannot be read or is
+// not a valid inventory gives null, and then every tool is listed. The inventory holds no credential, and reading
+// it here reads nothing else; a failure never stops the server.
+function inventoryForTools(env) {
+  const file = inventoryPath(env);
+  if (!fs.existsSync(file)) return {};
+  try {
+    return loadInventory(file);
+  } catch {
+    return null;
+  }
 }
 
 function validId(id) {
@@ -48,7 +63,7 @@ export async function handleMessage(message, env = process.env) {
       case 'ping':
         return success(id, {});
       case 'tools/list':
-        return success(id, { tools: TOOLS });
+        return success(id, { tools: toolDefinitions(inventoryForTools(env)) });
       case 'tools/call': {
         const args = params?.arguments;
         const okParams = params !== null && typeof params === 'object' && typeof params.name === 'string'

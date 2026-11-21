@@ -13,14 +13,17 @@ const PAIRS = { ']': '[', '}': '{', ')': '(' };
 
 const doc = fs.existsSync(DOC_PATH) ? fs.readFileSync(DOC_PATH, 'utf8') : '';
 
-function sourceFiles() {
+function listJs(dir) {
   const files = [];
-  for (const dir of ['src', 'bin']) {
-    for (const name of fs.readdirSync(path.join(ROOT, dir)).sort()) {
-      if (name.endsWith('.js')) files.push(`${dir}/${name}`);
-    }
+  for (const entry of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+    if (entry.isDirectory()) files.push(...listJs(`${dir}/${entry.name}`));
+    else if (entry.name.endsWith('.js')) files.push(`${dir}/${entry.name}`);
   }
   return files;
+}
+
+function sourceFiles() {
+  return ['src', 'bin'].flatMap((dir) => listJs(dir)).sort();
 }
 
 function exportedNames(source) {
@@ -253,6 +256,15 @@ test('every mermaid block uses an allowed type and safe syntax', () => {
     for (const p of found) problems.push(`${at}: ${p}`);
   }
   assert.deepEqual(problems, []);
+});
+
+test('every mermaid block has at most 25 non-empty lines', () => {
+  const limit = 25;
+  const tooBig = mermaidBlocks(doc)
+    .map((block) => ({ block, size: block.split('\n').filter((l) => l.trim() !== '').length }))
+    .filter((entry) => entry.size > limit)
+    .map((entry) => `docs/LOGIC.md line ${lineNumberOf(doc, entry.block)}: ${entry.size} lines`);
+  assert.deepEqual(tooBig, []);
 });
 
 test('PART 1 has at least seven mermaid diagrams', () => {

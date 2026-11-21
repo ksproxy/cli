@@ -3,6 +3,21 @@ import { randomBytes } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 
+export function isCaseInsensitive(platform = process.platform) {
+  return platform === 'darwin' || platform === 'win32';
+}
+
+const DATA_VOLUME = '/System/Volumes/Data';
+
+// On macOS the same file can be named with or without the leading /System/Volumes/Data component.
+// Only that exact leading component is dropped, and only on darwin.
+export function dropDataVolume(p, platform = process.platform) {
+  if (platform !== 'darwin' || !p.startsWith(DATA_VOLUME)) return p;
+  const rest = p.slice(DATA_VOLUME.length);
+  if (rest === '') return '/';
+  return rest.startsWith('/') ? rest : p;
+}
+
 export function expandHome(p) {
   if (p === '~') return os.homedir();
   if (p.startsWith('~/')) return path.join(os.homedir(), p.slice(2));
@@ -53,12 +68,31 @@ export function reviewSocketPath(env = process.env) {
   return socketPath('review', 'sock', env);
 }
 
+export const CALL_SOCKET_NAME = 'call-sock';
+
+export function callSocketPath(env = process.env) {
+  return socketPath('call', 'sock', env);
+}
+
 export function sshBin(env = process.env) {
   return env.KSPROXY_SSH || 'ssh';
 }
 
 export function kubectlBin(env = process.env) {
   return env.KSPROXY_KUBECTL || 'kubectl';
+}
+
+export function mongoshBin(env = process.env) {
+  return env.KSPROXY_MONGOSH || 'mongosh';
+}
+
+export function psqlBin(env = process.env) {
+  return env.KSPROXY_PSQL || 'psql';
+}
+
+// client is the target's "client": mysql or mariadb.
+export function mysqlBin(env = process.env, client = 'mysql') {
+  return env.KSPROXY_MYSQL || client;
 }
 
 export function ensureDir(dir) {

@@ -1,0 +1,269 @@
+ssh allowed | plain | 09:05:07 ssh  web1       ok       0.1s   uptime
+ssh allowed | verbose | 09:05:07 ssh  web1       ok       0.1s   uptime  (rule: uptime, out 5B, err 0B)
+ssh allowed, slow | plain | 09:05:07 ssh  web1       ok       1m01s  uptime
+ssh allowed, slow | verbose | 09:05:07 ssh  web1       ok       1m01s  uptime  (rule: r, out 1200B, err 3B)
+ssh allowed, no timing | plain | 09:05:07 ssh  web1       ok              uptime
+ssh allowed, no timing | verbose | 09:05:07 ssh  web1       ok              uptime
+ssh exit code | plain | 09:05:07 ssh  web1       exit 3   1.5s   uptime
+ssh exit code | verbose | 09:05:07 ssh  web1       exit 3   1.5s   uptime  (rule: r)
+ssh exit code missing | plain | 09:05:07 ssh  web1       exit ?   0.0s   uptime
+ssh exit code missing | verbose | 09:05:07 ssh  web1       exit ?   0.0s   uptime
+ssh timed out | plain | 09:05:07 ssh  web1       TIMEOUT  1m00s  uptime
+ssh timed out | verbose | 09:05:07 ssh  web1       TIMEOUT  1m00s  uptime  (rule: r)
+ssh could not start | plain | 09:05:07 ssh  web1       ERROR    0.0s   uptime
+ssh could not start | verbose | 09:05:07 ssh  web1       ERROR    0.0s   uptime  (rule: r)
+ssh reviewed with a reason | plain | 09:05:07 ssh  web1       ok       0.1s   uptime  (model: only reads)
+ssh reviewed with a reason | verbose | 09:05:07 ssh  web1       ok       0.1s   uptime  (rule: review, model: only reads)
+ssh reviewed without a reason | plain | 09:05:07 ssh  web1       ok       0.1s   uptime  (model)
+ssh reviewed without a reason | verbose | 09:05:07 ssh  web1       ok       0.1s   uptime  (rule: review, model)
+ssh refused with a short text | plain | 09:05:07 ssh  web1       DENIED          uptime  [not on allowlist]
+ssh refused with a short text | verbose | 09:05:07 ssh  web1       DENIED          uptime  [not on allowlist]
+ssh refused with a reason only | plain | 09:05:07 ssh  web1       DENIED          uptime  [rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr…]
+ssh refused with a reason only | verbose | 09:05:07 ssh  web1       DENIED          uptime  [rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr…]
+ssh refused with nothing | plain | 09:05:07 ssh  web1       DENIED          uptime
+ssh refused with nothing | verbose | 09:05:07 ssh  web1       DENIED          uptime
+ssh refused with an unprintable text | plain | 09:05:07 ssh  web1       DENIED          uptime  [a\u001bb\u202ec]
+ssh refused with an unprintable text | verbose | 09:05:07 ssh  web1       DENIED          uptime  [a\u001bb\u202ec]
+ssh control characters | plain | 09:05:07 ssh  web1       ok              a\u001b[31mb
+ssh control characters | verbose | 09:05:07 ssh  web1       ok              a\u001b[31mb  (rule: a\u0007b)
+ssh invalid detail | plain | 09:05:07 ssh  web1       DENIED          (invalid)  [invalid arguments]
+ssh invalid detail | verbose | 09:05:07 ssh  web1       DENIED          (invalid)  [invalid arguments]
+ssh no detail | plain | 09:05:07 ssh  web1       DENIED          [invalid arguments]
+ssh no detail | verbose | 09:05:07 ssh  web1       DENIED          [invalid arguments]
+ssh long target | plain | 09:05:07 ssh  averylong… DENIED          uptime  [s]
+ssh long target | verbose | 09:05:07 ssh  averylong… DENIED          uptime  [s]
+kube allowed | plain | 09:05:07 kube web1       ok       0.1s   get pods -n web
+kube allowed | verbose | 09:05:07 kube web1       ok       0.1s   get pods -n web  (rule: uptime, out 5B, err 0B)
+kube allowed, slow | plain | 09:05:07 kube web1       ok       1m01s  get pods -n web
+kube allowed, slow | verbose | 09:05:07 kube web1       ok       1m01s  get pods -n web  (rule: r, out 1200B, err 3B)
+kube allowed, no timing | plain | 09:05:07 kube web1       ok              get pods -n web
+kube allowed, no timing | verbose | 09:05:07 kube web1       ok              get pods -n web
+kube exit code | plain | 09:05:07 kube web1       exit 3   1.5s   get pods -n web
+kube exit code | verbose | 09:05:07 kube web1       exit 3   1.5s   get pods -n web  (rule: r)
+kube exit code missing | plain | 09:05:07 kube web1       exit ?   0.0s   get pods -n web
+kube exit code missing | verbose | 09:05:07 kube web1       exit ?   0.0s   get pods -n web
+kube timed out | plain | 09:05:07 kube web1       TIMEOUT  1m00s  get pods -n web
+kube timed out | verbose | 09:05:07 kube web1       TIMEOUT  1m00s  get pods -n web  (rule: r)
+kube could not start | plain | 09:05:07 kube web1       ERROR    0.0s   get pods -n web
+kube could not start | verbose | 09:05:07 kube web1       ERROR    0.0s   get pods -n web  (rule: r)
+kube reviewed with a reason | plain | 09:05:07 kube web1       ok       0.1s   get pods -n web  (model: only reads)
+kube reviewed with a reason | verbose | 09:05:07 kube web1       ok       0.1s   get pods -n web  (rule: review, model: only reads)
+kube reviewed without a reason | plain | 09:05:07 kube web1       ok       0.1s   get pods -n web  (model)
+kube reviewed without a reason | verbose | 09:05:07 kube web1       ok       0.1s   get pods -n web  (rule: review, model)
+kube refused with a short text | plain | 09:05:07 kube web1       DENIED          get pods -n web  [not on allowlist]
+kube refused with a short text | verbose | 09:05:07 kube web1       DENIED          get pods -n web  [not on allowlist]
+kube refused with a reason only | plain | 09:05:07 kube web1       DENIED          get pods -n web  [rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr…]
+kube refused with a reason only | verbose | 09:05:07 kube web1       DENIED          get pods -n web  [rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr…]
+kube refused with nothing | plain | 09:05:07 kube web1       DENIED          get pods -n web
+kube refused with nothing | verbose | 09:05:07 kube web1       DENIED          get pods -n web
+kube refused with an unprintable text | plain | 09:05:07 kube web1       DENIED          get pods -n web  [a\u001bb\u202ec]
+kube refused with an unprintable text | verbose | 09:05:07 kube web1       DENIED          get pods -n web  [a\u001bb\u202ec]
+kube control characters | plain | 09:05:07 kube web1       ok              x\u0000y
+kube control characters | verbose | 09:05:07 kube web1       ok              x\u0000y  (rule: a\u0007b)
+kube invalid detail | plain | 09:05:07 kube web1       DENIED          (invalid)  [invalid arguments]
+kube invalid detail | verbose | 09:05:07 kube web1       DENIED          (invalid)  [invalid arguments]
+kube no detail | plain | 09:05:07 kube web1       DENIED          [invalid arguments]
+kube no detail | verbose | 09:05:07 kube web1       DENIED          [invalid arguments]
+kube long target | plain | 09:05:07 kube averylong… DENIED          get pods -n web  [s]
+kube long target | verbose | 09:05:07 kube averylong… DENIED          get pods -n web  [s]
+local allowed | plain | 09:05:07 loc  web1       ok       0.1s   git status
+local allowed | verbose | 09:05:07 loc  web1       ok       0.1s   git status  (rule: uptime, out 5B, err 0B)
+local allowed, slow | plain | 09:05:07 loc  web1       ok       1m01s  git status
+local allowed, slow | verbose | 09:05:07 loc  web1       ok       1m01s  git status  (rule: r, out 1200B, err 3B)
+local allowed, no timing | plain | 09:05:07 loc  web1       ok              git status
+local allowed, no timing | verbose | 09:05:07 loc  web1       ok              git status
+local exit code | plain | 09:05:07 loc  web1       exit 3   1.5s   git status
+local exit code | verbose | 09:05:07 loc  web1       exit 3   1.5s   git status  (rule: r)
+local exit code missing | plain | 09:05:07 loc  web1       exit ?   0.0s   git status
+local exit code missing | verbose | 09:05:07 loc  web1       exit ?   0.0s   git status
+local timed out | plain | 09:05:07 loc  web1       TIMEOUT  1m00s  git status
+local timed out | verbose | 09:05:07 loc  web1       TIMEOUT  1m00s  git status  (rule: r)
+local could not start | plain | 09:05:07 loc  web1       ERROR    0.0s   git status
+local could not start | verbose | 09:05:07 loc  web1       ERROR    0.0s   git status  (rule: r)
+local reviewed with a reason | plain | 09:05:07 loc  web1       ok       0.1s   git status  (model: only reads)
+local reviewed with a reason | verbose | 09:05:07 loc  web1       ok       0.1s   git status  (rule: review, model: only reads)
+local reviewed without a reason | plain | 09:05:07 loc  web1       ok       0.1s   git status  (model)
+local reviewed without a reason | verbose | 09:05:07 loc  web1       ok       0.1s   git status  (rule: review, model)
+local refused with a short text | plain | 09:05:07 loc  web1       DENIED          git status  [not on allowlist]
+local refused with a short text | verbose | 09:05:07 loc  web1       DENIED          git status  [not on allowlist]
+local refused with a reason only | plain | 09:05:07 loc  web1       DENIED          git status  [rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr…]
+local refused with a reason only | verbose | 09:05:07 loc  web1       DENIED          git status  [rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr…]
+local refused with nothing | plain | 09:05:07 loc  web1       DENIED          git status
+local refused with nothing | verbose | 09:05:07 loc  web1       DENIED          git status
+local refused with an unprintable text | plain | 09:05:07 loc  web1       DENIED          git status  [a\u001bb\u202ec]
+local refused with an unprintable text | verbose | 09:05:07 loc  web1       DENIED          git status  [a\u001bb\u202ec]
+local control characters | plain | 09:05:07 loc  web1       ok              a\u001b[31mb
+local control characters | verbose | 09:05:07 loc  web1       ok              a\u001b[31mb  (rule: a\u0007b)
+local invalid detail | plain | 09:05:07 loc  web1       DENIED          (invalid)  [invalid arguments]
+local invalid detail | verbose | 09:05:07 loc  web1       DENIED          (invalid)  [invalid arguments]
+local no detail | plain | 09:05:07 loc  web1       DENIED          [invalid arguments]
+local no detail | verbose | 09:05:07 loc  web1       DENIED          [invalid arguments]
+local long target | plain | 09:05:07 loc  averylong… DENIED          git status  [s]
+local long target | verbose | 09:05:07 loc  averylong… DENIED          git status  [s]
+kube spelled in full | plain | 09:05:07 kube lab        ok              get pods
+kube spelled in full | verbose | 09:05:07 kube lab        ok              get pods
+local spelled in full | plain | 09:05:07 loc  infra      ok              ls
+local spelled in full | verbose | 09:05:07 loc  infra      ok              ls
+kube by tool only | plain | 09:05:07 kube lab        ok              get pods
+kube by tool only | verbose | 09:05:07 kube lab        ok              get pods
+local by tool only | plain | 09:05:07 loc  infra      ok              ls
+local by tool only | verbose | 09:05:07 loc  infra      ok              ls
+ssh by tool only | plain | 09:05:07 ssh  web1       ok              ls
+ssh by tool only | verbose | 09:05:07 ssh  web1       ok              ls
+no kind, no tool | plain | 09:05:07 ssh  web1       ok              ls
+no kind, no tool | verbose | 09:05:07 ssh  web1       ok              ls
+no event | plain | 09:05:07 ssh  web1       ok              ls
+no event | verbose | 09:05:07 ssh  web1       ok              ls
+no target | plain | 09:05:07 ssh             ok              ls
+no target | verbose | 09:05:07 ssh             ok              ls
+no timestamp | plain | --:--:-- ssh             ok              ls
+no timestamp | verbose | --:--:-- ssh             ok              ls
+list | plain | 09:05:07 --   agent      LIST            list_targets
+list | verbose | 09:05:07 --   agent      LIST            list_targets
+unknown event | plain | null
+unknown event | verbose | null
+target_opening ssh | plain | 09:05:07 ssh  web1       OPENING         message for target_opening
+target_opening ssh | verbose | 09:05:07 ssh  web1       OPENING         message for target_opening
+target_opening kube | plain | 09:05:07 kube web1       OPENING         message for target_opening
+target_opening kube | verbose | 09:05:07 kube web1       OPENING         message for target_opening
+target_opening kubernetes | plain | 09:05:07 kube web1       OPENING         message for target_opening
+target_opening kubernetes | verbose | 09:05:07 kube web1       OPENING         message for target_opening
+target_opening loc | plain | 09:05:07 loc  web1       OPENING         message for target_opening
+target_opening loc | verbose | 09:05:07 loc  web1       OPENING         message for target_opening
+target_opening local | plain | 09:05:07 loc  web1       OPENING         message for target_opening
+target_opening local | verbose | 09:05:07 loc  web1       OPENING         message for target_opening
+target_opening no kind | plain | 09:05:07 --   web1       OPENING         message for target_opening
+target_opening no kind | verbose | 09:05:07 --   web1       OPENING         message for target_opening
+target_opening bogus | plain | 09:05:07 --   web1       OPENING         message for target_opening
+target_opening bogus | verbose | 09:05:07 --   web1       OPENING         message for target_opening
+target_up ssh | plain | 09:05:07 ssh  web1       UP              message for target_up
+target_up ssh | verbose | 09:05:07 ssh  web1       UP              message for target_up
+target_up kube | plain | 09:05:07 kube web1       UP              message for target_up
+target_up kube | verbose | 09:05:07 kube web1       UP              message for target_up
+target_up kubernetes | plain | 09:05:07 kube web1       UP              message for target_up
+target_up kubernetes | verbose | 09:05:07 kube web1       UP              message for target_up
+target_up loc | plain | 09:05:07 loc  web1       UP              message for target_up
+target_up loc | verbose | 09:05:07 loc  web1       UP              message for target_up
+target_up local | plain | 09:05:07 loc  web1       UP              message for target_up
+target_up local | verbose | 09:05:07 loc  web1       UP              message for target_up
+target_up no kind | plain | 09:05:07 --   web1       UP              message for target_up
+target_up no kind | verbose | 09:05:07 --   web1       UP              message for target_up
+target_up bogus | plain | 09:05:07 --   web1       UP              message for target_up
+target_up bogus | verbose | 09:05:07 --   web1       UP              message for target_up
+target_skipped ssh | plain | 09:05:07 ssh  web1       SKIPPED         message for target_skipped
+target_skipped ssh | verbose | 09:05:07 ssh  web1       SKIPPED         message for target_skipped
+target_skipped kube | plain | 09:05:07 kube web1       SKIPPED         message for target_skipped
+target_skipped kube | verbose | 09:05:07 kube web1       SKIPPED         message for target_skipped
+target_skipped kubernetes | plain | 09:05:07 kube web1       SKIPPED         message for target_skipped
+target_skipped kubernetes | verbose | 09:05:07 kube web1       SKIPPED         message for target_skipped
+target_skipped loc | plain | 09:05:07 loc  web1       SKIPPED         message for target_skipped
+target_skipped loc | verbose | 09:05:07 loc  web1       SKIPPED         message for target_skipped
+target_skipped local | plain | 09:05:07 loc  web1       SKIPPED         message for target_skipped
+target_skipped local | verbose | 09:05:07 loc  web1       SKIPPED         message for target_skipped
+target_skipped no kind | plain | 09:05:07 --   web1       SKIPPED         message for target_skipped
+target_skipped no kind | verbose | 09:05:07 --   web1       SKIPPED         message for target_skipped
+target_skipped bogus | plain | 09:05:07 --   web1       SKIPPED         message for target_skipped
+target_skipped bogus | verbose | 09:05:07 --   web1       SKIPPED         message for target_skipped
+target_warn ssh | plain | 09:05:07 ssh  web1       WARN            message for target_warn
+target_warn ssh | verbose | 09:05:07 ssh  web1       WARN            message for target_warn
+target_warn kube | plain | 09:05:07 kube web1       WARN            message for target_warn
+target_warn kube | verbose | 09:05:07 kube web1       WARN            message for target_warn
+target_warn kubernetes | plain | 09:05:07 kube web1       WARN            message for target_warn
+target_warn kubernetes | verbose | 09:05:07 kube web1       WARN            message for target_warn
+target_warn loc | plain | 09:05:07 loc  web1       WARN            message for target_warn
+target_warn loc | verbose | 09:05:07 loc  web1       WARN            message for target_warn
+target_warn local | plain | 09:05:07 loc  web1       WARN            message for target_warn
+target_warn local | verbose | 09:05:07 loc  web1       WARN            message for target_warn
+target_warn no kind | plain | 09:05:07 --   web1       WARN            message for target_warn
+target_warn no kind | verbose | 09:05:07 --   web1       WARN            message for target_warn
+target_warn bogus | plain | 09:05:07 --   web1       WARN            message for target_warn
+target_warn bogus | verbose | 09:05:07 --   web1       WARN            message for target_warn
+target_review ssh | plain | 09:05:07 ssh  web1       REVIEW          message for target_review
+target_review ssh | verbose | 09:05:07 ssh  web1       REVIEW          message for target_review
+target_review kube | plain | 09:05:07 kube web1       REVIEW          message for target_review
+target_review kube | verbose | 09:05:07 kube web1       REVIEW          message for target_review
+target_review kubernetes | plain | 09:05:07 kube web1       REVIEW          message for target_review
+target_review kubernetes | verbose | 09:05:07 kube web1       REVIEW          message for target_review
+target_review loc | plain | 09:05:07 loc  web1       REVIEW          message for target_review
+target_review loc | verbose | 09:05:07 loc  web1       REVIEW          message for target_review
+target_review local | plain | 09:05:07 loc  web1       REVIEW          message for target_review
+target_review local | verbose | 09:05:07 loc  web1       REVIEW          message for target_review
+target_review no kind | plain | 09:05:07 --   web1       REVIEW          message for target_review
+target_review no kind | verbose | 09:05:07 --   web1       REVIEW          message for target_review
+target_review bogus | plain | 09:05:07 --   web1       REVIEW          message for target_review
+target_review bogus | verbose | 09:05:07 --   web1       REVIEW          message for target_review
+target_down ssh | plain | 09:05:07 ssh  web1       DOWN            message for target_down
+target_down ssh | verbose | 09:05:07 ssh  web1       DOWN            message for target_down
+target_down kube | plain | 09:05:07 kube web1       DOWN            message for target_down
+target_down kube | verbose | 09:05:07 kube web1       DOWN            message for target_down
+target_down kubernetes | plain | 09:05:07 kube web1       DOWN            message for target_down
+target_down kubernetes | verbose | 09:05:07 kube web1       DOWN            message for target_down
+target_down loc | plain | 09:05:07 loc  web1       DOWN            message for target_down
+target_down loc | verbose | 09:05:07 loc  web1       DOWN            message for target_down
+target_down local | plain | 09:05:07 loc  web1       DOWN            message for target_down
+target_down local | verbose | 09:05:07 loc  web1       DOWN            message for target_down
+target_down no kind | plain | 09:05:07 --   web1       DOWN            message for target_down
+target_down no kind | verbose | 09:05:07 --   web1       DOWN            message for target_down
+target_down bogus | plain | 09:05:07 --   web1       DOWN            message for target_down
+target_down bogus | verbose | 09:05:07 --   web1       DOWN            message for target_down
+target_recovered ssh | plain | 09:05:07 ssh  web1       UP              message for target_recovered
+target_recovered ssh | verbose | 09:05:07 ssh  web1       UP              message for target_recovered
+target_recovered kube | plain | 09:05:07 kube web1       UP              message for target_recovered
+target_recovered kube | verbose | 09:05:07 kube web1       UP              message for target_recovered
+target_recovered kubernetes | plain | 09:05:07 kube web1       UP              message for target_recovered
+target_recovered kubernetes | verbose | 09:05:07 kube web1       UP              message for target_recovered
+target_recovered loc | plain | 09:05:07 loc  web1       UP              message for target_recovered
+target_recovered loc | verbose | 09:05:07 loc  web1       UP              message for target_recovered
+target_recovered local | plain | 09:05:07 loc  web1       UP              message for target_recovered
+target_recovered local | verbose | 09:05:07 loc  web1       UP              message for target_recovered
+target_recovered no kind | plain | 09:05:07 --   web1       UP              message for target_recovered
+target_recovered no kind | verbose | 09:05:07 --   web1       UP              message for target_recovered
+target_recovered bogus | plain | 09:05:07 --   web1       UP              message for target_recovered
+target_recovered bogus | verbose | 09:05:07 --   web1       UP              message for target_recovered
+session_start ssh | plain | 09:05:07 --   session    READY           message for session_start
+session_start ssh | verbose | 09:05:07 --   session    READY           message for session_start
+session_start kube | plain | 09:05:07 --   session    READY           message for session_start
+session_start kube | verbose | 09:05:07 --   session    READY           message for session_start
+session_start kubernetes | plain | 09:05:07 --   session    READY           message for session_start
+session_start kubernetes | verbose | 09:05:07 --   session    READY           message for session_start
+session_start loc | plain | 09:05:07 --   session    READY           message for session_start
+session_start loc | verbose | 09:05:07 --   session    READY           message for session_start
+session_start local | plain | 09:05:07 --   session    READY           message for session_start
+session_start local | verbose | 09:05:07 --   session    READY           message for session_start
+session_start no kind | plain | 09:05:07 --   session    READY           message for session_start
+session_start no kind | verbose | 09:05:07 --   session    READY           message for session_start
+session_start bogus | plain | 09:05:07 --   session    READY           message for session_start
+session_start bogus | verbose | 09:05:07 --   session    READY           message for session_start
+session_closing ssh | plain | 09:05:07 --   session    CLOSING         message for session_closing
+session_closing ssh | verbose | 09:05:07 --   session    CLOSING         message for session_closing
+session_closing kube | plain | 09:05:07 --   session    CLOSING         message for session_closing
+session_closing kube | verbose | 09:05:07 --   session    CLOSING         message for session_closing
+session_closing kubernetes | plain | 09:05:07 --   session    CLOSING         message for session_closing
+session_closing kubernetes | verbose | 09:05:07 --   session    CLOSING         message for session_closing
+session_closing loc | plain | 09:05:07 --   session    CLOSING         message for session_closing
+session_closing loc | verbose | 09:05:07 --   session    CLOSING         message for session_closing
+session_closing local | plain | 09:05:07 --   session    CLOSING         message for session_closing
+session_closing local | verbose | 09:05:07 --   session    CLOSING         message for session_closing
+session_closing no kind | plain | 09:05:07 --   session    CLOSING         message for session_closing
+session_closing no kind | verbose | 09:05:07 --   session    CLOSING         message for session_closing
+session_closing bogus | plain | 09:05:07 --   session    CLOSING         message for session_closing
+session_closing bogus | verbose | 09:05:07 --   session    CLOSING         message for session_closing
+session_end ssh | plain | 09:05:07 --   session    CLOSED          message for session_end
+session_end ssh | verbose | 09:05:07 --   session    CLOSED          message for session_end
+session_end kube | plain | 09:05:07 --   session    CLOSED          message for session_end
+session_end kube | verbose | 09:05:07 --   session    CLOSED          message for session_end
+session_end kubernetes | plain | 09:05:07 --   session    CLOSED          message for session_end
+session_end kubernetes | verbose | 09:05:07 --   session    CLOSED          message for session_end
+session_end loc | plain | 09:05:07 --   session    CLOSED          message for session_end
+session_end loc | verbose | 09:05:07 --   session    CLOSED          message for session_end
+session_end local | plain | 09:05:07 --   session    CLOSED          message for session_end
+session_end local | verbose | 09:05:07 --   session    CLOSED          message for session_end
+session_end no kind | plain | 09:05:07 --   session    CLOSED          message for session_end
+session_end no kind | verbose | 09:05:07 --   session    CLOSED          message for session_end
+session_end bogus | plain | 09:05:07 --   session    CLOSED          message for session_end
+session_end bogus | verbose | 09:05:07 --   session    CLOSED          message for session_end
+lifecycle without a message | plain | 09:05:07 ssh  web1       UP
+lifecycle without a message | verbose | 09:05:07 ssh  web1       UP
+lifecycle with an unprintable message | plain | 09:05:07 kube lab        DOWN            a\u001bb
+lifecycle with an unprintable message | verbose | 09:05:07 kube lab        DOWN            a\u001bb
+narrow | 09:05:07 ssh  web1       ok  …

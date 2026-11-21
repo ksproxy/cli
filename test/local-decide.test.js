@@ -2,7 +2,9 @@ import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { decideLocal } from '../src/tools.js';
+import localKind from '../src/kinds/local/index.js';
+
+const decideLocal = localKind.decide;
 
 let base;
 let cwd;

@@ -1,135 +1,78 @@
 import fs from 'node:fs';
-import path from 'node:path';
-import { minimalEnv, run } from './exec.js';
-import { appendAudit, clip } from './audit.js';
+import { run } from './exec.js';
+import { appendAudit } from './audit.js';
 import { liveSession } from './session.js';
-import {
-  AllowError, checkRawSshCommand, decide, matchRuleDetail, tokenizeSshCommand,
-} from './allowlist.js';
-import {
-  checkMaster, execArgs, jumpPrefix, zshEqualsWord,
-} from './ssh.js';
-import {
-  READ_VERBS, hardRefusalDetail, kubectlArgs, portListening,
-} from './kube.js';
+import { KINDS, kindByKey, kindByTool } from './kinds/index.js';
+import { hideSecrets } from './kinds/engines/http.js';
 import { askReview } from './review.js';
 import {
-  cleanPath, dropDataVolume, isCaseInsensitive, localFolderProblem, localScope, reviewProblem, wildcardProblem,
-} from './local.js';
+  CALL_FAILED, MAX_ANSWER_BYTES, answerBytes, askCall, callRefusal, callSocketOpen,
+} from './broker.js';
+import { clip } from './text.js';
+import { DEFAULT_OUTPUT_KIB, MAX_OUTPUT_KIB, outputKiB } from './checks.js';
 import {
-  auditLogPath, kubectlBin, reviewSocketPath, sessionDir as sessionDirOf, sshBin, stateDir as stateDirOf,
+  auditLogPath, callSocketPath, dropDataVolume, isCaseInsensitive, reviewSocketPath, sessionDir as sessionDirOf, stateDir as stateDirOf,
 } from './paths.js';
 
 export const NO_SESSION = 'No active session. Ask the user to run `ksproxy start` in their terminal.';
-const MAX_OUTPUT_BYTES = 262144;
+const KIB = 1024;
+// The room past the visible limit of a stream that it is read with, OUTPUT_MARGIN: a path cut by the read limit is
+// less than LONGEST_PATH bytes, and hiding or scrubbing makes each of its bytes at most GROWTH bytes ([hidden] for one
+// byte or more, a label of at most 9 bytes for a path of 2 bytes or more). A secret needs no room: dropCutSecret takes a
+// cut one.
+const LONGEST_PATH = 4096;
+const GROWTH = 8;
+const OUTPUT_MARGIN = GROWTH * LONGEST_PATH;
 
-const TIMEOUT_SCHEMA = { type: 'integer', minimum: 1, maximum: 600, default: 60 };
+// The bytes of one stream that a call on this target shows, from outputKiB: 262144 unless the inventory raised it.
+// The read limit is that plus OUTPUT_MARGIN.
+function visibleLimit(target) {
+  return outputKiB(target) * KIB;
+}
 
-export const TOOLS = [
-  {
-    name: 'list_targets',
-    description: 'List the ssh servers, Kubernetes clusters and local folders the user has opened, with their state and the commands allowed on each.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-  },
-  {
-    name: 'ssh_exec',
-    description: 'Run one command on an open ssh server. The command is checked against that server\'s allowlist.',
-    inputSchema: {
-      type: 'object',
-      required: ['server', 'command'],
-      additionalProperties: false,
-      properties: {
-        server: { type: 'string', description: 'Target name from list_targets' },
-        command: { type: 'string', description: 'Command to run on the server' },
-        timeout_seconds: TIMEOUT_SCHEMA,
-      },
-    },
-  },
-  {
-    name: 'kubectl',
-    description: 'Run kubectl against an open Kubernetes cluster. The arguments are checked against that cluster\'s allowlist.',
-    inputSchema: {
-      type: 'object',
-      required: ['cluster', 'args'],
-      additionalProperties: false,
-      properties: {
-        cluster: { type: 'string', description: 'Target name from list_targets' },
-        args: {
-          type: 'array',
-          items: { type: 'string' },
-          minItems: 1,
-          description: 'kubectl arguments, verb first, one array element per argument, e.g. ["get","pods","-n","web"]',
-        },
-        timeout_seconds: TIMEOUT_SCHEMA,
-      },
-    },
-  },
-  {
-    name: 'local_exec',
-    description: 'Run one command on this machine in an open local target\'s folder. The command is checked against that target\'s allowlist; shell syntax is not accepted.',
-    inputSchema: {
-      type: 'object',
-      required: ['target', 'command'],
-      additionalProperties: false,
-      properties: {
-        target: { type: 'string', description: 'Target name from list_targets' },
-        command: { type: 'string', description: 'Command and arguments, separated by spaces' },
-        timeout_seconds: TIMEOUT_SCHEMA,
-      },
-    },
-  },
-];
+// The longest answer line of a brokered call: the share of MAX_ANSWER_BYTES that its visible limit is of the largest,
+// so 1 MiB for the default 256 KiB, as it always was, and MAX_ANSWER_BYTES, 16 MiB, for 4 MiB.
+function answerLimit(visible) {
+  return (MAX_ANSWER_BYTES / (MAX_OUTPUT_KIB * KIB)) * visible;
+}
 
-export async function targetState(target, env = process.env) {
-  if (target.kind === 'ssh') {
-    return (await checkMaster({ socket: target.socket, host: target.host }, env)) ? 'up' : 'down';
+// How much longer than the call's own time limit the mcp side waits for start: the review and the grace after the limit.
+const CALL_MARGIN_MS = 75000;
+
+const LIST_TARGETS = {
+  name: 'list_targets',
+  description: 'List the ssh servers, Kubernetes clusters, local folders and service targets (databases, queues and HTTP APIs) the user has opened, with their state and the commands allowed on each.',
+  inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+};
+
+// The tools to list: list_targets and the tool of every kind that is not brokered, always; the tool of a brokered
+// kind when the inventory holds a target of that kind, and every one when the inventory is null (it could not be read).
+export function toolDefinitions(inventory = {}) {
+  const listed = (kind) => kind.brokered !== true || inventory === null || (inventory[kind.key] ?? []).length > 0;
+  return [LIST_TARGETS, ...KINDS.filter(listed).map((kind) => kind.tool.definition)];
+}
+
+// The call socket of the session, or null when its path cannot be used.
+function callSocketOrNull(env) {
+  try {
+    return callSocketPath(env);
+  } catch {
+    return null;
   }
-  if (target.kind === 'local') {
-    try {
-      return fs.statSync(target.cwd).isDirectory() ? 'up' : 'down';
-    } catch {
-      return 'down';
-    }
-  }
-  if (!(await portListening(target.proxyPort))) return 'down';
+}
+
+// A brokered target has no state of its own on this side: the recorded one while the call socket accepts, else down.
+async function brokeredState(target, env) {
+  const socket = callSocketOrNull(env);
+  if (socket === null || !(await callSocketOpen(socket))) return 'down';
   return target.state;
 }
 
-export function decideSsh(target, input) {
-  const jumped = target.jumps !== undefined;
-  const prefix = jumpPrefix(target.jumps);
-  if (prefix === null) {
-    return {
-      allowed: false,
-      reason: 'this target\'s jumps are not usable; ask the user to restart ksproxy start',
-      short: 'jumps not usable',
-    };
-  }
-  if (jumped && target.allow === 'any') {
-    return { allowed: false, reason: 'a target with jumps needs a list of rules, not "any"', short: 'allowlist is "any"' };
-  }
-  try {
-    if (target.allow === 'any') {
-      return { allowed: true, rule: 'any', command: checkRawSshCommand(input) };
-    }
-    const tokens = tokenizeSshCommand(input);
-    if (jumped && tokens.some(zshEqualsWord)) {
-      return {
-        allowed: false,
-        reason: 'a word may not start with "=" or contain "==" or ":=" on a target with jumps',
-        short: 'unsafe "=" word',
-      };
-    }
-    const carried = prefix ? { prefix } : {};
-    const decision = decide(tokens, target.allow);
-    if (!decision.allowed) return { ...decision, argv: tokens, ...carried };
-    return {
-      allowed: true, rule: decision.rule, command: tokens.join(' '), ...carried,
-    };
-  } catch (err) {
-    if (err instanceof AllowError) return { allowed: false, reason: err.message, short: err.short };
-    throw err;
-  }
+export async function targetState(target, env = process.env) {
+  const kind = kindByKey(target.kind);
+  if (kind === undefined) return 'error';
+  if (kind.brokered === true) return brokeredState(target, env);
+  return kind.state(target, env);
 }
 
 function realOrNull(file) {
@@ -140,78 +83,18 @@ function realOrNull(file) {
   }
 }
 
-function usableRule(rule) {
-  if (typeof rule !== 'string') return false;
-  const [program] = rule.trim().split(/\s+/);
-  return program !== '*' && program !== '...';
-}
-
-export function decideLocal(target, input, env = process.env, platform = process.platform) {
-  if (!Array.isArray(target.allow)) {
-    return { allowed: false, reason: 'this local target has no usable allowlist', short: 'allowlist is empty' };
-  }
-  const folder = localFolderProblem(target.cwd, env, Array.isArray(target.protected) ? target.protected : [], platform);
-  if (folder !== null) {
-    return {
-      allowed: false,
-      reason: `this target's folder is not acceptable; ask the user to run "ksproxy check local ${target.name}"`,
-      short: 'folder not allowed',
-    };
-  }
-  const usable = target.allow.filter(usableRule);
-  const scope = localScope(target, env, platform);
-  try {
-    const tokens = tokenizeSshCommand(input);
-    let first = null;
-    let preferred = null;
-    for (const rule of usable) {
-      const detail = matchRuleDetail(tokens, rule);
-      if (detail === null) continue;
-      const problem = wildcardProblem(detail, target, env, scope);
-      if (problem === null) return { allowed: true, rule, argv: tokens };
-      first ??= problem;
-      if (problem.short !== 'not a plain argument') preferred ??= problem;
-    }
-    const shown = preferred ?? first;
-    if (shown !== null) return { allowed: false, reason: shown.reason, short: shown.short };
-    if (usable.length === 0 && target.allow.length > 0) {
-      return { allowed: false, reason: 'not on the allowlist for this target', short: 'not on allowlist' };
-    }
-    const refusal = decide(tokens, usable);
-    if (target.review !== true) return refusal;
-    const problem = reviewProblem(tokens, target, env, scope);
-    return problem === null ? { ...refusal, argv: tokens } : { ...refusal, notReviewed: problem.reason };
-  } catch (err) {
-    if (err instanceof AllowError) return { allowed: false, reason: err.message, short: err.short };
-    throw err;
-  }
-}
-
-export function decideKube(target, args) {
-  const refusal = hardRefusalDetail(args, target.manifestRoots ?? []);
-  if (refusal !== null) return { allowed: false, reason: refusal.reason, short: refusal.short };
-  const decision = decide(args, target.allow);
-  return decision.allowed ? decision : { ...decision, argv: [...args] };
-}
-
 const MAX_REVIEW_WORDS = 64;
 const MAX_REVIEW_WORD = 200;
 const LOOSE_CHAR = /[\s"\u0000-\u001f\u007f-\u009f]/;
 
 // null when the words may be shown to the reviewer as they are, else why not.
-// For ssh the words reach a login shell on the server; the tokenizer already keeps out
-// quotes, ~, globs and braces, so only an assignment and the words that zsh may rewrite remain.
+// The checks for every kind come first, then the kind's own wordsNotForReview when it has one.
 export function reviewWordsProblem(kind, argv) {
   if (argv.length > MAX_REVIEW_WORDS) return `the command has more than ${MAX_REVIEW_WORDS} words`;
   if (argv.some((w) => w.length > MAX_REVIEW_WORD)) return `a word is longer than ${MAX_REVIEW_WORD} characters`;
   if (argv.some((w) => LOOSE_CHAR.test(w))) return 'a word contains a space, a control character or a double quote';
-  if (kind !== 'ssh') return null;
-  if (argv.some((w) => w.startsWith('='))) return 'a word starts with "=", which the server\'s shell may expand';
-  if (argv.some((w) => w.includes('==') || w.includes(':='))) {
-    return 'a word contains "==" or ":=", which the server\'s shell may rewrite';
-  }
-  if (argv[0].includes('=')) return 'the first word sets an environment variable on the server';
-  return null;
+  const { wordsNotForReview } = kindByKey(kind);
+  return wordsNotForReview === undefined ? null : wordsNotForReview(argv);
 }
 
 // For a refusal on a target with review on: { argv } to send to the reviewer, { note } saying why it is not sent,
@@ -223,9 +106,9 @@ export function reviewRoute(kind, decision, reviewOn) {
   if (!Array.isArray(decision.argv)) return null;
   const words = reviewWordsProblem(kind, decision.argv);
   if (words !== null) return note(words);
-  if (kind === 'kubernetes' && !READ_VERBS.has(decision.argv[0])) {
-    return note(`only read verbs are reviewed, and ${decision.argv[0]} is not one`);
-  }
+  const { notForReview } = kindByKey(kind);
+  const why = notForReview === undefined ? null : notForReview(decision.argv);
+  if (why !== null) return note(why);
   return { argv: [...decision.argv] };
 }
 
@@ -251,11 +134,12 @@ export function scrubOutput(text, session, env = process.env, insensitive = isCa
       }
     }
   };
+  const targets = session.targets ?? [];
+  const ofKind = (kind) => targets.filter((t) => t.kind === kind.key);
   hide(stateDirOf(env), '<ksproxy>');
-  for (const target of session.targets ?? []) {
-    if (target.kind !== 'local') continue;
-    hide(target.cwd, '<folder>');
-    hide(path.resolve(target.cwd), '<folder>');
+  for (const kind of KINDS) {
+    if (kind.scrubDirs === undefined) continue;
+    for (const { dir, label } of kind.scrubDirs(ofKind(kind))) hide(dir, label);
   }
   let out = text;
   if (hidden.length > 0) {
@@ -267,21 +151,78 @@ export function scrubOutput(text, session, env = process.env, insensitive = isCa
       (...args) => labelOf(args.slice(1, hidden.length + 1)),
     );
   }
-  for (const target of session.targets ?? []) {
-    if (target.kind !== 'kubernetes' || !Number.isInteger(target.proxyPort)) continue;
-    out = out.replace(new RegExp(`(?:127\\.0\\.0\\.1|localhost):${target.proxyPort}(?!\\d)`, 'g'), '<proxy>');
+  for (const kind of KINDS) {
+    if (kind.scrubText !== undefined) out = kind.scrubText(out, ofKind(kind));
   }
   return out;
 }
 
-function formatResult(result, timeoutSeconds) {
+// Every text to hide in the output of a brokered call: each secret value of the target, then each form of them that
+// the kind's hiddenForms gives (an encoded credential as it is sent or shown). They are used only to hide.
+function hiddenTexts(kindObject, open) {
+  const forms = kindObject.hiddenForms === undefined ? [] : kindObject.hiddenForms(open.target, open.secrets);
+  return [...Object.values(open.secrets), ...forms];
+}
+
+// The text without its last count bytes.
+function dropLast(text, count) {
+  const bytes = Buffer.from(text);
+  return bytes.subarray(0, Math.max(0, bytes.length - count)).toString('utf8');
+}
+
+// The text without its last piece when that piece is a proper start, of one character or more, of a hidden text: what
+// is left of a secret that the end of the stream cut, whatever ended it (the read limit, the time limit, a broken
+// stream). The longest such piece is dropped. Only the last characters, one fewer than the longest hidden text, are
+// compared. Replacement characters at the very end, left by a character cut in two, are looked past.
+function dropCutSecret(text, values) {
+  const longest = values.reduce((most, value) => Math.max(most, value.length), 0);
+  let end = text.length;
+  while (end > 0 && text[end - 1] === '�') end -= 1;
+  for (let at = Math.max(0, end - longest + 1); at < end; at += 1) {
+    const piece = text.slice(at, end);
+    if (values.some((value) => value.length > piece.length && value.startsWith(piece))) return text.slice(0, at);
+  }
+  return text;
+}
+
+// One stream as the agent gets it, from a text read with the read limit, visible plus OUTPUT_MARGIN: a cut secret at
+// the end dropped, the secret values hidden, and a cut secret at the end dropped again (a shorter hidden text can
+// overlap the start of a cut one); the paths scrubbed in the whole text; when the text reached the read limit, its last
+// OUTPUT_MARGIN bytes dropped, as they can hold a path the read limit cut; then cut at visible bytes. cut says whether
+// anything was left out.
+function fitStream(text, { values, scrub, visible }) {
+  const scrubbed = scrub(dropCutSecret(hideSecrets(dropCutSecret(text, values), values), values));
+  const reached = Buffer.byteLength(text) >= visible + OUTPUT_MARGIN;
+  const capped = capBytes(reached ? dropLast(scrubbed, OUTPUT_MARGIN) : scrubbed, visible);
+  return { text: capped.text, cut: reached || capped.cut };
+}
+
+// Both streams through fitStream, or null when the hiding or the scrub throws. The call has run and is audited by
+// then, so the caller answers with outputFailed: what ran, and no output at all.
+function fitStreams(result, fit) {
+  try {
+    return { stdout: fitStream(result.stdout, fit), stderrText: fitStream(result.stderr, fit) };
+  } catch {
+    return null;
+  }
+}
+
+const OUTPUT_FAILED = 'the output could not be shown';
+
+function outputFailed(result, timeoutSeconds) {
+  return { text: `${formatResult({
+    ...result, stdout: '', stderr: '', truncated: false,
+  }, timeoutSeconds)}\n${OUTPUT_FAILED}`, isError: true };
+}
+
+function formatResult(result, timeoutSeconds, limit) {
   const parts = [];
   if (result.spawnError) parts.push(`could not start: ${result.spawnError}`);
   else if (result.timedOut) parts.push(`timed out after ${timeoutSeconds}s`);
   else parts.push(`exit code: ${result.exitCode}`);
   if (result.stdout !== '') parts.push(`--- stdout ---\n${result.stdout.trimEnd()}`);
   if (result.stderr !== '') parts.push(`--- stderr ---\n${result.stderr.trimEnd()}`);
-  if (result.truncated) parts.push(`[output truncated at ${MAX_OUTPUT_BYTES} bytes per stream]`);
+  if (result.truncated) parts.push(`[output truncated at ${limit} bytes per stream]`);
   return parts.join('\n');
 }
 
@@ -307,30 +248,83 @@ async function listTargets(session, dir, env, stderr) {
     state: await targetState(t, env),
     allow: t.allow,
     ...(t.review === true ? { review: true } : {}),
+    ...(outputKiB(t) === DEFAULT_OUTPUT_KIB ? {} : { outputLimit: `${outputKiB(t)} KiB per stream` }),
   })));
   return { text: JSON.stringify({ startedAt: session.startedAt, targets }, null, 2), isError: false };
 }
 
-const EXEC_TOOLS = {
-  ssh_exec: {
-    kind: 'ssh', word: 'ssh', logKind: 'ssh', nameKey: 'server', detailKey: 'command', label: 'ssh server',
-  },
-  kubectl: {
-    kind: 'kubernetes', word: 'kube', logKind: 'kube', nameKey: 'cluster', detailKey: 'args', label: 'cluster',
-  },
-  local_exec: {
-    kind: 'local', word: 'local', logKind: 'loc', nameKey: 'target', detailKey: 'command', label: 'local target',
-  },
-};
+// The decision after the reviewer was asked when review applies: { decision, reviewed } to go on,
+// or { refusal: [text, short, reason] }. ask(subject) asks the reviewer, over the socket or inside start.
+async function reviewStep(kindObject, name, first, reviewOn, ask) {
+  const { key: kind, word } = kindObject;
+  let decision = first;
+  let reviewed = null;
+  const route = reviewRoute(kind, decision, reviewOn);
+  if (route?.argv) {
+    const { argv } = route;
+    try {
+      reviewed = await ask({ kind, name, argv: [...argv] });
+    } catch {
+      reviewed = { allowed: false, short: 'review not available' };
+    }
+    if (reviewed?.allowed !== true) {
+      return {
+        refusal: [
+          `REFUSED (${word} ${clip(name, 64)}): ${decision.reason}. The reviewer did not approve it.`,
+          typeof reviewed?.short === 'string' ? reviewed.short : 'review not available',
+          decision.reason,
+        ],
+      };
+    }
+    decision = {
+      allowed: true, rule: 'review', argv, command: argv.join(' '), ...(decision.prefix ? { prefix: decision.prefix } : {}),
+    };
+  }
+  if (!decision.allowed) {
+    const reason = route?.note ? `${decision.reason}. ${route.note}` : decision.reason;
+    return { refusal: [`REFUSED (${word} ${clip(name, 64)}): ${reason}`, decision.short, reason] };
+  }
+  return { decision, reviewed };
+}
+
+// The call in the arguments of the tool: the one argument detailKey, or for a tool whose call is an object,
+// every argument except the target name and timeout_seconds.
+function detailOf(tool, args) {
+  if (tool.detailShape !== 'object') return args[tool.detailKey];
+  return Object.fromEntries(Object.entries(args).filter(([key]) => key !== tool.nameKey && key !== 'timeout_seconds'));
+}
+
+// The call as the audit entry records it: the string or the array of strings when it has the right type, what the
+// tool's auditedDetail keeps of an object, else null.
+function auditedDetailOf(tool, detail) {
+  if (tool.detailShape === 'object') return isPlainObject(detail) ? tool.auditedDetail(detail) : null;
+  const isArgs = tool.detailIsArray;
+  if (!isArgs && typeof detail === 'string') return detail;
+  if (isArgs && Array.isArray(detail) && detail.every((a) => typeof a === 'string')) return detail;
+  return null;
+}
+
+// null when the call has the type the tool takes, else the text of the refusal.
+function detailProblem(tool, detail) {
+  if (tool.detailShape === 'object') return isPlainObject(detail) ? null : 'invalid arguments: the request must be an object';
+  const isArgs = tool.detailIsArray;
+  if (!isArgs && typeof detail !== 'string') return 'invalid arguments: command must be a string';
+  if (isArgs && !(Array.isArray(detail) && detail.length > 0 && detail.every((a) => typeof a === 'string'))) {
+    return 'invalid arguments: args must be a non-empty array of strings';
+  }
+  return null;
+}
 
 async function execTool(tool, args, session, dir, env, stderr, review) {
+  const kindObject = kindByTool(tool);
   const {
-    kind, word, logKind, nameKey, detailKey, label,
-  } = EXEC_TOOLS[tool];
-  const isArgs = detailKey === 'args';
+    key: kind, word, label: logKind, noun: label,
+  } = kindObject;
+  const { nameKey, detailKey } = kindObject.tool;
+  const brokered = kindObject.brokered === true;
 
   const name = args[nameKey];
-  const detail = args[detailKey];
+  const detail = detailOf(kindObject.tool, args);
   const auditedTarget = (() => {
     try {
       return clip(name, 64);
@@ -338,12 +332,19 @@ async function execTool(tool, args, session, dir, env, stderr, review) {
       return '(unprintable)';
     }
   })();
+  // The call as the audit records it is made inside a try, so that an attempt is audited even when that throws.
   let auditedDetail = null;
-  if (!isArgs && typeof detail === 'string') auditedDetail = detail;
-  if (isArgs && Array.isArray(detail) && detail.every((a) => typeof a === 'string')) auditedDetail = detail;
+  let detailFailed = false;
+  try {
+    auditedDetail = auditedDetailOf(kindObject.tool, detail);
+  } catch {
+    detailFailed = true;
+  }
   const entry = {
     event: 'call', tool, kind: logKind, target: auditedTarget, [detailKey]: auditedDetail,
   };
+  // Every refusal made on this side is audited here, for every kind. A brokered call that is forwarded is audited
+  // by start, which decides it, and not here.
   const refuse = (text, short, reason = text) => {
     audit(env, {
       ...entry, decision: 'refused', reason, short,
@@ -351,11 +352,10 @@ async function execTool(tool, args, session, dir, env, stderr, review) {
     return { text, isError: true };
   };
 
+  if (detailFailed) return refuse('invalid arguments: the call could not be written to the log', 'invalid arguments');
   if (typeof name !== 'string') return refuse(`invalid arguments: ${nameKey} must be a string`, 'invalid arguments');
-  if (!isArgs && typeof detail !== 'string') return refuse('invalid arguments: command must be a string', 'invalid arguments');
-  if (isArgs && !(Array.isArray(detail) && detail.length > 0 && detail.every((a) => typeof a === 'string'))) {
-    return refuse('invalid arguments: args must be a non-empty array of strings', 'invalid arguments');
-  }
+  const problem = detailProblem(kindObject.tool, detail);
+  if (problem !== null) return refuse(problem, 'invalid arguments');
   if (!validTimeout(args.timeout_seconds)) {
     return refuse('invalid arguments: timeout_seconds must be an integer from 1 to 600', 'invalid arguments');
   }
@@ -365,60 +365,31 @@ async function execTool(tool, args, session, dir, env, stderr, review) {
   if (!target) {
     return refuse(`unknown ${label} "${clip(name, 64)}". Open targets: ${listOpen(session, kind)}`, 'unknown target');
   }
-
-  let decision;
-  if (kind === 'ssh') decision = decideSsh(target, detail);
-  else if (kind === 'kubernetes') decision = decideKube(target, detail);
-  else decision = decideLocal(target, detail, env);
-  let reviewed = null;
-  const route = reviewRoute(kind, decision, target.review === true);
-  if (route?.argv) {
-    const { argv } = route;
-    try {
-      reviewed = await review(reviewSocketPath(env), { kind, name, argv: [...argv] });
-    } catch {
-      reviewed = { allowed: false, short: 'review not available' };
-    }
-    if (reviewed?.allowed !== true) {
-      return refuse(
-        `REFUSED (${word} ${clip(name, 64)}): ${decision.reason}. The reviewer did not approve it.`,
-        typeof reviewed?.short === 'string' ? reviewed.short : 'review not available',
-        decision.reason,
-      );
-    }
-    decision = {
-      allowed: true, rule: 'review', argv, command: argv.join(' '), ...(decision.prefix ? { prefix: decision.prefix } : {}),
-    };
-  }
-  if (!decision.allowed) {
-    const reason = route?.note ? `${decision.reason}. ${route.note}` : decision.reason;
-    return refuse(`REFUSED (${word} ${clip(name, 64)}): ${reason}`, decision.short, reason);
+  if (brokered) {
+    const socket = callSocketOrNull(env);
+    if (socket === null) return refuse(callRefusal(CALL_FAILED.noAnswer, word, name).text, 'session did not answer', CALL_FAILED.noAnswer);
+    return askCall(socket, {
+      kind, name, input: detail, timeoutSeconds,
+    }, timeoutSeconds * 1000 + CALL_MARGIN_MS, word);
   }
 
-  const limits = { timeoutMs: timeoutSeconds * 1000, maxBytes: MAX_OUTPUT_BYTES };
-  let result;
-  if (kind === 'ssh') {
-    const command = decision.prefix === undefined ? decision.command : `${decision.prefix} ${decision.command}`;
-    result = await run(sshBin(env), execArgs(path.join(dir, 'ssh_config'), name, command), {
-      ...limits,
-      env: minimalEnv(env),
-    });
-  } else if (kind === 'kubernetes') {
-    result = await run(kubectlBin(env), kubectlArgs(path.join(dir, 'kubeconfig'), name, decision.argv ?? detail), {
-      ...limits,
-      env: minimalEnv(env, {
-        KUBECONFIG: path.join(dir, 'kubeconfig'), KUBERC: 'off', KUBECTL_KUBERC: 'false',
-      }),
-    });
-  } else {
-    const folders = session.targets.filter((t) => t.kind === 'local').map((t) => t.cwd);
-    result = await run(decision.argv[0], decision.argv.slice(1), {
-      ...limits,
-      cwd: target.cwd,
-      env: minimalEnv(env, { PATH: cleanPath(target.path, folders) }, { own: false }),
-    });
-  }
+  const step = await reviewStep(
+    kindObject,
+    name,
+    kindObject.decide(target, detail, env),
+    target.review === true,
+    (subject) => review(reviewSocketPath(env), subject),
+  );
+  if (step.refusal) return refuse(...step.refusal);
+  const { decision, reviewed } = step;
 
+  // The limit comes from the session file, which start wrote from the inventory; outputKiB never gives more than 4 MiB.
+  const visible = visibleLimit(target);
+  const limits = { timeoutMs: timeoutSeconds * 1000, maxBytes: visible + OUTPUT_MARGIN };
+  const spec = kindObject.command(target, decision, {
+    dir, env, session, input: detail,
+  });
+  const result = await run(spec.program, spec.args, { ...limits, ...spec.options });
   audit(env, {
     ...entry,
     decision: 'allowed',
@@ -431,19 +402,179 @@ async function execTool(tool, args, session, dir, env, stderr, review) {
     stdoutBytes: result.stdoutBytes,
     stderrBytes: result.stderrBytes,
   }, stderr);
+  const fitted = fitStreams(result, { values: [], scrub: (text) => scrubOutput(text, session, env), visible });
+  if (fitted === null) return outputFailed(result, timeoutSeconds);
+  const { stdout, stderrText } = fitted;
   return {
     text: formatResult({
       ...result,
-      stdout: scrubOutput(result.stdout, session, env),
-      stderr: scrubOutput(result.stderr, session, env),
-    }, timeoutSeconds),
+      truncated: result.truncated || stdout.cut || stderrText.cut,
+      stdout: stdout.text,
+      stderr: stderrText.text,
+    }, timeoutSeconds, visible),
     isError: result.timedOut || result.spawnError !== null || result.exitCode !== 0,
   };
 }
 
+const GRACE_MS = 1000;
+const LATE = {
+  exitCode: null, stdout: '', stderr: '', timedOut: true,
+};
+const STOPPED = Symbol('stopped');
+
+// perform of the kind, with the call's time limit, the output limit and a signal that fires at the limit or when the
+// session stops. A perform that is still busy GRACE_MS after the limit counts as timed out; a stop ends the wait at once.
+function performWithin(kindObject, open, decision, {
+  env, timeoutMs, maxBytes, signal, input,
+}) {
+  const controller = new AbortController();
+  let timer;
+  let grace;
+  let onStop;
+  const cut = new Promise((resolve) => {
+    onStop = () => {
+      controller.abort();
+      resolve(STOPPED);
+    };
+    signal.addEventListener('abort', onStop, { once: true });
+    timer = setTimeout(() => {
+      controller.abort();
+      grace = setTimeout(() => resolve(LATE), GRACE_MS);
+    }, timeoutMs);
+  });
+  const work = Promise.resolve().then(() => kindObject.perform(open.target, decision, {
+    env, secrets: open.secrets, timeoutMs, maxBytes, signal: controller.signal, input,
+  }));
+  return Promise.race([work, cut]).finally(() => {
+    clearTimeout(timer);
+    clearTimeout(grace);
+    signal.removeEventListener('abort', onStop);
+  });
+}
+
+function validResult(result) {
+  return result !== null && typeof result === 'object'
+    && (Number.isInteger(result.exitCode) || result.exitCode === null)
+    && typeof result.stdout === 'string' && typeof result.stderr === 'string';
+}
+
+// The text cut to maxBytes bytes, and whether it was cut.
+function capBytes(text, maxBytes) {
+  const bytes = Buffer.from(text);
+  if (bytes.length <= maxBytes) return { text, cut: false };
+  return { text: bytes.subarray(0, maxBytes).toString('utf8'), cut: true };
+}
+
+// One brokered call inside ksproxy start, as the call server hands it over: the target comes from start's own
+// list of opened targets, never from session.json. Every refusal is audited here; an error is a refusal with a fixed text.
+export async function answerCall(request, {
+  calls, session, env, signal, review, stderr,
+}) {
+  const kindObject = kindByKey(request.kind);
+  if (kindObject?.brokered !== true) return callRefusal(CALL_FAILED.notOpen);
+  const { word, label: logKind, tool } = kindObject;
+  const { name, input } = request;
+  // The call as the audit records it is made inside a try, so that an attempt is audited even when that throws.
+  let detail = null;
+  let detailFailed = false;
+  try {
+    detail = auditedDetailOf(tool, input);
+  } catch {
+    detailFailed = true;
+  }
+  const entry = {
+    event: 'call', tool: tool.name, kind: logKind, target: clip(name, 64), [tool.detailKey]: detail,
+  };
+  const refuse = (text, short, reason = text) => {
+    audit(env, {
+      ...entry, decision: 'refused', reason, short,
+    }, stderr);
+    return { text, isError: true };
+  };
+  const failed = () => refuse(callRefusal(CALL_FAILED.failed, word, name).text, 'call failed', CALL_FAILED.failed);
+  if (detailFailed) return failed();
+
+  const open = calls.get(`${kindObject.key}:${name}`);
+  if (open === undefined) return refuse(callRefusal(CALL_FAILED.notOpen, word, name).text, 'target not open', CALL_FAILED.notOpen);
+  const problem = detailProblem(tool, input);
+  if (problem !== null) return refuse(problem, 'invalid arguments');
+
+  let first;
+  try {
+    first = kindObject.decide(open.target, input, env);
+  } catch {
+    return failed();
+  }
+  const step = await reviewStep(kindObject, name, first, open.target.review === true, review);
+  if (step.refusal) return refuse(...step.refusal);
+  const { decision, reviewed } = step;
+  // The session can stop while the reviewer thinks: an approval that comes after the stop does not run the call.
+  if (signal.aborted) return refuse(callRefusal(CALL_FAILED.noAnswer, word, name).text, 'session stopped', 'the session stopped before the call ran');
+
+  // A program can print its own environment: every secret value of the target, and every form of one that the kind
+  // gives, is hidden before the cut, and a cut one at the end of a stream is dropped. The read limit is the same for
+  // every call on a target, so nothing that reaches the agent or the log tells the length of a secret. The limit comes
+  // from the target as this start opened it, never from session.json.
+  const visible = visibleLimit(open.target);
+  const started = Date.now();
+  let values;
+  let result;
+  try {
+    values = hiddenTexts(kindObject, open);
+    result = await performWithin(kindObject, open, decision, {
+      env, timeoutMs: request.timeoutSeconds * 1000, maxBytes: visible + OUTPUT_MARGIN, signal, input,
+    });
+  } catch {
+    return failed();
+  }
+  if (result === STOPPED) return refuse(callRefusal(CALL_FAILED.noAnswer, word, name).text, 'session stopped', 'the session stopped during the call');
+  if (!validResult(result)) return failed();
+  const timedOut = result.timedOut === true;
+  audit(env, {
+    ...entry,
+    decision: 'allowed',
+    rule: decision.rule,
+    ...(reviewed === null ? {} : { review: { certainty: reviewed.certainty, reason: reviewed.reason } }),
+    exitCode: result.exitCode,
+    timedOut,
+    spawnError: null,
+    durationMs: Date.now() - started,
+    stdoutBytes: Buffer.byteLength(result.stdout),
+    stderrBytes: Buffer.byteLength(result.stderr),
+  }, stderr);
+  const fitted = fitStreams(result, { values, scrub: (text) => scrubOutput(text, session, env), visible });
+  if (fitted === null) return outputFailed({ exitCode: result.exitCode, timedOut, spawnError: null }, request.timeoutSeconds);
+  const { stdout, stderrText } = fitted;
+  // The call ran: an answer whose JSON line would pass answerLimit of the visible limit (escaping can make a byte 6)
+  // keeps less of each stream, half as much each time, so that the agent is always told what ran.
+  const answerWithin = (limit) => {
+    const out = capBytes(stdout.text, limit);
+    const err = capBytes(stderrText.text, limit);
+    return {
+      text: formatResult({
+        exitCode: result.exitCode,
+        timedOut,
+        spawnError: null,
+        truncated: result.truncated === true || stdout.cut || stderrText.cut || out.cut || err.cut,
+        stdout: out.text,
+        stderr: err.text,
+      }, request.timeoutSeconds, limit),
+      isError: timedOut || result.exitCode !== 0,
+    };
+  };
+  const most = answerLimit(visible);
+  let limit = visible;
+  let answer = answerWithin(limit);
+  while (answerBytes(answer) > most) {
+    limit = Math.floor(limit / 2);
+    answer = answerWithin(limit);
+  }
+  return answer;
+}
+
 export async function callTool(name, args, env = process.env, { stderr = process.stderr, review = askReview } = {}) {
   try {
-    if (!TOOLS.some((t) => t.name === name)) return { text: `unknown tool: ${name}`, isError: true };
+    if (name !== LIST_TARGETS.name && kindByTool(name) === undefined) return { text: `unknown tool: ${name}`, isError: true };
     const dir = sessionDirOf(env);
     const session = liveSession(dir);
     if (session === null || !Array.isArray(session.targets)) {

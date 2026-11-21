@@ -3,27 +3,55 @@ import path from 'node:path';
 import {
   clock, formatLogLine, logOptionsFor, readAuditEntries, rotatedLogs, sanitizeForTerminal,
 } from './audit.js';
-import { InventoryError, loadInventory, SAMPLE_INVENTORY } from './inventory.js';
-import { localFolderProblem } from './local.js';
+import { allowWarnings } from './allowlist.js';
+import { InventoryError, loadInventory, sampleInventory } from './inventory.js';
+import {
+  KINDS, kindByFlag, kindByKey, secretFilesOf,
+} from './kinds/index.js';
 import { serve, SERVER_INFO } from './mcp.js';
 import {
   auditLogPath, configDir, ensureDir, inventoryPath, logDir, sessionDir as sessionDirOf, writeFileAtomic,
 } from './paths.js';
 import { liveSession } from './session.js';
 import { start } from './start.js';
-import {
-  decideKube, decideLocal, decideSsh, reviewRoute, targetState,
-} from './tools.js';
+import { reviewRoute, targetState } from './tools.js';
 
-const USAGE = `Usage: ksproxy <command>
+const START_INDENT = '        ';
+const USAGE_WIDTH = 78;
+
+// The start line of the usage, from the list of kinds: the flag of each kind that is not brokered, then --all and
+// --verbose, then the flags of the brokered kinds on lines of their own, wrapped at USAGE_WIDTH.
+function startUsage() {
+  const shown = KINDS.map((kind, i) => ({ brokered: kind.brokered === true, text: `[--${kind.flag} ${i % 2 === 0 ? 'a,b' : 'x,y'}]` }));
+  const first = shown.filter((s) => !s.brokered).map((s) => s.text);
+  const lines = [`  start ${[...first, '[--all]', '[-v|--verbose]'].join(' ')}`];
+  let line = '';
+  for (const { text } of shown.filter((s) => s.brokered)) {
+    if (line !== '' && START_INDENT.length + line.length + 1 + text.length > USAGE_WIDTH) {
+      lines.push(START_INDENT + line);
+      line = '';
+    }
+    line = line === '' ? text : `${line} ${text}`;
+  }
+  if (line !== '') lines.push(START_INDENT + line);
+  return lines.join('\n');
+}
+
+// The flags check takes, from the list of kinds: <ssh|kube|local|...>.
+const checkKinds = () => `<${KINDS.map((kind) => kind.flag).join('|')}>`;
+
+// The check lines of the usage: the flags of every kind, then the name and the command on a line of their own.
+const checkUsage = () => `  check ${checkKinds()}\n${START_INDENT}<name> <command...>`;
+
+const usage = () => `Usage: ksproxy <command>
 
 Commands:
   init                                      write a sample inventory (never overwrites)
-  start [--ssh a,b] [--kube x,y] [--local a,b] [--all] [-v|--verbose]
+${startUsage()}
                                             pick targets, open them, stay in the foreground
   status                                    show the live session and each target's state
   log [-n N] [--denied] [--json]            show the last N log entries (default 50)
-  check <ssh|kube|local> <name> <command...>
+${checkUsage()}
                                             say whether a command would be allowed
   mcp                                       run the MCP server on stdio (started by the agent)
 
@@ -42,14 +70,15 @@ function makeContext(proc) {
 
 function usageError(ctx, message) {
   ctx.err(message);
-  ctx.proc.stderr.write(USAGE);
+  ctx.proc.stderr.write(usage());
   return 2;
 }
 
 function parseStartArgs(args) {
   const options = {
-    ssh: null, kube: null, local: null, all: false, verbose: false,
+    ...Object.fromEntries(KINDS.map((kind) => [kind.flag, null])), all: false, verbose: false,
   };
+  const flagPattern = new RegExp(`^(--(?:${KINDS.map((kind) => kind.flag).join('|')}))(?:=(.*))?$`);
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     if (arg === '--all') {
@@ -60,7 +89,7 @@ function parseStartArgs(args) {
       options.verbose = true;
       continue;
     }
-    const match = /^(--ssh|--kube|--local)(?:=(.*))?$/.exec(arg);
+    const match = flagPattern.exec(arg);
     if (!match) return { error: `unknown option for start: ${arg}` };
     let value = match[2];
     if (value === undefined) {
@@ -162,7 +191,7 @@ function init(env, { out }) {
     return 0;
   }
   ensureDir(configDir(env));
-  writeFileAtomic(file, `${JSON.stringify(SAMPLE_INVENTORY, null, 2)}\n`);
+  writeFileAtomic(file, `${JSON.stringify(sampleInventory(), null, 2)}\n`);
   out(`wrote ${file} — edit it, then run: ksproxy start`);
   return 0;
 }
@@ -178,7 +207,7 @@ async function status(env, { out }) {
   for (const target of session.targets) {
     const state = await targetState(target, env);
     if (state !== 'up') allUp = false;
-    const label = { ssh: 'ssh', kubernetes: 'kube', local: 'loc' }[target.kind];
+    const label = kindByKey(target.kind)?.label ?? '--';
     out(`  ${state.padEnd(6)}${label.padEnd(6)}${target.name}`);
   }
   const summary = lastCallSummary(env);
@@ -189,8 +218,9 @@ async function status(env, { out }) {
 function check(args, env, ctx) {
   const { out, err } = ctx;
   const [kindArg, name, ...rest] = args;
-  if (!['ssh', 'kube', 'local'].includes(kindArg) || name === undefined || rest.length === 0) {
-    return usageError(ctx, 'usage: ksproxy check <ssh|kube|local> <name> <command...>');
+  const kindOfArg = kindByFlag(kindArg);
+  if (kindOfArg === undefined || name === undefined || rest.length === 0) {
+    return usageError(ctx, `usage: ksproxy check ${checkKinds()} <name> <command...>`);
   }
   let inventory;
   try {
@@ -202,35 +232,32 @@ function check(args, env, ctx) {
     }
     throw e;
   }
-  const list = { ssh: inventory.ssh, kube: inventory.kubernetes, local: inventory.local }[kindArg];
+  const list = inventory[kindOfArg.key];
   const target = list.find((t) => t.name === name);
   if (!target) {
     err(`unknown ${kindArg} target "${name}"; known: ${list.map((t) => t.name).join(', ') || 'none'}`);
     return 2;
   }
-  let decision;
-  if (kindArg === 'ssh') decision = decideSsh(target, rest.join(' '));
-  else if (kindArg === 'kube') decision = decideKube(target, rest);
-  else {
-    const kubeconfigs = inventory.kubernetes.map((k) => k.kubeconfig);
-    const problem = localFolderProblem(target.cwd, env, kubeconfigs);
-    if (problem !== null) {
-      out(`REFUSED: ${problem}`);
-      return 1;
-    }
-    decision = decideLocal({
-      ...target,
-      protected: kubeconfigs,
-      ...(target.review ? { review: true, programs: target.review.programs } : {}),
-    }, rest.join(' '), env);
+  const warnings = kindOfArg.ruleWarnings === undefined ? allowWarnings(target.allow) : kindOfArg.ruleWarnings(target);
+  for (const warning of warnings) err(`WARNING: ${kindOfArg.key} "${target.name}": ${warning}`);
+  const prepared = kindOfArg.forCheck === undefined
+    ? { target }
+    : kindOfArg.forCheck(target, { env, secretFiles: secretFilesOf(inventory) });
+  if (prepared.refusal !== undefined) {
+    out(`REFUSED: ${prepared.refusal}`);
+    return 1;
   }
+  let input = kindOfArg.tool.detailIsArray ? rest : rest.join(' ');
+  if (kindOfArg.checkInput !== undefined) input = kindOfArg.checkInput(rest);
+  const decision = kindOfArg.decide(prepared.target, input, env);
   if (decision.allowed) {
     out(`ALLOWED by rule: ${decision.rule}`);
-    if (decision.prefix !== undefined) out(`sent to ${target.host}: ${decision.prefix} ${decision.command}`);
+    if (kindOfArg.checkExtra !== undefined) {
+      for (const line of kindOfArg.checkExtra(target, decision)) out(line);
+    }
     return 0;
   }
-  const kind = { ssh: 'ssh', kube: 'kubernetes', local: 'local' }[kindArg];
-  const route = reviewRoute(kind, decision, target.review !== undefined);
+  const route = reviewRoute(kindOfArg.key, decision, target.review !== undefined);
   if (route?.argv) {
     out(`NOT ON THE ALLOWLIST: a running session asks reviewer "${target.review.reviewer}"`);
     return 1;
@@ -244,7 +271,7 @@ export async function main(argv, env = process.env, host = {}) {
   const ctx = makeContext(proc);
   const [command, ...args] = argv;
   if (command === undefined || command === '--help' || command === '-h') {
-    proc.stdout.write(USAGE);
+    proc.stdout.write(usage());
     return 0;
   }
   if (command === '--version') {

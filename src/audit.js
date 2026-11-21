@@ -1,13 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { KINDS, kindByKey } from './kinds/index.js';
+import { clip } from './text.js';
 
 export const MAX_LOG_BYTES = 5 * 1024 * 1024;
 export const ROTATED_KEEP = 5;
-
-export function clip(text, max) {
-  const s = String(text);
-  return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
-}
 
 function clipEntry(entry) {
   const out = { ...entry };
@@ -183,20 +180,23 @@ function statusColor(status) {
   return STATUS_COLOR[status];
 }
 
-function isKube(entry) {
-  return entry.tool === 'kubectl' || entry.kind === 'kube' || entry.kind === 'kubernetes';
-}
+const DEFAULT_CALL_KIND = 'ssh';
 
-function isLocal(entry) {
-  return entry.tool === 'local_exec' || entry.kind === 'loc' || entry.kind === 'local';
+const namesKind = (entry, kind) => entry.kind === kind.label || entry.kind === kind.key;
+
+function callKind(entry) {
+  const other = KINDS.find((kind) => kind.key !== DEFAULT_CALL_KIND && (entry.tool === kind.tool.name || namesKind(entry, kind)));
+  return other ?? kindByKey(DEFAULT_CALL_KIND);
 }
 
 function callDetail(entry, verbose) {
-  const raw = isKube(entry) ? entry.args : entry.command;
+  const { tool } = callKind(entry);
+  const raw = entry[tool.detailKey];
   let text = '(invalid)';
   if (Array.isArray(raw)) text = raw.join(' ');
   else if (typeof raw === 'string') text = raw;
   else if (raw === undefined) text = '';
+  else if (tool.detailText !== undefined && raw !== null && typeof raw === 'object') text = tool.detailText(raw);
   text = sanitizeForTerminal(text);
   if (entry.decision === 'refused') {
     const reason = entry.short ?? (entry.reason === undefined ? undefined : clip(entry.reason, 60));
@@ -224,10 +224,7 @@ function callStatus(entry) {
 }
 
 function lifecycleKind(entry) {
-  if (entry.kind === 'ssh') return 'ssh';
-  if (entry.kind === 'kube' || entry.kind === 'kubernetes') return 'kube';
-  if (isLocal(entry)) return 'loc';
-  return '--';
+  return KINDS.find((kind) => namesKind(entry, kind))?.label ?? '--';
 }
 
 export function formatLogLine(entry, { width = DEFAULT_WIDTH, color = false, verbose = false } = {}) {
@@ -238,8 +235,7 @@ export function formatLogLine(entry, { width = DEFAULT_WIDTH, color = false, ver
   let duration = '';
   let detail;
   if (event === 'call') {
-    if (isKube(entry)) kind = 'kube';
-    else kind = isLocal(entry) ? 'loc' : 'ssh';
+    kind = callKind(entry).label;
     target = entry.target ?? '';
     status = callStatus(entry);
     if (entry.decision !== 'refused') duration = formatDuration(entry.durationMs);

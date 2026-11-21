@@ -5,25 +5,21 @@ import { StringDecoder } from 'node:string_decoder';
 import {
   adoptOldLogs, appendAudit, formatLogLine, logOptionsFor, MAX_LOG_BYTES, rotateAudit,
 } from './audit.js';
-import { agentMdText, mcpConfig } from './agent-md.js';
+import { NODE_FLAGS, agentMdText, mcpConfig } from './agent-md.js';
+import { allowWarnings } from './allowlist.js';
 import { InventoryError, loadInventory } from './inventory.js';
 import {
-  closeCluster, kubeconfigText, openCluster, reapStaleProxies,
-} from './kube.js';
-import {
-  auditLogPath, ensureDir, inventoryPath, logDir as logDirOf, REVIEW_SOCKET_NAME, reviewSocketPath, sessionDir as sessionDirOf, socketDir as socketDirOf,
-  socketPath, stateDir as stateDirOf, writeFileAtomic,
+  auditLogPath, callSocketPath, ensureDir, inventoryPath, logDir as logDirOf, reviewSocketPath, sessionDir as sessionDirOf,
+  socketDir as socketDirOf, stateDir as stateDirOf, writeFileAtomic,
 } from './paths.js';
+import { startCallServer } from './broker.js';
+import { KINDS, kindByKey, secretFilesOf } from './kinds/index.js';
 import { startReviewServer } from './review.js';
 import { checkbox } from './select.js';
 import {
   clearSession, liveSession, processStartTime, writeSession,
 } from './session.js';
-import { closeMaster, openMaster, sshConfigText } from './ssh.js';
-import {
-  cleanPath, localFolderProblem, looksSecret, sessionProtected,
-} from './local.js';
-import { targetState } from './tools.js';
+import { answerCall, targetState } from './tools.js';
 
 const BIN_PATH = fileURLToPath(new URL('../bin/ksproxy.js', import.meta.url));
 const FOLLOW_INTERVAL_MS = 500;
@@ -31,6 +27,9 @@ const RETIRE_MS = 2000;
 const DEFAULT_HEALTH_MS = 30000;
 const MIN_HEALTH_MS = 200;
 const EMPTY_ALLOW = 'allowlist is empty, every command will be refused';
+const SHORT_SECRET = 8;
+const SHORT_SECRET_WHY = `holds a secret shorter than ${SHORT_SECRET} characters: hiding it in output can give it away`;
+const SHORT_FORM_WHY = `holds a secret with a part shorter than ${SHORT_SECRET} characters: hiding it in output can give it away`;
 
 export function bounded(promise, ms, onTimeout) {
   return new Promise((resolve) => {
@@ -67,19 +66,6 @@ export function emptyDirectory(dir, keep = []) {
   }
 }
 
-export async function closeStaleSockets(dir, env) {
-  let names;
-  try {
-    names = fs.readdirSync(dir);
-  } catch {
-    return;
-  }
-  for (const name of names) {
-    if (name.endsWith('.pid') || name === REVIEW_SOCKET_NAME) continue;
-    await closeMaster({ socket: path.join(dir, name), host: 'stale' }, env);
-  }
-}
-
 function pickByName(label, names, list) {
   const known = list.map((t) => t.name);
   const unknown = names.find((n) => !known.includes(n));
@@ -89,43 +75,35 @@ function pickByName(label, names, list) {
   return { list: list.filter((t) => names.includes(t.name)) };
 }
 
-function targetHint(target) {
-  const where = { ssh: target.host, kubernetes: target.kubeconfig, local: target.cwd }[target.kind];
-  return target.description ? `${where} — ${target.description}` : where;
-}
-
-const NOTHING = () => ({ selection: { ssh: [], kubernetes: [], local: [] } });
+// The selection has one list per kind, under the kind's key, in list order.
+const NOTHING = () => ({ selection: Object.fromEntries(KINDS.map((kind) => [kind.key, []])) });
 
 async function chooseTargets(inventory, options, proc, pick) {
   if (options.all) {
-    return { selection: { ssh: inventory.ssh, kubernetes: inventory.kubernetes, local: inventory.local } };
+    return { selection: Object.fromEntries(KINDS.map((kind) => [kind.key, inventory[kind.key]])) };
   }
 
-  if (options.ssh || options.kube || options.local) {
-    const ssh = pickByName('ssh', options.ssh ?? [], inventory.ssh);
-    if (ssh.error) return ssh;
-    const kube = pickByName('kube', options.kube ?? [], inventory.kubernetes);
-    if (kube.error) return kube;
-    const local = pickByName('local', options.local ?? [], inventory.local);
-    if (local.error) return local;
-    return { selection: { ssh: ssh.list, kubernetes: kube.list, local: local.list } };
+  if (KINDS.some((kind) => options[kind.flag])) {
+    const selection = {};
+    for (const kind of KINDS) {
+      const named = pickByName(kind.flag, options[kind.flag] ?? [], inventory[kind.key]);
+      if (named.error) return named;
+      selection[kind.key] = named.list;
+    }
+    return { selection };
   }
 
   if (!proc.stdin.isTTY) {
-    return { error: 'no targets selected: use --ssh, --kube, --local or --all when not running in a terminal' };
+    // The flag of every kind that is not brokered, and of each brokered kind the inventory holds a target of.
+    const flags = KINDS.filter((kind) => kind.brokered !== true || inventory[kind.key].length > 0).map((kind) => `--${kind.flag}`);
+    return { error: `no targets selected: use ${flags.join(', ')} or --all when not running in a terminal` };
   }
 
-  const kinds = [];
-  if (inventory.ssh.length > 0) kinds.push({ key: 'ssh', label: 'ssh', hint: `${inventory.ssh.length} server(s)` });
-  if (inventory.kubernetes.length > 0) {
-    kinds.push({ key: 'kubernetes', label: 'kubernetes', hint: `${inventory.kubernetes.length} cluster(s)` });
-  }
-  if (inventory.local.length > 0) {
-    kinds.push({ key: 'local', label: 'local', hint: `${inventory.local.length} folder(s)` });
-  }
+  const kinds = KINDS.filter((kind) => inventory[kind.key].length > 0);
+  const items = kinds.map((kind) => ({ key: kind.key, label: kind.key, hint: `${inventory[kind.key].length} ${kind.countNoun}` }));
   let chosenKinds = kinds;
   if (kinds.length > 1) {
-    const picked = await pick({ title: 'Which kinds of proxy?', items: kinds });
+    const picked = await pick({ title: 'Which kinds of proxy?', items });
     if (picked === null) return NOTHING();
     chosenKinds = picked.map((i) => kinds[i]);
   }
@@ -133,39 +111,21 @@ async function chooseTargets(inventory, options, proc, pick) {
   const selection = NOTHING().selection;
   for (const kind of chosenKinds) {
     const targets = inventory[kind.key];
-    const items = targets.map((t) => ({ label: t.name, hint: targetHint(t) }));
-    const picked = await pick({ title: `Which ${kind.label} targets?`, items });
+    const choices = targets.map((t) => ({ label: t.name, hint: kind.hint(t) }));
+    const picked = await pick({ title: `Which ${kind.key} targets?`, items: choices });
     if (picked === null) return NOTHING();
     selection[kind.key] = picked.map((i) => targets[i]);
   }
   return { selection };
 }
 
-function folderProblem(cwd, env, protectedList) {
-  let stat;
-  try {
-    stat = fs.statSync(cwd);
-  } catch {
-    return `folder not found: ${cwd}`;
-  }
-  if (!stat.isDirectory()) return `not a directory: ${cwd}`;
-  return localFolderProblem(cwd, env, protectedList);
+const logKind = (key) => kindByKey(key).label;
+
+// A target as its kind recorded it, with the maxOutputKiB of its inventory entry when it has one: the same for every
+// kind, so that no kind's record has to copy it.
+function withOutputLimit(recorded, target) {
+  return target.maxOutputKiB === undefined ? recorded : { ...recorded, maxOutputKiB: target.maxOutputKiB };
 }
-
-const MAX_NAMED = 3;
-
-function looseSecrets(target) {
-  let names;
-  try {
-    names = fs.readdirSync(target.cwd);
-  } catch {
-    return [];
-  }
-  const listed = (target.protect ?? []).map((entry) => entry.toLowerCase());
-  return names.filter((name) => looksSecret(name) && !listed.includes(name.toLowerCase())).sort();
-}
-
-const LOG_KIND = { ssh: 'ssh', kubernetes: 'kube', local: 'loc' };
 
 export function fileSize(file) {
   try {
@@ -285,25 +245,90 @@ export function startFollower(auditFile, onEntry, fromOffset, intervalMs = FOLLO
   };
 }
 
-function withoutKeyVariables(env, reviewers) {
-  const names = Object.values(reviewers).map((r) => r.keyEnv).filter((name) => name !== null);
+// Every variable that holds a credential: the key of each reviewer that names one, then the variables that a kind
+// with secrets names for each of its inventory entries, selected or not.
+function credentialVariables(inventory) {
+  const names = Object.values(inventory.reviewers).map((r) => r.keyEnv).filter((name) => name !== null);
+  for (const kind of KINDS) {
+    if (kind.secrets === undefined) continue;
+    for (const t of inventory[kind.key]) names.push(...kind.secrets(t).env);
+  }
+  return names;
+}
+
+function withoutVariables(env, names) {
   if (names.length === 0) return env;
   const out = { ...env };
   for (const name of names) delete out[name];
   return out;
 }
 
+// The secrets of one target, from the values held at start and the files it names: { secrets, short, shortForms } or
+// { error }. short names, for each value shorter than SHORT_SECRET characters, where it came from: the variable or the
+// file. A variable the kind names in users holds only a user name and is never named. shortForms names the other
+// sources of a form from hiddenForms shorter than SHORT_SECRET characters (see shortFormSources).
+export function readSecrets(kind, target, held) {
+  if (kind.secrets === undefined) return { secrets: {}, short: [], shortForms: [] };
+  const { env: names, files, users = [] } = kind.secrets(target);
+  const secrets = {};
+  const short = [];
+  for (const name of names) {
+    const value = held.get(name);
+    if (!value) return { error: `${name} is not set` };
+    secrets[name] = value;
+    if (isShort(value) && !users.includes(name)) short.push(name);
+  }
+  for (const file of files) {
+    let text;
+    try {
+      text = fs.readFileSync(file, 'utf8');
+    } catch {
+      return { error: `${file} cannot be read` };
+    }
+    text = text.replace(/\r?\n$/, '');
+    if (text === '') return { error: `${file} is empty` };
+    secrets[file] = text;
+    if (isShort(text)) short.push(file);
+  }
+  return { secrets, short, shortForms: shortFormSources(kind, target, secrets, [...users, ...short]) };
+}
+
+const STAND_IN = '\u0001'.repeat(SHORT_SECRET);
+
+function isShort(value) {
+  return [...value].length < SHORT_SECRET;
+}
+
+// The sources whose hidden forms hold one shorter than SHORT_SECRET characters, left out the sources in skip. A form
+// belongs to a source when it is gone once that source's value is replaced by STAND_IN, a value of control characters
+// with no structure, so a kind finds no part in it. A kind without hiddenForms, or whose hiddenForms throws, gives none.
+function shortFormSources(kind, target, secrets, skip) {
+  if (kind.hiddenForms === undefined) return [];
+  try {
+    const short = kind.hiddenForms(target, secrets).filter((form) => form !== '' && isShort(form));
+    if (short.length === 0) return [];
+    return Object.keys(secrets).filter((source) => {
+      if (skip.includes(source)) return false;
+      const other = kind.hiddenForms(target, { ...secrets, [source]: STAND_IN });
+      return short.some((form) => !other.includes(form));
+    });
+  } catch {
+    return [];
+  }
+}
+
 export async function start(options, startEnv = process.env, host = {}) {
   let env = startEnv;
   const { process: proc = process } = host;
   const openReview = host.startReviewServer ?? startReviewServer;
+  const openCalls = host.startCallServer ?? startCallServer;
   const pick = host.checkbox ?? ((request) => checkbox({
     ...request, input: proc.stdin, output: proc.stderr, signals: proc,
   }));
   const stateOf = host.targetState ?? targetState;
   const follow = host.startFollower ?? startFollower;
   const limits = {
-    healthWaitMs: 6000, sshCloseMs: 15000, kubeCloseMs: 20000, logBytes: MAX_LOG_BYTES, followMs: FOLLOW_INTERVAL_MS, ...host.limits,
+    healthWaitMs: 6000, logBytes: MAX_LOG_BYTES, followMs: FOLLOW_INTERVAL_MS, ...host.limits,
   };
   const verbose = options?.verbose === true;
   const alive = { stdout: true, stderr: true };
@@ -344,6 +369,9 @@ export async function start(options, startEnv = process.env, host = {}) {
   const opened = [];
   let follower = null;
   let reviewStart = null;
+  let callStart = null;
+  // The secrets of each opened target, by kind and name; they live here and nowhere else.
+  const secretsOf = new Map();
   let pending = null;
   let cleanupPromise = null;
   let exitCode = 0;
@@ -402,6 +430,13 @@ export async function start(options, startEnv = process.env, host = {}) {
     show(entry, 'stdout');
   };
 
+  // One opened target of a kind that has close, bounded by the kind's closeMs unless host.limits names the kind's closeLimit.
+  const closeOne = (kind, o) => bounded(
+    kind.close(o, { env }),
+    limits[kind.closeLimit] ?? kind.closeMs,
+    kind.onCloseTimeout === undefined ? undefined : () => kind.onCloseTimeout(o),
+  );
+
   const cleanup = () => {
     if (cleanupPromise) return cleanupPromise;
     requestStop();
@@ -410,6 +445,7 @@ export async function start(options, startEnv = process.env, host = {}) {
       healthTimer = null;
       const running = healthRun;
       if (running) await bounded(running, limits.healthWaitMs);
+      if (callStart) await bounded(callStart.then((server) => server.close()), 2000);
       if (follower) {
         try {
           follower.stop();
@@ -418,9 +454,8 @@ export async function start(options, startEnv = process.env, host = {}) {
         }
       }
       if (reviewStart) await bounded(reviewStart.then((server) => server.close()), 2000);
-      await Promise.all(opened.filter((o) => o.kind !== 'local').map((o) => (o.kind === 'ssh'
-        ? bounded(closeMaster({ socket: o.socket, host: o.target.host }, env), limits.sshCloseMs)
-        : bounded(closeCluster(o.handle, env), limits.kubeCloseMs, () => o.handle.child?.kill('SIGKILL')))));
+      await Promise.all(opened.filter((o) => kindByKey(o.kind).close !== undefined)
+        .map((o) => closeOne(kindByKey(o.kind), o)));
       if (!owns) return;
       try {
         clearSession(sessionDirOf(env));
@@ -459,29 +494,27 @@ export async function start(options, startEnv = process.env, host = {}) {
   proc.stdout.on('error', onStdoutError);
   proc.stderr.on('error', onStderrError);
 
-  const downMessage = (item, state) => {
-    if (item.kind === 'ssh') return 'connection lost';
-    if (item.kind === 'loc') return 'folder is gone';
-    if (state === 'auth') return 'token rejected by the cluster';
-    if (state === 'fail') return `cluster did not answer, see kube-${item.name}.log`;
-    return 'proxy is not answering';
-  };
-
   const startHealth = (sessionTargets) => {
     const parsed = Number.parseInt(env.KSPROXY_HEALTH_MS ?? '', 10);
     const every = Number.isFinite(parsed) ? Math.max(MIN_HEALTH_MS, parsed) : DEFAULT_HEALTH_MS;
     const items = opened.map((o, i) => ({
-      kind: LOG_KIND[o.kind],
+      of: kindByKey(o.kind),
+      kind: logKind(o.kind),
       name: o.target.name,
       target: sessionTargets[i],
+      secrets: secretsOf.get(`${o.kind}:${o.target.name}`),
       up: sessionTargets[i].state === 'up',
     }));
+    // A kind with probe is asked with the target's secrets; every other target goes through targetState.
+    const stateNow = (item) => (item.of.probe === undefined
+      ? stateOf(item.target, env)
+      : item.of.probe(item.target, { env, secrets: item.secrets }));
     const checkOnce = async () => {
       for (const item of items) {
         if (stopping) return;
         let state;
         try {
-          state = await stateOf(item.target, env);
+          state = await stateNow(item);
         } catch {
           continue;
         }
@@ -494,11 +527,11 @@ export async function start(options, startEnv = process.env, host = {}) {
             event: 'target_recovered',
             kind: item.kind,
             target: item.name,
-            message: item.kind === 'loc' ? 'folder is back' : 'connection is back',
+            message: item.of.backMessage,
           });
         } else {
           lifecycle({
-            event: 'target_down', kind: item.kind, target: item.name, message: downMessage(item, state),
+            event: 'target_down', kind: item.kind, target: item.name, message: item.of.downMessage(item.target, state),
           });
         }
       }
@@ -516,7 +549,7 @@ export async function start(options, startEnv = process.env, host = {}) {
   const openGuarded = (openFn, closeFn) => {
     const p = (async () => {
       const r = await openFn();
-      if (r.ok && stopping) {
+      if (closeFn !== undefined && r.ok && stopping) {
         await closeFn(r);
         return { ok: false, late: true };
       }
@@ -541,11 +574,14 @@ export async function start(options, startEnv = process.env, host = {}) {
       }
       throw err;
     }
+    // The credentials are read once, here, and the run goes on with an environment that no longer holds them.
+    const credentials = credentialVariables(inventory);
+    const held = new Map(credentials.map((name) => [name, env[name]]));
     const reviewKeys = new Map();
     for (const reviewer of Object.values(inventory.reviewers)) {
-      if (reviewer.keyEnv !== null) reviewKeys.set(reviewer.name, env[reviewer.keyEnv]);
+      if (reviewer.keyEnv !== null) reviewKeys.set(reviewer.name, held.get(reviewer.keyEnv));
     }
-    env = withoutKeyVariables(env, inventory.reviewers);
+    env = withoutVariables(env, credentials);
 
     const sessionDir = sessionDirOf(env);
     const socketDir = socketDirOf(env);
@@ -556,9 +592,11 @@ export async function start(options, startEnv = process.env, host = {}) {
     }
     owns = true;
     clearSession(sessionDir);
-    const reaped = await reapStaleProxies(socketDir);
-    if (reaped > 0) say(`closed ${reaped} proxy process(es) left by an earlier run`);
-    await closeStaleSockets(socketDir, env);
+    // What a killed run left is cleaned in reverse list order: the cluster proxies are stopped before the sockets are closed.
+    for (const kind of [...KINDS].reverse()) {
+      if (kind.reapStale === undefined) continue;
+      for (const line of await kind.reapStale({ socketDir, env })) say(line);
+    }
     emptyDirectory(socketDir);
 
     const chosen = await chooseTargets(inventory, options, proc, pick);
@@ -566,9 +604,9 @@ export async function start(options, startEnv = process.env, host = {}) {
       say(chosen.error);
       return 1;
     }
-    const { ssh: sshTargets, kubernetes: kubeTargets, local: localTargets } = chosen.selection;
-    const kubeconfigPaths = inventory.kubernetes.map((k) => k.kubeconfig);
-    if (sshTargets.length + kubeTargets.length + localTargets.length === 0) {
+    const { selection } = chosen;
+    const secretFiles = secretFilesOf(inventory);
+    if (KINDS.every((kind) => selection[kind.key].length === 0)) {
       say('nothing selected');
       return 1;
     }
@@ -582,108 +620,86 @@ export async function start(options, startEnv = process.env, host = {}) {
     emptyDirectory(sessionDir);
     rotateAudit(auditFile, limits.logBytes);
 
-    const sockets = new Map();
+    // Socket paths are checked kind by kind in list order, then the review socket; the first error stops.
+    const prepared = new Map();
     try {
-      for (const t of sshTargets) sockets.set(`ssh:${t.name}`, socketPath('ssh', t.name, env));
-      for (const t of kubeTargets) {
-        if (t.tunnel) socketPath('tun', t.name, env);
+      for (const kind of KINDS) {
+        prepared.set(kind.key, kind.prepare === undefined ? new Map() : kind.prepare(selection[kind.key], { env }));
       }
-      if ([...sshTargets, ...kubeTargets, ...localTargets].some((t) => t.review)) reviewSocketPath(env);
+      if (KINDS.some((kind) => selection[kind.key].some((t) => t.review))) reviewSocketPath(env);
+      if (KINDS.some((kind) => kind.brokered === true && selection[kind.key].length > 0)) callSocketPath(env);
     } catch (err) {
       say(err.message);
       return 1;
     }
 
     try {
-      for (const t of sshTargets) {
-        if (stopping) break;
-        if (Array.isArray(t.allow) && t.allow.length === 0) {
+      for (const kind of KINDS) {
+        for (const t of selection[kind.key]) {
+          if (stopping) break;
+          if (Array.isArray(t.allow) && t.allow.length === 0) {
+            lifecycle({
+              event: 'target_warn', kind: kind.label, target: t.name, message: EMPTY_ALLOW,
+            });
+          }
+          for (const warning of kind.ruleWarnings === undefined ? allowWarnings(t.allow) : kind.ruleWarnings(t)) {
+            lifecycle({
+              event: 'target_warn', kind: kind.label, target: t.name, message: warning,
+            });
+          }
           lifecycle({
-            event: 'target_warn', kind: 'ssh', target: t.name, message: EMPTY_ALLOW,
+            event: 'target_opening', kind: kind.label, target: t.name, message: kind.openingMessage(t),
           });
-        }
-        lifecycle({
-          event: 'target_opening', kind: 'ssh', target: t.name, message: t.jumps ? `${t.host}, then ${t.jumps.length} jump${t.jumps.length === 1 ? '' : 's'}` : t.host,
-        });
-        const socket = sockets.get(`ssh:${t.name}`);
-        const r = await openGuarded(
-          () => openMaster({ socket, host: t.host }, env),
-          () => bounded(closeMaster({ socket, host: t.host }, env), limits.sshCloseMs),
-        );
-        if (r.late) break;
-        if (r.ok) {
-          lifecycle({ event: 'target_up', kind: 'ssh', target: t.name });
-          opened.push({ kind: 'ssh', target: t, socket });
-        } else {
-          lifecycle({
-            event: 'target_skipped', kind: 'ssh', target: t.name, message: r.error,
-          });
-        }
-      }
-      for (const t of kubeTargets) {
-        if (stopping) break;
-        if (Array.isArray(t.allow) && t.allow.length === 0) {
-          lifecycle({
-            event: 'target_warn', kind: 'kube', target: t.name, message: EMPTY_ALLOW,
-          });
-        }
-        lifecycle({
-          event: 'target_opening', kind: 'kube', target: t.name, message: `port ${t.proxyPort}`,
-        });
-        const r = await openGuarded(
-          () => openCluster(t, { sessionDir }, env),
-          (handle) => bounded(closeCluster(handle, env), limits.kubeCloseMs, () => handle.child?.kill('SIGKILL')),
-        );
-        if (r.late) break;
-        if (r.ok) {
-          opened.push({ kind: 'kubernetes', target: t, handle: r });
-          if (r.state === 'up') {
-            lifecycle({ event: 'target_up', kind: 'kube', target: t.name });
+          const secrets = readSecrets(kind, t, held);
+          if (secrets.error !== undefined) {
+            lifecycle({
+              event: 'target_skipped', kind: kind.label, target: t.name, message: secrets.error,
+            });
+            continue;
+          }
+          const ctx = {
+            env, sessionDir, secretFiles, prepared: prepared.get(kind.key).get(t.name), secrets: secrets.secrets,
+          };
+          // The result of open is always awaited. A kind with close is closed again when a stop arrived meanwhile.
+          const r = await openGuarded(
+            () => kind.open(t, ctx),
+            kind.close === undefined ? undefined : (result) => closeOne(kind, { kind: kind.key, target: t, ...result.extras }),
+          );
+          if (r.late) break;
+          if (r.ok) {
+            opened.push({ kind: kind.key, target: t, ...r.extras });
+            secretsOf.set(`${kind.key}:${t.name}`, secrets.secrets);
+            if (r.warn === undefined) {
+              lifecycle({ event: 'target_up', kind: kind.label, target: t.name });
+            } else {
+              lifecycle({
+                event: 'target_warn', kind: kind.label, target: t.name, message: r.warn,
+              });
+            }
+            for (const note of r.notes ?? []) {
+              lifecycle({
+                event: 'target_warn', kind: kind.label, target: t.name, message: note,
+              });
+            }
+            for (const source of secrets.short) {
+              lifecycle({
+                event: 'target_warn', kind: kind.label, target: t.name, message: `${source} ${SHORT_SECRET_WHY}`,
+              });
+            }
+            for (const source of secrets.shortForms) {
+              lifecycle({
+                event: 'target_warn', kind: kind.label, target: t.name, message: `${source} ${SHORT_FORM_WHY}`,
+              });
+            }
           } else {
             lifecycle({
-              event: 'target_warn',
-              kind: 'kube',
-              target: t.name,
-              message: downMessage({ kind: 'kube', name: t.name }, r.state),
+              event: 'target_skipped', kind: kind.label, target: t.name, message: r.error,
             });
           }
-        } else {
-          lifecycle({
-            event: 'target_skipped', kind: 'kube', target: t.name, message: r.error,
-          });
         }
       }
-
-      for (const t of localTargets) {
-        if (stopping) break;
-        if (t.allow.length === 0) {
-          lifecycle({
-            event: 'target_warn', kind: 'loc', target: t.name, message: EMPTY_ALLOW,
-          });
-        }
-        lifecycle({
-          event: 'target_opening', kind: 'loc', target: t.name, message: t.cwd,
-        });
-        const problem = folderProblem(t.cwd, env, kubeconfigPaths);
-        if (problem === null) {
-          lifecycle({ event: 'target_up', kind: 'loc', target: t.name });
-          opened.push({ kind: 'local', target: t });
-          const loose = looseSecrets(t);
-          if (loose.length > 0) {
-            const more = loose.length > MAX_NAMED ? ` and ${loose.length - MAX_NAMED} more` : '';
-            lifecycle({
-              event: 'target_warn',
-              kind: 'loc',
-              target: t.name,
-              message: `holds ${loose.slice(0, MAX_NAMED).join(', ')}${more}: list them in "protect" to also refuse commands given the whole folder`,
-            });
-          }
-        } else {
-          lifecycle({
-            event: 'target_skipped', kind: 'loc', target: t.name, message: problem,
-          });
-        }
-      }
+      // Only the secrets of the opened targets are kept.
+      held.clear();
 
       if (stopping) {
         announceClosing();
@@ -704,7 +720,7 @@ export async function start(options, startEnv = process.env, host = {}) {
         const key = reviewer.keyEnv === null ? null : reviewKeys.get(reviewer.name);
         if (reviewer.keyEnv !== null && !key) {
           lifecycle({
-            event: 'target_warn', kind: LOG_KIND[o.kind], target: o.target.name, message: `review is off: ${reviewer.keyEnv} is not set`,
+            event: 'target_warn', kind: logKind(o.kind), target: o.target.name, message: `review is off: ${reviewer.keyEnv} is not set`,
           });
           continue;
         }
@@ -724,7 +740,7 @@ export async function start(options, startEnv = process.env, host = {}) {
         if (!started) {
           for (const { kind, name } of reviewed.values()) {
             lifecycle({
-              event: 'target_warn', kind: LOG_KIND[kind], target: name, message: 'review is off: could not start the review service',
+              event: 'target_warn', kind: logKind(kind), target: name, message: 'review is off: could not start the review service',
             });
           }
           reviewed.clear();
@@ -732,54 +748,45 @@ export async function start(options, startEnv = process.env, host = {}) {
       }
       for (const { kind, name, reviewer, review } of reviewed.values()) {
         lifecycle({
-          event: 'target_review', kind: LOG_KIND[kind], target: name, message: `reviewer ${reviewer.name}, accepts ${review.accept.join(' and ')}`,
+          event: 'target_review', kind: logKind(kind), target: name, message: `reviewer ${reviewer.name}, accepts ${review.accept.join(' and ')}`,
         });
       }
-      const isReviewed = (o) => reviewed.has(`${o.kind}:${o.target.name}`);
-      const reviewFlag = (o) => (isReviewed(o) ? { review: true } : {});
+      const sessionTargets = opened.map((o) => withOutputLimit(kindByKey(o.kind).record(o, {
+        env, selected: selection[o.kind], secretFiles, reviewed: reviewed.has(`${o.kind}:${o.target.name}`),
+      }), o.target));
 
-      const recordedProtected = sessionProtected(kubeconfigPaths, env);
-      const sessionTargets = opened.map((o) => {
-        if (o.kind === 'ssh') {
-          return {
-            kind: 'ssh',
-            name: o.target.name,
-            description: o.target.description,
-            allow: o.target.allow,
-            host: o.target.host,
-            ...(o.target.jumps ? { jumps: o.target.jumps } : {}),
-            socket: o.socket,
-            state: 'up',
-            ...reviewFlag(o),
-          };
-        }
-        if (o.kind === 'local') {
-          return {
-            kind: 'local',
-            name: o.target.name,
-            description: o.target.description,
-            allow: o.target.allow,
-            cwd: o.target.cwd,
-            path: cleanPath(env.PATH, localTargets.map((t) => t.cwd)),
-            protected: recordedProtected,
-            state: 'up',
-            ...reviewFlag(o),
-            ...(o.target.protect ? { protect: o.target.protect } : {}),
-            ...(isReviewed(o) ? { programs: o.target.review.programs } : {}),
-          };
-        }
-        return {
-          kind: 'kubernetes',
-          name: o.target.name,
-          description: o.target.description,
-          allow: o.target.allow,
-          proxyPort: o.target.proxyPort,
-          manifestRoots: o.target.manifestRoots,
-          tunnel: o.handle.tunnel,
-          state: o.handle.state,
-          ...reviewFlag(o),
-        };
+      // The brokered targets as this run opened and recorded them: the only ones the call service acts on.
+      const calls = new Map();
+      opened.forEach((o, i) => {
+        if (kindByKey(o.kind).brokered !== true) return;
+        const key = `${o.kind}:${o.target.name}`;
+        calls.set(key, { target: sessionTargets[i], secrets: secretsOf.get(key) });
       });
+      if (calls.size > 0) {
+        const context = {
+          calls,
+          session: { targets: sessionTargets },
+          env,
+          review: (subject) => reviewStart.then((server) => server.ask(subject)),
+          stderr: { write: (text) => write('stderr', text) },
+        };
+        const handle = (request, signal) => answerCall(request, { ...context, signal });
+        callStart = Promise.resolve().then(() => openCalls({ socket: callSocketPath(env), handle }));
+        const started = await callStart.then(() => true, () => false);
+        if (stopping) {
+          announceClosing();
+          await cleanup();
+          announceClosed();
+          return exitCode;
+        }
+        if (!started) {
+          for (const { target } of calls.values()) {
+            lifecycle({
+              event: 'target_warn', kind: logKind(target.kind), target: target.name, message: 'calls are off: could not start the call service',
+            });
+          }
+        }
+      }
       const session = {
         version: 1,
         pid: proc.pid,
@@ -794,19 +801,20 @@ export async function start(options, startEnv = process.env, host = {}) {
         event: 'session_start',
         pid: proc.pid,
         targets: sessionTargets.map((t) => ({
-          kind: LOG_KIND[t.kind], name: t.name, state: t.state,
+          kind: logKind(t.kind), name: t.name, state: t.state,
         })),
         message: `${sessionTargets.length} targets, pid ${proc.pid}`,
       });
 
       const config = mcpConfig(proc.execPath, BIN_PATH);
       const configText = `${JSON.stringify(config, null, 2)}\n`;
-      writeFileAtomic(path.join(sessionDir, 'ssh_config'), sshConfigText(
-        opened.filter((o) => o.kind === 'ssh').map((o) => ({ name: o.target.name, socket: o.socket })),
-      ));
-      writeFileAtomic(path.join(sessionDir, 'kubeconfig'), kubeconfigText(
-        opened.filter((o) => o.kind === 'kubernetes').map((o) => ({ name: o.target.name, proxyPort: o.target.proxyPort })),
-      ));
+      // Each kind's own files, in list order, written even when no target of that kind is open.
+      for (const kind of KINDS) {
+        if (kind.sessionFiles === undefined) continue;
+        for (const file of kind.sessionFiles(opened.filter((o) => o.kind === kind.key), { env })) {
+          writeFileAtomic(path.join(sessionDir, file.name), file.text);
+        }
+      }
       writeFileAtomic(path.join(sessionDir, 'AGENT.md'), agentMdText(session));
       writeFileAtomic(path.join(sessionDir, 'mcp.json'), configText);
       writeSession(sessionDir, session);
@@ -815,7 +823,7 @@ export async function start(options, startEnv = process.env, host = {}) {
         `Session folder: ${sessionDir}`,
         'MCP config (add once to your agent):',
         configText.trimEnd(),
-        `Claude Code: claude mcp add ksproxy -- ${proc.execPath} ${BIN_PATH} mcp`,
+        `Claude Code: claude mcp add ksproxy -- ${[proc.execPath, ...NODE_FLAGS, BIN_PATH].join(' ')} mcp`,
         '',
         'Leave this running. Ctrl-C closes every connection.',
         '',

@@ -1,17 +1,14 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { configDir, stateDir } from './paths.js';
-
-export function isCaseInsensitive(platform = process.platform) {
-  return platform === 'darwin' || platform === 'win32';
-}
+import {
+  configDir, dropDataVolume, isCaseInsensitive, stateDir,
+} from '../../paths.js';
 
 const CASE_INSENSITIVE = isCaseInsensitive();
 
 const PLAIN = /^[A-Za-z0-9_.][A-Za-z0-9_./-]*$/;
 
-const DATA_VOLUME = '/System/Volumes/Data';
 const MAX_FOLDER_BYTES = 400;
 const MAX_VALUE_BYTES = 512;
 const MAX_JOINED_BYTES = 1000;
@@ -42,15 +39,6 @@ export function isInside(child, parent, insensitive = CASE_INSENSITIVE) {
   const c = insensitive ? child.toLowerCase() : child;
   const p = insensitive ? parent.toLowerCase() : parent;
   return c === p || c.startsWith(p.endsWith(path.sep) ? p : p + path.sep);
-}
-
-// On macOS the same file can be named with or without the leading /System/Volumes/Data component.
-// Only that exact leading component is dropped, and only on darwin.
-export function dropDataVolume(p, platform = process.platform) {
-  if (platform !== 'darwin' || !p.startsWith(DATA_VOLUME)) return p;
-  const rest = p.slice(DATA_VOLUME.length);
-  if (rest === '') return '/';
-  return rest.startsWith('/') ? rest : p;
 }
 
 // { real } for the real path of the deepest part of `p` that exists plus the rest appended,

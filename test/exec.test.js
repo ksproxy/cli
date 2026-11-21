@@ -65,7 +65,8 @@ function stubbornGrandchildScript(pidFile, stayAlive) {
     "const { spawn } = require('node:child_process');",
     "const fs = require('node:fs');",
     "const g = spawn(process.execPath, ['-e', \"process.on('SIGTERM', () => {}); setTimeout(() => {}, 30000)\"], { stdio: 'ignore' });",
-    `fs.writeFileSync(${JSON.stringify(pidFile)}, String(g.pid));`,
+    `fs.writeFileSync(${JSON.stringify(`${pidFile}.part`)}, String(g.pid));`,
+    `fs.renameSync(${JSON.stringify(`${pidFile}.part`)}, ${JSON.stringify(pidFile)});`,
     stayAlive ? 'setTimeout(() => {}, 30000);' : 'process.exit(0);',
   ].join('\n');
 }
@@ -111,7 +112,8 @@ test('a timeout bounds the call even when a grandchild holds the output open', a
     "const { spawn } = require('node:child_process');",
     "const fs = require('node:fs');",
     "const g = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: ['ignore', 'inherit', 'inherit'] });",
-    `fs.writeFileSync(${JSON.stringify(pidFile)}, String(g.pid));`,
+    `fs.writeFileSync(${JSON.stringify(`${pidFile}.part`)}, String(g.pid));`,
+    `fs.renameSync(${JSON.stringify(`${pidFile}.part`)}, ${JSON.stringify(pidFile)});`,
     'setTimeout(() => {}, 30000);',
   ].join('\n');
   let grandchild = null;

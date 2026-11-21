@@ -1,0 +1,95 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { formatLogLine } from '../src/audit.js';
+
+// Each row was produced by the release's formatLogLine for an entry that carries command and args both.
+// A lifecycle entry is placed by its kind alone; a call entry by its tool first, then its kind.
+const ROWS = [
+  ['call', 'ssh', 'kubectl', 'kube t          ok              a'],
+  ['call', 'ssh', 'local_exec', 'loc  t          ok              c'],
+  ['call', 'kube', 'ssh_exec', 'kube t          ok              a'],
+  ['call', 'kubernetes', 'ssh_exec', 'kube t          ok              a'],
+  ['call', 'loc', 'ssh_exec', 'loc  t          ok              c'],
+  ['call', 'local', 'ssh_exec', 'loc  t          ok              c'],
+  ['target_opening', null, 'ssh_exec', '--   t          OPENING         m'],
+  ['target_opening', null, 'kubectl', '--   t          OPENING         m'],
+  ['target_opening', 'kube', 'ssh_exec', 'kube t          OPENING         m'],
+  ['target_opening', 'kubernetes', 'ssh_exec', 'kube t          OPENING         m'],
+  ['target_opening', 'loc', 'ssh_exec', 'loc  t          OPENING         m'],
+  ['target_opening', 'loc', 'kubectl', 'loc  t          OPENING         m'],
+  ['target_opening', 'local', 'ssh_exec', 'loc  t          OPENING         m'],
+  ['target_opening', 'local', 'kubectl', 'loc  t          OPENING         m'],
+  ['target_opening', 'bogus', 'ssh_exec', '--   t          OPENING         m'],
+  ['target_opening', 'bogus', 'kubectl', '--   t          OPENING         m'],
+  ['target_up', null, 'ssh_exec', '--   t          UP              m'],
+  ['target_up', null, 'kubectl', '--   t          UP              m'],
+  ['target_up', 'kube', 'ssh_exec', 'kube t          UP              m'],
+  ['target_up', 'kubernetes', 'ssh_exec', 'kube t          UP              m'],
+  ['target_up', 'loc', 'ssh_exec', 'loc  t          UP              m'],
+  ['target_up', 'loc', 'kubectl', 'loc  t          UP              m'],
+  ['target_up', 'local', 'ssh_exec', 'loc  t          UP              m'],
+  ['target_up', 'local', 'kubectl', 'loc  t          UP              m'],
+  ['target_up', 'bogus', 'ssh_exec', '--   t          UP              m'],
+  ['target_up', 'bogus', 'kubectl', '--   t          UP              m'],
+  ['target_skipped', null, 'ssh_exec', '--   t          SKIPPED         m'],
+  ['target_skipped', null, 'kubectl', '--   t          SKIPPED         m'],
+  ['target_skipped', 'kube', 'ssh_exec', 'kube t          SKIPPED         m'],
+  ['target_skipped', 'kubernetes', 'ssh_exec', 'kube t          SKIPPED         m'],
+  ['target_skipped', 'loc', 'ssh_exec', 'loc  t          SKIPPED         m'],
+  ['target_skipped', 'loc', 'kubectl', 'loc  t          SKIPPED         m'],
+  ['target_skipped', 'local', 'ssh_exec', 'loc  t          SKIPPED         m'],
+  ['target_skipped', 'local', 'kubectl', 'loc  t          SKIPPED         m'],
+  ['target_skipped', 'bogus', 'ssh_exec', '--   t          SKIPPED         m'],
+  ['target_skipped', 'bogus', 'kubectl', '--   t          SKIPPED         m'],
+  ['target_warn', null, 'ssh_exec', '--   t          WARN            m'],
+  ['target_warn', null, 'kubectl', '--   t          WARN            m'],
+  ['target_warn', 'kube', 'ssh_exec', 'kube t          WARN            m'],
+  ['target_warn', 'kubernetes', 'ssh_exec', 'kube t          WARN            m'],
+  ['target_warn', 'loc', 'ssh_exec', 'loc  t          WARN            m'],
+  ['target_warn', 'loc', 'kubectl', 'loc  t          WARN            m'],
+  ['target_warn', 'local', 'ssh_exec', 'loc  t          WARN            m'],
+  ['target_warn', 'local', 'kubectl', 'loc  t          WARN            m'],
+  ['target_warn', 'bogus', 'ssh_exec', '--   t          WARN            m'],
+  ['target_warn', 'bogus', 'kubectl', '--   t          WARN            m'],
+  ['target_review', null, 'ssh_exec', '--   t          REVIEW          m'],
+  ['target_review', null, 'kubectl', '--   t          REVIEW          m'],
+  ['target_review', 'kube', 'ssh_exec', 'kube t          REVIEW          m'],
+  ['target_review', 'kubernetes', 'ssh_exec', 'kube t          REVIEW          m'],
+  ['target_review', 'loc', 'ssh_exec', 'loc  t          REVIEW          m'],
+  ['target_review', 'loc', 'kubectl', 'loc  t          REVIEW          m'],
+  ['target_review', 'local', 'ssh_exec', 'loc  t          REVIEW          m'],
+  ['target_review', 'local', 'kubectl', 'loc  t          REVIEW          m'],
+  ['target_review', 'bogus', 'ssh_exec', '--   t          REVIEW          m'],
+  ['target_review', 'bogus', 'kubectl', '--   t          REVIEW          m'],
+  ['target_down', null, 'ssh_exec', '--   t          DOWN            m'],
+  ['target_down', null, 'kubectl', '--   t          DOWN            m'],
+  ['target_down', 'kube', 'ssh_exec', 'kube t          DOWN            m'],
+  ['target_down', 'kubernetes', 'ssh_exec', 'kube t          DOWN            m'],
+  ['target_down', 'loc', 'ssh_exec', 'loc  t          DOWN            m'],
+  ['target_down', 'loc', 'kubectl', 'loc  t          DOWN            m'],
+  ['target_down', 'local', 'ssh_exec', 'loc  t          DOWN            m'],
+  ['target_down', 'local', 'kubectl', 'loc  t          DOWN            m'],
+  ['target_down', 'bogus', 'ssh_exec', '--   t          DOWN            m'],
+  ['target_down', 'bogus', 'kubectl', '--   t          DOWN            m'],
+  ['target_recovered', null, 'ssh_exec', '--   t          UP              m'],
+  ['target_recovered', null, 'kubectl', '--   t          UP              m'],
+  ['target_recovered', 'kube', 'ssh_exec', 'kube t          UP              m'],
+  ['target_recovered', 'kubernetes', 'ssh_exec', 'kube t          UP              m'],
+  ['target_recovered', 'loc', 'ssh_exec', 'loc  t          UP              m'],
+  ['target_recovered', 'loc', 'kubectl', 'loc  t          UP              m'],
+  ['target_recovered', 'local', 'ssh_exec', 'loc  t          UP              m'],
+  ['target_recovered', 'local', 'kubectl', 'loc  t          UP              m'],
+  ['target_recovered', 'bogus', 'ssh_exec', '--   t          UP              m'],
+  ['target_recovered', 'bogus', 'kubectl', '--   t          UP              m'],
+];
+
+test('a log line gets the kind the release gave it, whichever of tool and kind disagree', () => {
+  for (const [event, kind, tool, expected] of ROWS) {
+    const entry = {
+      ts: '2026-11-21T02:05:07.000Z', event, target: 't', message: 'm', command: 'c', args: ['a'], decision: 'allowed', exitCode: 0,
+    };
+    if (kind !== null) entry.kind = kind;
+    if (tool !== null) entry.tool = tool;
+    assert.equal(formatLogLine(entry, {}).slice(9), expected, JSON.stringify([event, kind, tool]));
+  }
+});

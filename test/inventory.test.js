@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { InventoryError, SAMPLE_INVENTORY, validateInventory, loadInventory } from '../src/inventory.js';
+import { InventoryError, sampleInventory, validateInventory, loadInventory } from '../src/inventory.js';
+
+const SAMPLE_INVENTORY = sampleInventory();
 
 const clone = () => structuredClone(SAMPLE_INVENTORY);
 
@@ -59,7 +61,7 @@ test('allow "any" is preserved', () => {
 
 test('empty and ssh-only inventories', () => {
   assert.deepEqual(validateInventory({}), {
-    ssh: [], kubernetes: [], local: [], reviewers: {},
+    ssh: [], kubernetes: [], local: [], http: [], command: [], elasticsearch: [], rabbitmq: [], redis: [], postgres: [], mysql: [], mongodb: [], kafka: [], reviewers: {},
   });
   const inv = validateInventory({ ssh: [{ name: 'a', host: 'h' }] });
   assert.deepEqual(inv.kubernetes, []);

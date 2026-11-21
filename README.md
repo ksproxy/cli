@@ -1,14 +1,33 @@
 # ksproxy
 
-Let AI agents run allowlisted ssh, kubectl and local commands without your credentials.
+Let AI agents run allowlisted ssh, kubectl, local, database, queue and HTTP API calls without your credentials.
 
 ## What it does
 
-ksproxy lets an AI agent run commands on ssh servers and Kubernetes clusters without ever holding a credential, and run a short list of commands in a folder on your own machine. You run one command in a terminal, pick the targets, and leave it running; the agent reaches those targets only through a built-in MCP server. Every call is checked against a per-target allowlist that refuses everything by default, every call is logged, and Ctrl-C closes all access.
+ksproxy lets an AI agent run commands on ssh servers and Kubernetes clusters without ever holding a credential, run a short list of commands in a folder on your own machine, and use databases, queues and HTTP APIs (PostgreSQL, MySQL, MongoDB, Redis, Elasticsearch, RabbitMQ, Kafka and any HTTP API). You run one command in a terminal, pick the targets, and leave it running; the agent reaches those targets only through a built-in MCP server. Every call is checked against a per-target allowlist that refuses everything by default, every call is logged, and Ctrl-C closes all access.
+
+## What it is for, and what it is not
+
+ksproxy is made for one job: **developing and debugging with an AI agent, safely.** The agent can look at logs, inspect a cluster, read a few rows or check a queue, while you keep the credentials, decide what is allowed, and can read afterwards what was done. Safety comes first: when ksproxy is not sure, it refuses.
+
+It is not a general proxy, a tunnel, or a tool to move data. These limits follow from that purpose:
+
+| Limit | What it means |
+|---|---|
+| One call, one answer | Every call is one command, request or statement that ends. There is no interactive shell, no open connection between calls, and nothing is streamed. |
+| Output is cut at 256 KiB | Each of the two output streams is cut at 256 KiB and the answer says so. A large file or a large result does not pass through; the agent must ask for a piece (`head`, `tail`, `grep`, `limit`, a filter). `maxOutputKiB` in the inventory raises the limit to at most 4 MiB for one target. A large answer fills the agent's context, so raise it only where it is needed. |
+| A call has a time limit | 60 seconds by default, 600 at most. The limit stops the program on your machine; a command already running on an ssh server, or a statement on a MySQL server, may go on there until it ends. |
+| Small results from databases | MongoDB returns at most 100 documents per call and never leaves a cursor open, so a larger result is read page by page with a filter. MySQL returns at most 1,000 rows. Change streams, `getMore` and other calls that wait or continue are refused. |
+| No file transfer | Nothing copies a file to or from a target. |
+| Rules match words, not meaning | A rule decides by the words of a call. It does not understand what a command does, so the rights of the account a target uses are the real boundary. Use a read-only account wherever you can. |
+| Not a wall against your own user | A process that runs as your user and can inspect processes or read your files can reach what `ksproxy start` holds. Run the agent without a shell of your user, in a sandbox, or as another user. |
+| macOS and Linux only | Node.js 24 or newer; the `ksproxy` program needs an `env` that knows `-S` (macOS, or GNU coreutils 8.30 or newer). |
+
+The details are in [Security model and limits](#security-model-and-limits) and, for databases, queues and HTTP APIs, in [docs/SERVICES.md](docs/SERVICES.md).
 
 ## Install
 
-Requires Node.js 24 or later and `ssh`. `kubectl` is needed only for Kubernetes targets. There are no npm dependencies. macOS and Linux only.
+Requires Node.js 24 or later and `ssh`. `kubectl` is needed only for Kubernetes targets, and `psql`, `mysql` or `mariadb`, `mongosh` and the Kafka client programs only for the kinds that use them. There are no npm dependencies. macOS and Linux only. The `ksproxy` command starts Node through `env -S` with `--disable-sigusr1`, so the system's `env` must support `-S`, as the `env` of macOS and of GNU coreutils 8.30 or later do.
 
 ```
 npm install -g @ksproxy/cli
@@ -28,17 +47,17 @@ Homepage: https://ksproxy.github.io/cli/ · Source: https://github.com/ksproxy/c
 
 1. `ksproxy init` writes a sample inventory to `~/.config/ksproxy/inventory.json` (mode 0600) and prints its path. It never overwrites an existing file.
 2. Edit the inventory: your own targets, and an `allow` list for each. A target with no `allow` refuses everything.
-3. `ksproxy start` asks which kinds (ssh, kubernetes, local) and which targets to open, opens them (ssh may ask for your password or key passphrase in this terminal), prints a summary, and stays in the foreground printing one line per agent call and per event (see "The log" below). Non-interactive: `--ssh a,b`, `--kube x,y`, `--local p,q`, `--all`. Without a terminal and without one of these flags, `start` exits with an error. Opening a local target only checks that its folder exists and may be used (see "Local targets"); closing it does nothing. `-v` / `--verbose` adds the matched rule and the output sizes to each allowed call.
+3. `ksproxy start` asks which kinds (ssh, kubernetes, local and the service kinds) and which targets to open, opens them (ssh may ask for your password or key passphrase in this terminal), prints a summary, and stays in the foreground printing one line per agent call and per event (see "The log" below). Non-interactive: `--ssh a,b`, `--kube x,y`, `--local p,q`, the flags of the service kinds (see "Databases, queues and HTTP APIs"), `--all`. Run `ksproxy start` with the environment variables that your service targets name. Without a terminal and without one of these flags, `start` exits with an error. Opening a local target only checks that its folder exists and may be used (see "Local targets"); closing it does nothing. `-v` / `--verbose` adds the matched rule and the output sizes to each allowed call.
 4. Add the printed MCP config to your agent once. For Claude Code the summary prints the exact line:
 
    ```
-   claude mcp add ksproxy -- <node> <path to bin/ksproxy.js> mcp
+   claude mcp add ksproxy -- <node> --disable-sigusr1 <path to bin/ksproxy.js> mcp
    ```
 
    The config is the same on every run, so you do this once.
 5. Press Ctrl-C when you are done. Every ssh connection and tunnel is closed, every proxy is stopped, `session.json` and the socket folder are removed, and the audit log in `logs/` is kept. The other session files (`ssh_config`, `kubeconfig`, `AGENT.md`, `mcp.json` and the proxy logs) stay until the next `start`.
 
-Other commands: `ksproxy status` (live session and each target's state, then the time of the last call and the number of calls this session; exit 0 only when everything is up), `ksproxy log [-n N] [--denied] [--json]` (the history, see "The log"), `ksproxy check <ssh|kube|local> <name> <command...>` (see below), `ksproxy mcp` (the MCP server; your agent starts it, you do not), `ksproxy --help`, `ksproxy --version`.
+Other commands: `ksproxy status` (live session and each target's state, then the time of the last call and the number of calls this session; exit 0 only when everything is up), `ksproxy log [-n N] [--denied] [--json]` (the history, see "The log"), `ksproxy check <flag of the kind> <name> <command...>`, for example `ksproxy check ssh web1 uptime` (see below), `ksproxy mcp` (the MCP server; your agent starts it, you do not), `ksproxy --help`, `ksproxy --version`.
 
 Only one session runs at a time. `start` refuses while a live session exists and cleans up a stale one.
 
@@ -82,7 +101,7 @@ Any validation failure is an error that names the entry and the field. Unknown k
 
 | Field | Rule |
 |---|---|
-| top level | An object with optional `ssh`, `kubernetes` and `local` arrays, and `reviewers`. |
+| top level | An object with optional `ssh`, `kubernetes`, `local` and service-kind arrays (see "Databases, queues and HTTP APIs"), and `reviewers`. |
 | `reviewers`, `review` (optional) | Model review of commands no rule matches. See "Model review (optional)". |
 | `name` | `^[a-z0-9][a-z0-9-]{0,30}$`, unique within its kind. |
 | `ssh[].host` | An ssh destination your own ssh config resolves. `^[A-Za-z0-9][A-Za-z0-9._@-]*$`; it may not start with `-`. |
@@ -94,9 +113,10 @@ Any validation failure is an error that names the entry and the field. Unknown k
 | `local[].cwd` | The folder the commands run in. Required; absolute or `~/`. It is never shown to the agent. |
 | `local[].protect` (optional) | Local targets only. Up to 50 files and folders inside `cwd` that no wildcard argument or argument sent to the model reviewer may name, enter or contain. Plain paths relative to `cwd`, no patterns. See "Local targets". |
 | `description` (optional) | A string shown in the selection list and to the agent. |
+| `maxOutputKiB` (optional) | Any kind of target. The output limit of each of the two streams of a call, in KiB: an integer from 256 to 4096. Without it the limit is 256 KiB. It only raises the limit for this target; `list_targets` and `AGENT.md` show it when it is not 256. The agent cannot ask for more. |
 | `allow` | An array of rule strings, or the string `"any"`. Missing means an empty list, which refuses everything. `start` warns for each selected target with an empty list; the warning is printed before the target is opened, even if the target is then skipped. `"any"` is an error for `local` targets: list the commands, and every `local` rule must start with the program name (not `*` or `...`). |
 
-State is kept in `~/.ksproxy` (override: `KSPROXY_STATE_DIR`). Keep that path short: unix socket paths are limited in length, and `start` fails with a clear message if one would exceed 100 bytes. Directories are created 0700 and files 0600. `ssh` and `kubectl` are found on `PATH`; `KSPROXY_SSH` and `KSPROXY_KUBECTL` override them with absolute paths.
+State is kept in `~/.ksproxy` (override: `KSPROXY_STATE_DIR`). Keep that path short: unix socket paths are limited in length, and `start` fails with a clear message if one would exceed 100 bytes. Directories are created 0700 and files 0600. `ssh` and `kubectl` are found on `PATH`; `KSPROXY_SSH` and `KSPROXY_KUBECTL` override them with absolute paths. `KSPROXY_PSQL`, `KSPROXY_MYSQL` and `KSPROXY_MONGOSH` do the same for the database clients.
 
 ## Allowlist rules
 
@@ -105,16 +125,30 @@ A rule is whitespace-separated tokens, matched against the command's arguments.
 | Token | Matches |
 |---|---|
 | a literal | an argument equal to it |
-| `*` | exactly one argument that does not start with `-` (in a local rule: one plain name or relative path) |
-| `...` | zero or more arguments of any shape; only legal as the last token (in a local rule: plain names and relative paths only, never a flag: write every flag into the rule) |
+| `*` | exactly one argument that does not start with `-` (in a local rule: one plain name or relative path; in a `postgres` or `mysql` rule: one value, a number such as `-1` or `1.5` or one string in single quotes, never a name) |
+| `...` | zero or more arguments of any shape; only legal as the last token (in a local, `command` or `kafka` rule: never a word that starts with `-`; in a local rule also only plain names and relative paths: write every flag into the rule) |
+| `\*` | only the argument `*`, a literal star |
+| `regex(...)`, as the whole rule | the whole command matches the pattern |
 
-An empty rule, or `...` anywhere but last, is an inventory error. Examples:
+An empty rule, or `...` anywhere but last, is an inventory error. For the service kinds the words are those of a request, a SQL statement, a Redis command and so on; see [docs/SERVICES.md](docs/SERVICES.md). Examples:
 
 - `df -h` allows exactly `df -h`, and nothing else (not `df`, not `df -h /`).
 - `systemctl status *` allows `systemctl status nginx`, not `systemctl status` and not `systemctl status --all`.
 - `journalctl -u myapp ...` allows `journalctl -u myapp --since today -n 50`, not `journalctl -u other`.
 - `get ...` (Kubernetes) allows `get pods -A` and any other `get`.
 - `apply -f *` (Kubernetes) allows `apply -f <one path>`; the path must also sit inside `manifestRoots`.
+- `get pods -l \*` (Kubernetes) allows `get pods -l *` and nothing else in that place.
+- `regex(systemctl status (nginx|redis))` allows `systemctl status nginx` and `systemctl status redis`, not `systemctl status nginx --all`.
+
+A regex rule is tried on the command's words joined by single spaces and must match all of it, with or without `^` and `$`. It has no flags and is not tried on a command longer than 1000 characters. Kubernetes arguments can hold spaces; they are still joined by single spaces. A rule is either words or one `regex(...)`, never both: `regex(` inside a word rule is an inventory error, and so is an empty pattern or one that does not compile. The strict tokenizer and the fixed refusals run first, so a regex rule cannot allow what they refuse.
+
+A regex rule matches exactly what its pattern says, unlike `*`, which never matches an option. So `\S+` and `.*` also match an option such as `-delete`: `regex(find /srv/app \S+)` allows `find /srv/app -delete`. Write `[^-\s]\S*` for "one word that is not an option". On `command` and `kafka` targets it is the other way round: a regex rule allows a word that starts with `-` only when the pattern holds that exact word, so `\S+` never matches `-x` there.
+
+In the inventory file a backslash is written twice, because JSON uses it too: `"get pods -l \\*"`, `"regex(\\./run\\.sh)"`.
+
+A pattern with a backreference, a repeat around a group that holds a repeat or `|`, such as `(a+)+`, or two repeats in a row that can match the same character, such as `.*.*` or `\S*\S*`, gets a warning from `ksproxy start` and `ksproxy check`: `allow[N]: this pattern can be very slow on some inputs`. The rule still works. Every match of a regex rule stops after 100 ms: a match that takes longer counts as no match, and the refusal says which rule took too long.
+
+On a local target a regex rule must start with the program name, written literally (`\.` for a dot). When it matches, the first word must be that program, and every other word is checked like a word matched by `*`. So a regex rule there never allows a flag.
 
 **ssh commands** arrive as one string and are tokenised strictly: at most 4096 bytes, trimmed, split on runs of spaces or tabs, and the first token may not start with `-`. Every character of every token must be one of `A-Z a-z 0-9 _ @ % + = : , . / -`. Everything else is refused and named in the error: quotes, `; | & $ \` ( ) { } < > * ? [ ] ! # ~ \`, newlines, control characters and non-ASCII. The tokens are matched against the rules and the remote command is the tokens joined by single spaces, so no shell syntax can be present.
 
@@ -228,7 +262,7 @@ What is never sent to the model:
 
 | Target | Not reviewed |
 |---|---|
-| All | A word with a space or a double quote, or longer than 200 characters. |
+| All | More than 64 words, a word longer than 200 characters, or a word with a space, a control character or a double quote. In SQL a comma or a bracket is a word. |
 | ssh | A first word with `=`, such as `VAR=x uptime`. |
 | kubernetes | Any verb that is not a read verb (`get`, `describe`, `logs` and similar). |
 | local | A program that is not in `programs`, a flag with a value (`--format=x`), a path outside the folder. |
@@ -309,6 +343,30 @@ The first check that fails refuses the call, with a short reason in the log.
 
 Allow only programs and flags you would run on that folder yourself. The exact rules, limits and refusal messages are in [docs/LOCAL-TARGETS.md](docs/LOCAL-TARGETS.md).
 
+## Databases, queues and HTTP APIs
+
+Nine more kinds of target let the agent use a service that needs a password or a token. You name the credential in the inventory as an environment variable; `ksproxy start` reads it, keeps it in its own memory and carries out each call, so the agent never holds it. Every call still goes through the strict reader of the kind, its fixed refusals and your allowlist, and everything not allowed is refused.
+
+```json
+{ "postgres": [{ "name": "shop-db", "host": "db.internal.example", "database": "shop", "user": "agent_ro",
+                 "passwordEnv": "SHOP_DB_PASSWORD",
+                 "allow": ["select \\* from orders where id = *", "select count(\\*) from orders"] }] }
+```
+
+| Kind | Flag | Tool | A rule looks like |
+|---|---|---|---|
+| `http` | `--http` | `http_request` | `GET /api/dashboards/uid/*` |
+| `command` | `--command` | `command_exec` | `usage *` |
+| `elasticsearch` | `--es` | `elasticsearch_request` | `POST /*/_search +body` |
+| `rabbitmq` | `--mq` | `rabbitmq_request` | `GET /api/queues/...` |
+| `redis` | `--redis` | `redis_command` | `GET *` |
+| `postgres` | `--pg` | `postgres_query` | `select \* from orders where id = *` |
+| `mysql` | `--mysql` | `mysql_query` | `show tables` |
+| `mongodb` | `--mongo` | `mongodb_command` | `find orders` |
+| `kafka` | `--kafka` | `kafka_exec` | `topics --describe --topic *` |
+
+The inventory fields, the words that a rule sees, the fixed refusals, the programs you must install (`psql`, `mysql`, `mongosh` and the Kafka clients) and the limits of each kind are in [docs/SERVICES.md](docs/SERVICES.md). The database user's rights are the real boundary, and nothing here has been run against a real service by the tests: try each target once with a read-only account.
+
 ## Session folder
 
 `start` writes `~/.ksproxy/session/`, each file by write-to-temp and rename; `session.json` is written last, so its presence means the session is ready. A target skipped at opening appears in none of these files.
@@ -331,9 +389,9 @@ The audit log is not in the session folder. It sits in `~/.ksproxy/logs/` (mode 
 
 Next to the sockets (`~/.ksproxy/s/`), `start` keeps `kube-<name>.pid` for each proxy process (pid and start time), so a later `start` can stop a proxy left by a killed run.
 
-The MCP server re-reads the session on every call. With no live session every tool answers that the user must run `ksproxy start`. Tools: `list_targets`, `ssh_exec { server, command, timeout_seconds? }`, `kubectl { cluster, args, timeout_seconds? }`, `local_exec { target, command, timeout_seconds? }`. Timeouts are 1-600 seconds (default 60); stdout and stderr are each capped at 256 KiB.
+The MCP server re-reads the session on every call. With no live session every tool answers that the user must run `ksproxy start`. Tools: `list_targets`, `ssh_exec { server, command, timeout_seconds? }`, `kubectl { cluster, args, timeout_seconds? }`, `local_exec { target, command, timeout_seconds? }`, and one tool for each service kind in the table above, listed only when the inventory holds a target of that kind. A service call is sent over the private socket `call-sock` in the socket folder to `ksproxy start`, which decides it, carries it out and writes its audit entry. Timeouts are 1-600 seconds (default 60); stdout and stderr are each capped at 256 KiB, or at the `maxOutputKiB` of the target.
 
-Each `ssh_exec`, `kubectl` and `local_exec` call appends an audit entry with the time, tool, target, command or args, the decision, the reason when refused, and when run the exit code, duration and output sizes. Output is not logged.
+Each call of a target tool appends an audit entry with the time, tool, target, the call (`command`, `args`, `query` or `request`), the decision, the reason when refused, and when run the exit code, duration and output sizes. Output is not logged.
 
 ## The log
 
@@ -357,7 +415,7 @@ Each `ssh_exec`, `kubectl` and `local_exec` call appends an audit entry with the
 12:41:01 --   session    CLOSED          23 calls: 17 ok, 2 failed, 4 denied
 ```
 
-Columns, one space apart: local time, kind (`ssh`, `kube`, `loc`, `--`), target (cut to 10 characters), status, duration, detail. The detail is the ssh or local command or the kubectl arguments; a refused call adds the short reason in brackets. The agent still receives the full explanation with the allowed rules; only the log is short. A line is cut to the terminal width (120 if unknown), or 240 characters when the output is not a terminal, and every value in it has control and bidirectional characters escaped as `\uXXXX`.
+Columns, one space apart: local time, kind (`ssh`, `kube`, `loc`, `http`, `cmd`, `es`, `mq`, `rds`, `pg`, `my`, `mgo`, `kfk`, `--`), target (cut to 10 characters), status, duration, detail. The detail is the ssh or local command or the kubectl arguments; a refused call adds the short reason in brackets. The agent still receives the full explanation with the allowed rules; only the log is short. A line is cut to the terminal width (120 if unknown), or 240 characters when the output is not a terminal, and every value in it has control and bidirectional characters escaped as `\uXXXX`.
 
 | Status | Meaning |
 |---|---|
@@ -366,7 +424,7 @@ Columns, one space apart: local time, kind (`ssh`, `kube`, `loc`, `--`), target 
 | `TIMEOUT` | an allowed call that ran out of time (duration `0.4s`, or `1m05s` from a minute up) |
 | `ERROR` | an allowed call whose program could not start |
 | `DENIED` | a refused call, with the short reason |
-| `OPENING` `UP` `SKIPPED` `WARN` | a target opening, open, not opened (a local target says `folder not found: <cwd>`, `not a directory: <cwd>`, `folder is too broad: ...`, `folder overlaps ksproxy's own files`, `folder contains a kubeconfig named in the inventory` or `folder cannot be resolved`), or opened with a warning (empty allowlist, token rejected, cluster not answering) |
+| `OPENING` `UP` `SKIPPED` `WARN` | a target opening, open, not opened (a local target says `folder not found: <cwd>`, `not a directory: <cwd>`, `folder is too broad: ...`, `folder overlaps ksproxy's own files`, `folder contains a kubeconfig named in the inventory` or `folder cannot be resolved`), or opened with a warning (empty allowlist, token rejected, cluster not answering, a secret shorter than 8 characters) |
 | `DOWN` `UP` | the health check found an open target gone, then back |
 | `REVIEW` | a target uses model review: `reviewer NAME, accepts LEVELS` |
 | `LIST` | the agent called `list_targets` |
@@ -380,7 +438,7 @@ Every 30 seconds `start` checks each open target (override in milliseconds with 
 
 | `event` | Other fields |
 |---|---|
-| `call` | `tool`, `kind`, `target`, `command` or `args`, `decision`; when refused `reason` and `short`; when run `rule` (`review` when a model approved it, with `review.certainty` and `review.reason`), `exitCode`, `timedOut`, `spawnError`, `durationMs`, `stdoutBytes`, `stderrBytes` |
+| `call` | `tool`, `kind`, `target`, the call as `command`, `args`, `query` or `request` (the field named by the tool of the kind; `request` is an object, see docs/KINDS.md), `decision`; when refused `reason` and `short`; when run `rule` (`review` when a model approved it, with `review.certainty` and `review.reason`), `exitCode`, `timedOut`, `spawnError`, `durationMs`, `stdoutBytes`, `stderrBytes` |
 | `list` | none |
 | `target_opening`, `target_up`, `target_skipped`, `target_warn`, `target_review`, `target_down`, `target_recovered` | `kind`, `target`, `message` |
 | `session_start` | `pid`, `targets` (`kind`, `name`, `state`), `message` |
@@ -400,6 +458,8 @@ The allowlist is a second lock; the first is that the agent never holds a creden
 - **`"any"` is refused for local targets on purpose.** A local target always lists its commands.
 - **The allowlist binds the MCP path only.** The sockets and proxy ports belong to you, so an agent that also has an unrestricted local shell can call `ssh -S <sock>` or `curl 127.0.0.1:<port>` directly.
 - **An agent that can edit the inventory or session files can widen its own rules.** Same exposure.
+- **The credentials of service targets live only in the memory of `ksproxy start`.** `ksproxy mcp` forwards a service call over a private socket, and every failure on that path is a refusal. The rights of the database or service account are the real boundary, a secret that the service returns in its own output reaches the agent, and rules do not understand what a request does. See "What these kinds do not protect against" in [docs/SERVICES.md](docs/SERVICES.md).
+- **A process that runs as you can read the credentials that `ksproxy start` holds.** `start` keeps the environment it was started with, and the system shows that environment to any process of the same user (`ps -E` on macOS, `/proc/<pid>/environ` on Linux), just as such a process can read your private keys and your cluster configuration. `ksproxy` does not open the Node inspector on `SIGUSR1` (it runs Node with `--disable-sigusr1`), but that does not close this route. So run the agent with no shell of your user, or in a sandbox, or as another user; see "Hardening the agent".
 - **A rule is only as safe as the program it allows.** `find ...`, `awk ...`, `vim`, `less`, `sudo ...` and similar can run other commands.
 - **Command output is returned as-is.** A program that prints a secret leaks it to the agent. The tool replaces the state folder path, a local target's folder (also in another letter case) and the local proxy addresses in the output, but that is not redaction.
 - **"Secret resources are never allowed" covers reading Secret objects through this tool.** A workload that the identity is allowed to create or change can still mount a Secret; only Kubernetes RBAC prevents that.
@@ -418,7 +478,8 @@ Out of scope: creating server users, sudoers rules, RBAC, tokens or kubeconfigs;
 The deny rules below are best effort. `Bash(ssh *)` does not stop `/usr/bin/ssh` or `curl 127.0.0.1:<port>`, and `Read(...)` rules do not stop a shell command from reading a file. The reliable setups are:
 
 - an agent with **no general shell**, so the MCP tools are the only way to run anything; or
-- an agent whose shell runs in a **sandbox** that cannot read `~/.ksproxy` or `~/.config/ksproxy` and cannot reach local sockets and ports.
+- an agent whose shell runs in a **sandbox** that cannot read `~/.ksproxy` or `~/.config/ksproxy`, cannot reach local sockets and ports, and cannot see the other processes of your user; or
+- an agent whose shell runs as **another user**.
 
 For Claude Code, the deny rules still raise the bar. Put them in `.claude/settings.json` (per project) or `~/.claude/settings.json` (everywhere):
 
@@ -444,6 +505,19 @@ npm test
 ```
 
 The complete logic, module by module, is drawn as Mermaid diagrams in [docs/LOGIC.md](docs/LOGIC.md); `test/logic-docs.test.js` fails when a module or an exported function is missing from it.
+
+Each kind of target is one folder, and the core walks the list of kinds:
+
+```
+src/kinds/index.js         the ordered list of kinds
+src/kinds/<name>/index.js  one kind: ssh, kubernetes, local or one of the service kinds
+src/kinds/<name>/*.js      the mechanics of that kind (master.js, cluster.js, folder.js)
+src/kinds/engines/*.js     what several service kinds share (http, command, resp, sql)
+src/*.js                   the core: inventory, start, tools, review, audit, cli
+test/fixtures/kind-echo.js a test-only kind, the smallest example
+```
+
+How to add a kind is in [docs/KINDS.md](docs/KINDS.md).
 
 There are no dependencies to install: `package.json` has none, and tests use only `node:test` and `node:assert/strict`. `npm test` runs `node --test` with Node's built-in coverage over `src/` and `bin/`, and it fails when line, branch or function coverage is below 100%. Keep it at 100%: a change that adds code needs tests that reach it. To see which lines are missed, run the suite with the coverage report and read the "uncovered lines" column:
 

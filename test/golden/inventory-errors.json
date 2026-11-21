@@ -1,0 +1,722 @@
+[
+  {
+    "label": "top level array",
+    "message": "inventory: top level must be an object"
+  },
+  {
+    "label": "top level null",
+    "message": "inventory: top level must be an object"
+  },
+  {
+    "label": "top level string",
+    "message": "inventory: top level must be an object"
+  },
+  {
+    "label": "top level unknown key",
+    "message": "inventory: unknown key \"nope\""
+  },
+  {
+    "label": "top level ssh not an array",
+    "message": "inventory: ssh: must be an array"
+  },
+  {
+    "label": "top level kubernetes not an array",
+    "message": "inventory: kubernetes: must be an array"
+  },
+  {
+    "label": "top level local not an array",
+    "message": "inventory: local: must be an array"
+  },
+  {
+    "label": "top level reviewers an array",
+    "message": "inventory: reviewers: must be an object"
+  },
+  {
+    "label": "ssh entry a string",
+    "message": "ssh #0: must be an object"
+  },
+  {
+    "label": "ssh entry null",
+    "message": "ssh #0: must be an object"
+  },
+  {
+    "label": "ssh entry an array",
+    "message": "ssh #0: must be an object"
+  },
+  {
+    "label": "ssh name missing",
+    "message": "ssh #0: name: must match /^[a-z0-9][a-z0-9-]{0,30}$/"
+  },
+  {
+    "label": "ssh name uppercase",
+    "message": "ssh #0: name: must match /^[a-z0-9][a-z0-9-]{0,30}$/"
+  },
+  {
+    "label": "ssh name too long",
+    "message": "ssh #0: name: must match /^[a-z0-9][a-z0-9-]{0,30}$/"
+  },
+  {
+    "label": "ssh name starts with a dash",
+    "message": "ssh #0: name: must match /^[a-z0-9][a-z0-9-]{0,30}$/"
+  },
+  {
+    "label": "ssh name a number",
+    "message": "ssh #0: name: must match /^[a-z0-9][a-z0-9-]{0,30}$/"
+  },
+  {
+    "label": "ssh duplicate name",
+    "message": "ssh \"web1\": name: duplicate name"
+  },
+  {
+    "label": "ssh description a number",
+    "message": "ssh \"web1\": description: must be a string"
+  },
+  {
+    "label": "ssh unknown key",
+    "message": "ssh \"web1\": unknown key \"nope\""
+  },
+  {
+    "label": "ssh kubeconfig key",
+    "message": "ssh \"web1\": unknown key \"kubeconfig\""
+  },
+  {
+    "label": "ssh host missing",
+    "message": "ssh \"web1\": host: must match /^[A-Za-z0-9][A-Za-z0-9._@-]*$/ (no leading \"-\")"
+  },
+  {
+    "label": "ssh host leading dash",
+    "message": "ssh \"web1\": host: must match /^[A-Za-z0-9][A-Za-z0-9._@-]*$/ (no leading \"-\")"
+  },
+  {
+    "label": "ssh host with a space",
+    "message": "ssh \"web1\": host: must match /^[A-Za-z0-9][A-Za-z0-9._@-]*$/ (no leading \"-\")"
+  },
+  {
+    "label": "ssh host a number",
+    "message": "ssh \"web1\": host: must match /^[A-Za-z0-9][A-Za-z0-9._@-]*$/ (no leading \"-\")"
+  },
+  {
+    "label": "ssh host empty",
+    "message": "ssh \"web1\": host: must match /^[A-Za-z0-9][A-Za-z0-9._@-]*$/ (no leading \"-\")"
+  },
+  {
+    "label": "ssh jumps not an array",
+    "message": "ssh \"web1\": jumps: must be a list of 1 to 5 ssh commands"
+  },
+  {
+    "label": "ssh jumps empty",
+    "message": "ssh \"web1\": jumps: must be a list of 1 to 5 ssh commands"
+  },
+  {
+    "label": "ssh jumps six items",
+    "message": "ssh \"web1\": jumps: must be a list of 1 to 5 ssh commands"
+  },
+  {
+    "label": "ssh jumps item a number",
+    "message": "ssh \"web1\": jumps[0]: must be an ssh command, for example \"ssh -i .ssh/key user@server\""
+  },
+  {
+    "label": "ssh jumps item blank",
+    "message": "ssh \"web1\": jumps[0]: must be an ssh command, for example \"ssh -i .ssh/key user@server\""
+  },
+  {
+    "label": "ssh jumps item with a tilde",
+    "message": "ssh \"web1\": jumps[0]: \"~\" is not allowed; a path without a leading \"/\" starts in the home folder of that login"
+  },
+  {
+    "label": "ssh jumps item not ssh",
+    "message": "ssh \"web1\": jumps[0]: must start with \"ssh\""
+  },
+  {
+    "label": "ssh jumps item with an unsupported option",
+    "message": "ssh \"web1\": jumps[0]: option -A is not supported; the supported options are -i -p -l -o -J, each followed by its value as a separate word; for other settings use -o Key=Value"
+  },
+  {
+    "label": "ssh jumps item option without a value",
+    "message": "ssh \"web1\": jumps[0]: option -i needs a value"
+  },
+  {
+    "label": "ssh jumps item value with a dash",
+    "message": "ssh \"web1\": jumps[0]: the value of -i may not start with \"-\""
+  },
+  {
+    "label": "ssh jumps item -o without Key=Value",
+    "message": "ssh \"web1\": jumps[0]: the value of -o must have the form Key=Value"
+  },
+  {
+    "label": "ssh jumps item -o unsupported setting",
+    "message": "ssh \"web1\": jumps[0]: the setting ProxyCommand is not supported in a jump; supported: Port User IdentityFile IdentitiesOnly StrictHostKeyChecking UserKnownHostsFile HostKeyAlias ConnectTimeout AddressFamily LogLevel ServerAliveInterval ServerAliveCountMax ProxyJump Compression HostKeyAlgorithms PubkeyAcceptedAlgorithms KexAlgorithms Ciphers MACs PreferredAuthentications"
+  },
+  {
+    "label": "ssh jumps item without a server",
+    "message": "ssh \"web1\": jumps[0]: needs a server after the options"
+  },
+  {
+    "label": "ssh jumps item with a bad server",
+    "message": "ssh \"web1\": jumps[0]: character \";\" is not allowed: this target only accepts plain commands made of letters, digits and _ @ % + = : , . / - (no quotes, pipes, redirects or shell syntax)"
+  },
+  {
+    "label": "ssh jumps item with words after the server",
+    "message": "ssh \"web1\": jumps[0]: nothing may follow the server; the command comes from the allow list"
+  },
+  {
+    "label": "ssh jumps item with an equals word",
+    "message": "ssh \"web1\": jumps[0]: a word may not start with \"=\" or contain \"==\" or \":=\""
+  },
+  {
+    "label": "ssh jumps item with a shell character",
+    "message": "ssh \"web1\": jumps[0]: character \";\" is not allowed: this target only accepts plain commands made of letters, digits and _ @ % + = : , . / - (no quotes, pipes, redirects or shell syntax)"
+  },
+  {
+    "label": "ssh jumps with allow any",
+    "message": "ssh \"web1\": jumps: a target with jumps needs a list of rules, not \"any\""
+  },
+  {
+    "label": "ssh allow a string other than any",
+    "message": "ssh \"web1\": allow: must be \"any\" or an array of rule strings"
+  },
+  {
+    "label": "ssh allow an object",
+    "message": "ssh \"web1\": allow: must be \"any\" or an array of rule strings"
+  },
+  {
+    "label": "ssh allow rule empty",
+    "message": "ssh \"web1\": allow[0]: rule is empty"
+  },
+  {
+    "label": "ssh allow rule not last dots",
+    "message": "ssh \"web1\": allow[0]: \"...\" is only allowed as the last token: ls ... x"
+  },
+  {
+    "label": "ssh allow rule a number",
+    "message": "ssh \"web1\": allow[0]: rule must be a string"
+  },
+  {
+    "label": "ssh allow second rule bad",
+    "message": "ssh \"web1\": allow[1]: rule is empty"
+  },
+  {
+    "label": "ssh review a string",
+    "message": "ssh \"web1\": review: must be an object"
+  },
+  {
+    "label": "ssh review unknown key",
+    "message": "ssh \"web1\": review: unknown key \"nope\""
+  },
+  {
+    "label": "ssh review with allow any",
+    "message": "ssh \"web1\": review: has no effect with allow: \"any\"; remove one of them"
+  },
+  {
+    "label": "ssh review with programs",
+    "message": "ssh \"web1\": review.programs: is only for local targets"
+  },
+  {
+    "label": "ssh review reviewer missing",
+    "message": "ssh \"web1\": review.reviewer: must name an entry of \"reviewers\""
+  },
+  {
+    "label": "ssh review reviewer unknown",
+    "message": "ssh \"web1\": review.reviewer: must name an entry of \"reviewers\""
+  },
+  {
+    "label": "ssh review reviewer a number",
+    "message": "ssh \"web1\": review.reviewer: must name an entry of \"reviewers\""
+  },
+  {
+    "label": "ssh review policy missing",
+    "message": "ssh \"web1\": review.policy: must be 1 to 1000 characters"
+  },
+  {
+    "label": "ssh review policy blank",
+    "message": "ssh \"web1\": review.policy: must be 1 to 1000 characters"
+  },
+  {
+    "label": "ssh review policy too long",
+    "message": "ssh \"web1\": review.policy: must be 1 to 1000 characters"
+  },
+  {
+    "label": "ssh review accept empty",
+    "message": "ssh \"web1\": review.accept: must be a list of \"sure\" and \"likely\", for example [\"sure\"]"
+  },
+  {
+    "label": "ssh review accept unsure",
+    "message": "ssh \"web1\": review.accept: must be a list of \"sure\" and \"likely\", for example [\"sure\"]"
+  },
+  {
+    "label": "ssh review accept repeated",
+    "message": "ssh \"web1\": review.accept: must be a list of \"sure\" and \"likely\", for example [\"sure\"]"
+  },
+  {
+    "label": "ssh review accept a string",
+    "message": "ssh \"web1\": review.accept: must be a list of \"sure\" and \"likely\", for example [\"sure\"]"
+  },
+  {
+    "label": "ssh review without reviewers",
+    "message": "ssh \"web1\": review.reviewer: must name an entry of \"reviewers\""
+  },
+  {
+    "label": "kubernetes entry a number",
+    "message": "kubernetes #0: must be an object"
+  },
+  {
+    "label": "kubernetes name uppercase",
+    "message": "kubernetes #0: name: must match /^[a-z0-9][a-z0-9-]{0,30}$/"
+  },
+  {
+    "label": "kubernetes name empty",
+    "message": "kubernetes #0: name: must match /^[a-z0-9][a-z0-9-]{0,30}$/"
+  },
+  {
+    "label": "kubernetes name too long",
+    "message": "kubernetes #0: name: must match /^[a-z0-9][a-z0-9-]{0,30}$/"
+  },
+  {
+    "label": "kubernetes duplicate name",
+    "message": "kubernetes \"lab\": name: duplicate name"
+  },
+  {
+    "label": "kubernetes description a list",
+    "message": "kubernetes \"lab\": description: must be a string"
+  },
+  {
+    "label": "kubernetes unknown key",
+    "message": "kubernetes \"lab\": unknown key \"nope\""
+  },
+  {
+    "label": "kubernetes jumps key",
+    "message": "kubernetes \"lab\": unknown key \"jumps\""
+  },
+  {
+    "label": "kubernetes host key",
+    "message": "kubernetes \"lab\": unknown key \"host\""
+  },
+  {
+    "label": "kubernetes kubeconfig missing",
+    "message": "kubernetes \"lab\": kubeconfig: must be a non-empty path"
+  },
+  {
+    "label": "kubernetes kubeconfig empty",
+    "message": "kubernetes \"lab\": kubeconfig: must be a non-empty path"
+  },
+  {
+    "label": "kubernetes kubeconfig relative",
+    "message": "kubernetes \"lab\": kubeconfig: must be an absolute path or start with \"~/\""
+  },
+  {
+    "label": "kubernetes kubeconfig a number",
+    "message": "kubernetes \"lab\": kubeconfig: must be a non-empty path"
+  },
+  {
+    "label": "kubernetes proxyPort missing",
+    "message": "kubernetes \"lab\": proxyPort: must be an integer between 1024 and 65535"
+  },
+  {
+    "label": "kubernetes proxyPort too low",
+    "message": "kubernetes \"lab\": proxyPort: must be an integer between 1024 and 65535"
+  },
+  {
+    "label": "kubernetes proxyPort too high",
+    "message": "kubernetes \"lab\": proxyPort: must be an integer between 1024 and 65535"
+  },
+  {
+    "label": "kubernetes proxyPort a fraction",
+    "message": "kubernetes \"lab\": proxyPort: must be an integer between 1024 and 65535"
+  },
+  {
+    "label": "kubernetes proxyPort a string",
+    "message": "kubernetes \"lab\": proxyPort: must be an integer between 1024 and 65535"
+  },
+  {
+    "label": "kubernetes duplicate proxyPort",
+    "message": "kubernetes \"lab2\": proxyPort: port 18001 is already used elsewhere in the inventory"
+  },
+  {
+    "label": "kubernetes tunnel a string",
+    "message": "kubernetes \"lab\": tunnel: must be an object"
+  },
+  {
+    "label": "kubernetes tunnel unknown key",
+    "message": "kubernetes \"lab\": tunnel: unknown key \"nope\""
+  },
+  {
+    "label": "kubernetes tunnel host missing",
+    "message": "kubernetes \"lab\": tunnel.host: must match /^[A-Za-z0-9][A-Za-z0-9._@-]*$/ (no leading \"-\")"
+  },
+  {
+    "label": "kubernetes tunnel host leading dash",
+    "message": "kubernetes \"lab\": tunnel.host: must match /^[A-Za-z0-9][A-Za-z0-9._@-]*$/ (no leading \"-\")"
+  },
+  {
+    "label": "kubernetes tunnel localPort missing",
+    "message": "kubernetes \"lab\": tunnel.localPort: must be an integer between 1024 and 65535"
+  },
+  {
+    "label": "kubernetes tunnel localPort too low",
+    "message": "kubernetes \"lab\": tunnel.localPort: must be an integer between 1024 and 65535"
+  },
+  {
+    "label": "kubernetes tunnel localPort equal to proxyPort",
+    "message": "kubernetes \"lab\": tunnel.localPort: port 18001 is already used elsewhere in the inventory"
+  },
+  {
+    "label": "kubernetes tunnel remote missing",
+    "message": "kubernetes \"lab\": tunnel.remote: must be host:port"
+  },
+  {
+    "label": "kubernetes tunnel remote without a port",
+    "message": "kubernetes \"lab\": tunnel.remote: must be host:port"
+  },
+  {
+    "label": "kubernetes tunnel remote port zero",
+    "message": "kubernetes \"lab\": tunnel.remote: must be host:port"
+  },
+  {
+    "label": "kubernetes tunnel remote port too high",
+    "message": "kubernetes \"lab\": tunnel.remote: must be host:port"
+  },
+  {
+    "label": "kubernetes tunnel remote with a space",
+    "message": "kubernetes \"lab\": tunnel.remote: must be host:port"
+  },
+  {
+    "label": "kubernetes tunnel remote a number",
+    "message": "kubernetes \"lab\": tunnel.remote: must be host:port"
+  },
+  {
+    "label": "kubernetes manifestRoots a string",
+    "message": "kubernetes \"lab\": manifestRoots: must be an array"
+  },
+  {
+    "label": "kubernetes manifestRoots item relative",
+    "message": "kubernetes \"lab\": manifestRoots[1]: must be an absolute path or start with \"~/\""
+  },
+  {
+    "label": "kubernetes manifestRoots item empty",
+    "message": "kubernetes \"lab\": manifestRoots[0]: must be a non-empty path"
+  },
+  {
+    "label": "kubernetes manifestRoots item a number",
+    "message": "kubernetes \"lab\": manifestRoots[0]: must be a non-empty path"
+  },
+  {
+    "label": "kubernetes allow a string other than any",
+    "message": "kubernetes \"lab\": allow: must be \"any\" or an array of rule strings"
+  },
+  {
+    "label": "kubernetes allow rule empty",
+    "message": "kubernetes \"lab\": allow[0]: rule is empty"
+  },
+  {
+    "label": "kubernetes allow rule not last dots",
+    "message": "kubernetes \"lab\": allow[0]: \"...\" is only allowed as the last token: get ... x"
+  },
+  {
+    "label": "kubernetes review a list",
+    "message": "kubernetes \"lab\": review: must be an object"
+  },
+  {
+    "label": "kubernetes review unknown key",
+    "message": "kubernetes \"lab\": review: unknown key \"nope\""
+  },
+  {
+    "label": "kubernetes review with allow any",
+    "message": "kubernetes \"lab\": review: has no effect with allow: \"any\"; remove one of them"
+  },
+  {
+    "label": "kubernetes review with programs",
+    "message": "kubernetes \"lab\": review.programs: is only for local targets"
+  },
+  {
+    "label": "kubernetes review reviewer unknown",
+    "message": "kubernetes \"lab\": review.reviewer: must name an entry of \"reviewers\""
+  },
+  {
+    "label": "kubernetes review policy missing",
+    "message": "kubernetes \"lab\": review.policy: must be 1 to 1000 characters"
+  },
+  {
+    "label": "kubernetes review accept unsure",
+    "message": "kubernetes \"lab\": review.accept: must be a list of \"sure\" and \"likely\", for example [\"sure\"]"
+  },
+  {
+    "label": "local entry null",
+    "message": "local #0: must be an object"
+  },
+  {
+    "label": "local name uppercase",
+    "message": "local #0: name: must match /^[a-z0-9][a-z0-9-]{0,30}$/"
+  },
+  {
+    "label": "local name too long",
+    "message": "local #0: name: must match /^[a-z0-9][a-z0-9-]{0,30}$/"
+  },
+  {
+    "label": "local name with a space",
+    "message": "local #0: name: must match /^[a-z0-9][a-z0-9-]{0,30}$/"
+  },
+  {
+    "label": "local duplicate name",
+    "message": "local \"infra\": name: duplicate name"
+  },
+  {
+    "label": "local description a number",
+    "message": "local \"infra\": description: must be a string"
+  },
+  {
+    "label": "local unknown key",
+    "message": "local \"infra\": unknown key \"nope\""
+  },
+  {
+    "label": "local allowOutsidePaths key",
+    "message": "local \"infra\": unknown key \"allowOutsidePaths\""
+  },
+  {
+    "label": "local host key",
+    "message": "local \"infra\": unknown key \"host\""
+  },
+  {
+    "label": "local jumps key",
+    "message": "local \"infra\": unknown key \"jumps\""
+  },
+  {
+    "label": "local cwd missing",
+    "message": "local \"infra\": cwd: must be a non-empty path"
+  },
+  {
+    "label": "local cwd empty",
+    "message": "local \"infra\": cwd: must be a non-empty path"
+  },
+  {
+    "label": "local cwd relative",
+    "message": "local \"infra\": cwd: must be an absolute path or start with \"~/\""
+  },
+  {
+    "label": "local cwd a number",
+    "message": "local \"infra\": cwd: must be a non-empty path"
+  },
+  {
+    "label": "local allow any",
+    "message": "local \"infra\": allow: \"any\" is not supported for local targets; list the commands"
+  },
+  {
+    "label": "local allow a string",
+    "message": "local \"infra\": allow: must be an array of rule strings"
+  },
+  {
+    "label": "local allow rule empty",
+    "message": "local \"infra\": allow[0]: rule is empty"
+  },
+  {
+    "label": "local allow rule starts with a star",
+    "message": "local \"infra\": allow[0]: a local rule must start with the program name"
+  },
+  {
+    "label": "local allow rule starts with dots",
+    "message": "local \"infra\": allow[0]: a local rule must start with the program name"
+  },
+  {
+    "label": "local allow rule not last dots",
+    "message": "local \"infra\": allow[0]: \"...\" is only allowed as the last token: git ... x"
+  },
+  {
+    "label": "local review without programs",
+    "message": "local \"infra\": review.programs: must be a list of 1 to 50 program names or paths without repeats, for example [\"git\", \"ls\"]"
+  },
+  {
+    "label": "local review programs a string",
+    "message": "local \"infra\": review.programs: must be a list of 1 to 50 program names or paths without repeats, for example [\"git\", \"ls\"]"
+  },
+  {
+    "label": "local review programs empty",
+    "message": "local \"infra\": review.programs: must be a list of 1 to 50 program names or paths without repeats, for example [\"git\", \"ls\"]"
+  },
+  {
+    "label": "local review programs fifty one",
+    "message": "local \"infra\": review.programs: must be a list of 1 to 50 program names or paths without repeats, for example [\"git\", \"ls\"]"
+  },
+  {
+    "label": "local review programs a bad name",
+    "message": "local \"infra\": review.programs: must be a list of 1 to 50 program names or paths without repeats, for example [\"git\", \"ls\"]"
+  },
+  {
+    "label": "local review programs a number",
+    "message": "local \"infra\": review.programs: must be a list of 1 to 50 program names or paths without repeats, for example [\"git\", \"ls\"]"
+  },
+  {
+    "label": "local review programs repeated",
+    "message": "local \"infra\": review.programs: must be a list of 1 to 50 program names or paths without repeats, for example [\"git\", \"ls\"]"
+  },
+  {
+    "label": "local review programs dots",
+    "message": "local \"infra\": review.programs: must be a list of 1 to 50 program names or paths without repeats, for example [\"git\", \"ls\"]"
+  },
+  {
+    "label": "local review programs unknown key",
+    "message": "local \"infra\": review: unknown key \"nope\""
+  },
+  {
+    "label": "local review with a missing reviewer",
+    "message": "local \"infra\": review.reviewer: must name an entry of \"reviewers\""
+  },
+  {
+    "label": "local protect a string",
+    "message": "local \"infra\": protect: must be a list of 1 to 50 paths inside the folder"
+  },
+  {
+    "label": "local protect empty",
+    "message": "local \"infra\": protect: must be a list of 1 to 50 paths inside the folder"
+  },
+  {
+    "label": "local protect fifty one",
+    "message": "local \"infra\": protect: must be a list of 1 to 50 paths inside the folder"
+  },
+  {
+    "label": "local protect item a number",
+    "message": "local \"infra\": protect[0]: must be a path of 1 to 512 bytes without control characters"
+  },
+  {
+    "label": "local protect item empty",
+    "message": "local \"infra\": protect[0]: must be a path of 1 to 512 bytes without control characters"
+  },
+  {
+    "label": "local protect item too long",
+    "message": "local \"infra\": protect[0]: must be a path of 1 to 512 bytes without control characters"
+  },
+  {
+    "label": "local protect item with a control character",
+    "message": "local \"infra\": protect[0]: must be a path of 1 to 512 bytes without control characters"
+  },
+  {
+    "label": "local protect item absolute",
+    "message": "local \"infra\": protect[0]: must be relative to the folder, not an absolute path or one that starts with \"~\""
+  },
+  {
+    "label": "local protect item with a tilde",
+    "message": "local \"infra\": protect[0]: must be relative to the folder, not an absolute path or one that starts with \"~\""
+  },
+  {
+    "label": "local protect item with dot dot",
+    "message": "local \"infra\": protect[0]: may not contain \"..\""
+  },
+  {
+    "label": "local protect item the folder itself",
+    "message": "local \"infra\": protect[0]: names the folder itself; list a file or folder inside it"
+  },
+  {
+    "label": "local protect item a dot",
+    "message": "local \"infra\": protect[0]: names the folder itself; list a file or folder inside it"
+  },
+  {
+    "label": "local protect item repeated",
+    "message": "local \"infra\": protect[1]: a/b is listed twice"
+  },
+  {
+    "label": "reviewer name uppercase",
+    "message": "reviewer \"Rv\": name: must match /^[a-z0-9][a-z0-9-]{0,30}$/"
+  },
+  {
+    "label": "reviewer entry a string",
+    "message": "reviewer \"rv\": must be an object"
+  },
+  {
+    "label": "reviewer unknown key",
+    "message": "reviewer \"rv\": unknown key \"nope\""
+  },
+  {
+    "label": "reviewer baseUrl missing",
+    "message": "reviewer \"rv\": baseUrl: must be a URL"
+  },
+  {
+    "label": "reviewer baseUrl not a url",
+    "message": "reviewer \"rv\": baseUrl: must be a URL"
+  },
+  {
+    "label": "reviewer baseUrl a number",
+    "message": "reviewer \"rv\": baseUrl: must be a URL"
+  },
+  {
+    "label": "reviewer baseUrl http to a remote host",
+    "message": "reviewer \"rv\": baseUrl: must use https (http is accepted for localhost only)"
+  },
+  {
+    "label": "reviewer baseUrl ftp",
+    "message": "reviewer \"rv\": baseUrl: must use https (http is accepted for localhost only)"
+  },
+  {
+    "label": "reviewer baseUrl with a user name",
+    "message": "reviewer \"rv\": baseUrl: must not contain a user name, a password, a query or a fragment"
+  },
+  {
+    "label": "reviewer baseUrl with a query",
+    "message": "reviewer \"rv\": baseUrl: must not contain a user name, a password, a query or a fragment"
+  },
+  {
+    "label": "reviewer baseUrl with a fragment",
+    "message": "reviewer \"rv\": baseUrl: must not contain a user name, a password, a query or a fragment"
+  },
+  {
+    "label": "reviewer model missing",
+    "message": "reviewer \"rv\": model: must be 1 to 200 printable characters without spaces"
+  },
+  {
+    "label": "reviewer model with a space",
+    "message": "reviewer \"rv\": model: must be 1 to 200 printable characters without spaces"
+  },
+  {
+    "label": "reviewer model too long",
+    "message": "reviewer \"rv\": model: must be 1 to 200 printable characters without spaces"
+  },
+  {
+    "label": "reviewer model a number",
+    "message": "reviewer \"rv\": model: must be 1 to 200 printable characters without spaces"
+  },
+  {
+    "label": "reviewer keyEnv lowercase",
+    "message": "reviewer \"rv\": keyEnv: must be the name of an environment variable (capitals, digits and \"_\") that does not start with KSPROXY_"
+  },
+  {
+    "label": "reviewer keyEnv starts with KSPROXY_",
+    "message": "reviewer \"rv\": keyEnv: must be the name of an environment variable (capitals, digits and \"_\") that does not start with KSPROXY_"
+  },
+  {
+    "label": "reviewer keyEnv a number",
+    "message": "reviewer \"rv\": keyEnv: must be the name of an environment variable (capitals, digits and \"_\") that does not start with KSPROXY_"
+  },
+  {
+    "label": "reviewer keyEnv PATH",
+    "message": "reviewer \"rv\": keyEnv: PATH is a variable the session needs; name a variable that must hold only the key"
+  },
+  {
+    "label": "reviewer keyEnv with a session prefix",
+    "message": "reviewer \"rv\": keyEnv: SSH_KEY is a variable the session needs; name a variable that must hold only the key"
+  },
+  {
+    "label": "reviewer keyEnv with another session prefix",
+    "message": "reviewer \"rv\": keyEnv: LC_KEY is a variable the session needs; name a variable that must hold only the key"
+  },
+  {
+    "label": "reviewer timeoutSeconds zero",
+    "message": "reviewer \"rv\": timeoutSeconds: must be an integer from 1 to 60"
+  },
+  {
+    "label": "reviewer timeoutSeconds too high",
+    "message": "reviewer \"rv\": timeoutSeconds: must be an integer from 1 to 60"
+  },
+  {
+    "label": "reviewer timeoutSeconds a fraction",
+    "message": "reviewer \"rv\": timeoutSeconds: must be an integer from 1 to 60"
+  },
+  {
+    "label": "reviewer maxCalls zero",
+    "message": "reviewer \"rv\": maxCalls: must be an integer from 1 to 100000"
+  },
+  {
+    "label": "reviewer maxCalls too high",
+    "message": "reviewer \"rv\": maxCalls: must be an integer from 1 to 100000"
+  },
+  {
+    "label": "reviewer maxCalls a string",
+    "message": "reviewer \"rv\": maxCalls: must be an integer from 1 to 100000"
+  }
+]

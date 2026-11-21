@@ -4,8 +4,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import {
-  bounded, closeStaleSockets, emptyDirectory, fileSize, startFollower,
+  bounded, emptyDirectory, fileSize, startFollower,
 } from '../src/start.js';
+import { closeStaleSockets } from '../src/kinds/ssh/master.js';
 import { fakeSsh, waitFor } from './start-helpers.js';
 
 function tmp() {

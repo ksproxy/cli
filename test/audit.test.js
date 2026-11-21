@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  appendAudit, clip, formatAuditLine, formatDuration, formatLogLine, logOptionsFor,
+  appendAudit, formatAuditLine, formatDuration, formatLogLine, logOptionsFor,
   readAuditEntries, sanitizeForTerminal,
 } from '../src/audit.js';
+import { clip } from '../src/text.js';
 
 const TS = '2026-11-20T12:18:40.000Z';
 

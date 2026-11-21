@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { callTool } from '../src/tools.js';
-import { portListening, reapStaleProxies } from '../src/kube.js';
+import { portListening, reapStaleProxies } from '../src/kinds/kubernetes/cluster.js';
 import { processStartTime } from '../src/session.js';
 
 const bin = fileURLToPath(new URL('../bin/ksproxy.js', import.meta.url));
@@ -184,7 +184,7 @@ test('start --all opens the targets, serves the session and shuts down cleanly',
     assert.ok(read('kubeconfig').includes(`http://127.0.0.1:${s.proxyPort}`));
     const mcp = JSON.parse(read('mcp.json'));
     assert.equal(mcp.mcpServers['ksproxy'].command, process.execPath);
-    assert.deepEqual(mcp.mcpServers['ksproxy'].args, [bin, 'mcp']);
+    assert.deepEqual(mcp.mcpServers['ksproxy'].args, ['--disable-sigusr1', bin, 'mcp']);
     assert.ok(read('AGENT.md').includes('web1'));
     assert.ok(read('AGENT.md').includes('lab'));
     for (const socket of s.sockets) assert.ok(fs.existsSync(socket), socket);
@@ -237,6 +237,23 @@ test('SIGTERM shuts down the same way', async () => {
     assert.ok(!fs.existsSync(path.join(s.sessionDir, 'session.json')));
     for (const socket of s.sockets) assert.ok(!fs.existsSync(socket), socket);
     assert.equal(await portListening(s.proxyPort), false);
+  } finally {
+    await stop(run);
+  }
+});
+
+test('SIGUSR1 does not open the inspector of a running start, and start keeps running', async () => {
+  const s = await setup();
+  const run = launch(['--all'], s.env);
+  try {
+    await waitFor(() => run.out.stdout.includes('Ctrl-C'), 15000, 'the summary');
+    run.child.kill('SIGUSR1');
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    assert.ok(!/Debugger listening/.test(run.out.stderr), run.out.stderr);
+    assert.equal(run.child.exitCode, null);
+    assert.equal(alive(run.child.pid), true);
+    run.child.kill('SIGTERM');
+    assert.equal((await finished(run, 10000)).code, 0);
   } finally {
     await stop(run);
   }

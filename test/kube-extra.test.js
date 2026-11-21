@@ -9,7 +9,7 @@ import { EventEmitter } from 'node:events';
 import {
   closeCluster, commandLine, hardRefusal, hardRefusalDetail, openCluster, portListening, probeVersion,
   reapStaleProxies,
-} from '../src/kube.js';
+} from '../src/kinds/kubernetes/cluster.js';
 import { processStartTime } from '../src/session.js';
 
 function tmp() {

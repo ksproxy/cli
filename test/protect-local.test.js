@@ -4,8 +4,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   guardedPaths, localScope, looksSecret, reviewProblem, valueProblem,
-} from '../src/local.js';
-import { decideLocal } from '../src/tools.js';
+} from '../src/kinds/local/folder.js';
+import localKind from '../src/kinds/local/index.js';
+
+const decideLocal = localKind.decide;
 
 let base;
 let dir;

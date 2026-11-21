@@ -1,7 +1,9 @@
 import { spawn } from 'node:child_process';
 
+// signal: an AbortSignal that kills the child at once. stopAtLimit: kill the child as soon as a stream passes maxBytes.
+// Without them run behaves as it always did.
 export function run(file, args, {
-  timeoutMs = 60000, maxBytes = 262144, env = process.env, inherit = false, cwd, graceMs = 500,
+  timeoutMs = 60000, maxBytes = 262144, env = process.env, inherit = false, cwd, graceMs = 500, signal, stopAtLimit = false,
 } = {}) {
   return new Promise((resolve) => {
     const started = Date.now();
@@ -21,10 +23,12 @@ export function run(file, args, {
     let timer = null;
     let killTimer = null;
     let graceTimer = null;
+    let onAbort = null;
 
     const finish = () => {
       if (settled) return;
       settled = true;
+      if (onAbort !== null) signal.removeEventListener('abort', onAbort);
       if (!inherit && child && Number.isInteger(child.pid)) {
         try {
           process.kill(-child.pid, 'SIGKILL');
@@ -60,7 +64,10 @@ export function run(file, args, {
         chunks[name].push(piece);
         kept[name] += piece.length;
       }
-      if (chunk.length > room) result.truncated = true;
+      if (chunk.length > room) {
+        result.truncated = true;
+        if (stopAtLimit) signalChild('SIGKILL');
+      }
     };
     const signalChild = (signal) => {
       if (inherit) {
@@ -96,6 +103,12 @@ export function run(file, args, {
           maybeDone();
         });
       }
+    }
+
+    if (signal !== undefined) {
+      onAbort = () => signalChild('SIGKILL');
+      if (signal.aborted) onAbort();
+      else signal.addEventListener('abort', onAbort, { once: true });
     }
 
     timer = setTimeout(() => {

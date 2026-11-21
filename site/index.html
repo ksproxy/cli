@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ksproxy: let an agent use your servers without your credentials</title>
-<meta name="description" content="Let AI agents run allowlisted ssh, kubectl and local commands without your credentials.">
+<meta name="description" content="Let AI agents run allowlisted ssh, kubectl, local, database, queue and HTTP API calls without your credentials.">
 <meta property="og:type" content="website">
 <meta property="og:title" content="ksproxy">
-<meta property="og:description" content="Let AI agents run allowlisted ssh, kubectl and local commands without your credentials.">
+<meta property="og:description" content="Let AI agents run allowlisted ssh, kubectl, local, database, queue and HTTP API calls without your credentials.">
 <meta property="og:url" content="https://ksproxy.github.io/cli/">
 <meta name="color-scheme" content="light dark">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
@@ -196,7 +196,7 @@ footer li { margin: 0; }
 
 <section aria-labelledby="tools">
   <h2 id="tools">What the agent gets</h2>
-  <p>Four MCP tools. Timeouts are 1 to 600 seconds (default 60), and stdout and stderr are each capped at 256 KiB.</p>
+  <p>Four MCP tools for ssh, Kubernetes and local targets, and one more for each kind of service target below. Timeouts are 1 to 600 seconds (default 60), and stdout and stderr are each capped at 256 KiB.</p>
   <div class="tablewrap">
     <table>
       <thead><tr><th scope="col">Tool</th><th scope="col">What it does</th></tr></thead>
@@ -208,6 +208,17 @@ footer li { margin: 0; }
       </tbody>
     </table>
   </div>
+  <p>ksproxy can also reach databases, queues and HTTP APIs: <code>ksproxy start</code> holds the password or token and carries out each call, and the agent never sees it. Every call is checked against the target's allowlist, and what is not allowed is refused.</p>
+  <ul>
+    <li><code>postgres</code> and <code>mysql</code> (also MariaDB): one SQL statement at a time, read-only by default.</li>
+    <li><code>mongodb</code>: one command document, with results bounded.</li>
+    <li><code>redis</code>: one command, over TCP or TLS.</li>
+    <li><code>elasticsearch</code> and <code>rabbitmq</code> (management API): one HTTP request.</li>
+    <li><code>kafka</code>: the Kafka command-line clients you installed.</li>
+    <li><code>http</code>: any HTTP API, with a bearer token, basic auth or one header.</li>
+    <li><code>command</code>: one client program that you name.</li>
+  </ul>
+  <p>The rights of the account the target uses are the real boundary. The reference is <a href="https://github.com/ksproxy/cli/blob/main/docs/SERVICES.md">docs/SERVICES.md</a>.</p>
 </section>
 
 <section aria-labelledby="allow">

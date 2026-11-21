@@ -20,11 +20,12 @@ test('a full session: opens ssh, a tunnelled cluster and writes the session fold
 
   const out = run.proc.stdout.text;
   assert.ok(out.startsWith(`Session folder: ${world.sessionDir}\nMCP config (add once to your agent):\n`));
-  assert.ok(out.includes(`Claude Code: claude mcp add ksproxy -- ${process.execPath} `));
+  assert.ok(out.includes(`Claude Code: claude mcp add ksproxy -- ${process.execPath} --disable-sigusr1 `));
   assert.match(out, /READY +2 targets, pid \d+/);
   const config = JSON.parse(out.slice(out.indexOf('{'), out.indexOf('\n}\n') + 2));
   assert.equal(config.mcpServers.ksproxy.command, process.execPath);
-  assert.equal(config.mcpServers.ksproxy.args[1], 'mcp');
+  assert.equal(config.mcpServers.ksproxy.args[0], '--disable-sigusr1');
+  assert.equal(config.mcpServers.ksproxy.args[2], 'mcp');
 
   const err = run.proc.stderr.text;
   assert.match(err, /ssh {2}web1 +OPENING +web1\.example\.com/);
@@ -332,7 +333,7 @@ test('a stop requested while an ssh target is opening closes that connection aga
 });
 
 test('a stop requested while a cluster is opening closes the proxy again, even when closing is slow', async () => {
-  const world = await makeWorld({ ssh: [], kubernetes: [{}] });
+  const world = await makeWorld({ ssh: [], kubernetes: [{}], extraEnv: { KSPROXY_FAKE_KUBECTL_IGNORE_TERM: '1' } });
   const proc = fakeProcess();
   proc.stderr.onWrite = (text) => {
     if (/OPENING/.test(text)) proc.emit('SIGINT');
@@ -346,7 +347,7 @@ test('a stop requested while a cluster is opening closes the proxy again, even w
 });
 
 test('closing a cluster that takes longer than the limit kills its proxy', async () => {
-  const world = await makeWorld({ ssh: [], kubernetes: [{}] });
+  const world = await makeWorld({ ssh: [], kubernetes: [{}], extraEnv: { KSPROXY_FAKE_KUBECTL_IGNORE_TERM: '1' } });
   const run = launch(world, { all: true }, { limits: { kubeCloseMs: 1 } });
   await ready(run);
   const pid = JSON.parse(fs.readFileSync(path.join(world.socketDir, 'kube-lab.pid'), 'utf8')).pid;
@@ -365,7 +366,9 @@ test('an uncaught exception closes everything, reports the error, and a second o
   assert.match(run.proc.stderr.text, /CLOSING +error: boom/);
   assert.ok(!run.proc.stderr.text.includes('second failure'));
   assert.match(run.proc.stderr.text, /CLOSED/);
-  assert.equal(alive(pid), false);
+  // A proxy that did not stop within the grace after SIGTERM gets SIGKILL, which is not awaited: until this process
+  // reaps it, the killed proxy still answers a signal 0. So the test waits for it to be gone.
+  await waitFor(() => !alive(pid), 10000, 'the cluster proxy to be gone');
   assert.equal(fs.existsSync(path.join(world.sessionDir, 'session.json')), false);
   assert.equal(listenerTotal(run.proc), 0);
 });

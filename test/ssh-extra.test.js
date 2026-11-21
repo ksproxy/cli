@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { closeMaster, openMaster } from '../src/ssh.js';
+import { closeMaster, openMaster } from '../src/kinds/ssh/master.js';
 
 const fakeSsh = fileURLToPath(new URL('./fixtures/fake-ssh.js', import.meta.url));
 const nostay = fileURLToPath(new URL('./fixtures/fake-ssh-nostay.js', import.meta.url));

@@ -6,8 +6,10 @@ import { PassThrough } from 'node:stream';
 import { main, runCli } from '../src/cli.js';
 import { appendAudit } from '../src/audit.js';
 import { writeSession } from '../src/session.js';
-import { SAMPLE_INVENTORY } from '../src/inventory.js';
+import { sampleInventory } from '../src/inventory.js';
 import { fakeProcess, fakeSsh, fakeKubectl, freePorts } from './start-helpers.js';
+
+const SAMPLE_INVENTORY = sampleInventory();
 
 const dirs = [];
 
@@ -244,7 +246,7 @@ test('check needs a kind, a name and a command', async () => {
   for (const args of [['check'], ['check', 'ssh'], ['check', 'ssh', 'web1'], ['check', 'db', 'web1', 'ls']]) {
     const r = await cli(args, {});
     assert.equal(r.code, 2, args.join(' '));
-    assert.ok(r.stderr.startsWith('usage: ksproxy check <ssh|kube|local> <name> <command...>\nUsage:'));
+    assert.ok(r.stderr.startsWith('usage: ksproxy check <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka> <name> <command...>\nUsage:'));
   }
 });
 

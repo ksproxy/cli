@@ -20,6 +20,10 @@ test('the request holds only the model and two messages, with the command as dat
   });
 });
 
+test('the instructions say that a word written as ?name=value is the query of an HTTP request', () => {
+  assert.ok(SYSTEM_TEXT.includes('\n- For an HTTP request the command is the method and one word per path segment; each word that starts with ? is one name and value of the query of the request, written as ?name=value.\n'));
+});
+
 test('parseAnswer accepts the object alone or wrapped in text, and tidies the reason', () => {
   assert.deepEqual(parseAnswer(good), { verdict: 'allow', certainty: 'sure', reason: 'shows uptime' });
   assert.deepEqual(parseAnswer(`\`\`\`json\n${good}\n\`\`\``).verdict, 'allow');
