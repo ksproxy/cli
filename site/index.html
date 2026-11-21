@@ -189,7 +189,7 @@ footer li { margin: 0; }
   </figure>
   <ol>
     <li>You run <code>ksproxy start</code> in a terminal, pick the targets, and leave it running. It opens the ssh connections (ssh may ask for your password or key passphrase in that terminal) and the <code>kubectl proxy</code> processes. A third kind, <code>local</code>, lets the agent run allowlisted commands in a folder on your own machine; opening it only checks that the folder exists, can be resolved, and is not your home directory, the root, ksproxy's own folders or a folder holding an inventory kubeconfig.</li>
-    <li>Your agent talks to the built-in MCP server, <code>ksproxy mcp</code>. Each call is checked against the target's allowlist, and refused unless a rule allows it.</li>
+    <li>Your agent talks to the built-in MCP server, <code>ksproxy mcp</code>. Each call is checked against the target's allowlist, and refused unless a rule allows it. If you turn on model review for a target, a model can also approve a command that no rule matches.</li>
     <li>Every call and event appears in your terminal as it happens. Ctrl-C closes every connection and stops every proxy.</li>
   </ol>
 </section>
@@ -204,7 +204,7 @@ footer li { margin: 0; }
         <tr><td><code>list_targets</code></td><td>Lists the targets you opened, with their descriptions and allowed rules.</td></tr>
         <tr><td><code>ssh_exec</code></td><td>Runs a command on an ssh target: <code>server</code>, <code>command</code>, optional <code>timeout_seconds</code>.</td></tr>
         <tr><td><code>kubectl</code></td><td>Runs kubectl against a cluster through its local proxy: <code>cluster</code>, <code>args</code>, optional <code>timeout_seconds</code>.</td></tr>
-        <tr><td><code>local_exec</code></td><td>Runs an allowlisted command on your machine in a local target's folder: <code>target</code>, <code>command</code>, optional <code>timeout_seconds</code>. No shell is involved. A wildcard in a local rule matches only plain names and paths, never a flag (flags and anything else must be written literally in the rule), and each plain value, links followed, must stay inside the folder. A file outside it is reachable only if you write it literally into a rule (<code>cat /etc/hosts</code>).</td></tr>
+        <tr><td><code>local_exec</code></td><td>Runs an allowlisted command on your machine in a local target's folder: <code>target</code>, <code>command</code>, optional <code>timeout_seconds</code>. No shell is involved. A wildcard in a local rule matches only plain names and paths, never a flag (flags and anything else must be written literally in the rule), and each plain value, links followed, must stay inside the folder. A file outside it is reachable only if you write it literally into a rule (<code>cat /etc/hosts</code>). Paths you list in <code>protect</code>, and names that usually hold secrets, are never matched by a wildcard.</td></tr>
       </tbody>
     </table>
   </div>
@@ -258,9 +258,37 @@ ksproxy check local infra git status</code></pre>
   </div>
 </section>
 
+<section aria-labelledby="review">
+  <h2 id="review">Optional model review</h2>
+  <p>When no rule matches a command, ksproxy can ask a model if it fits a policy you wrote. It is off by default and set per target, and it works with any OpenAI-compatible provider. Anything but a clean approval is a refusal, and the tool's reply does not show the model's reason.</p>
+  <div class="codeblock has-copy">
+    <pre tabindex="0"><code>{
+  "reviewers": {
+    "groq": {
+      "baseUrl": "https://api.groq.com/openai/v1",
+      "model": "&lt;model id&gt;",
+      "keyEnv": "GROQ_API_KEY"
+    }
+  },
+  "ssh": [
+    {
+      "name": "web1",
+      "host": "web1.example.com",
+      "allow": ["uptime", "df -h"],
+      "review": {
+        "reviewer": "groq",
+        "policy": "read-only diagnostics, no restarts, no file contents"
+      }
+    }
+  ]
+}</code></pre>
+  </div>
+  <p>The model judges the words of a command, not what it does, so keep write commands on the allow list. The README lists the limits.</p>
+</section>
+
 <section aria-labelledby="log">
   <h2 id="log">You see everything</h2>
-  <p><code>ksproxy start</code> prints one line per agent call and per event, and <code>ksproxy log</code> shows the same lines later. A refused call shows a short reason; the agent receives the full explanation with the allowed rules. Every call is also kept as a JSON line in <code>audit.log</code> (command and decision, not output).</p>
+  <p><code>ksproxy start</code> prints one line per agent call and per event, and <code>ksproxy log</code> shows the same lines later. A refused call shows a short reason; the agent receives the full explanation with the allowed rules. Every call is also kept as a JSON line in <code>logs/audit.log</code> in the state folder (command and decision, not output). The log is rotated at 5 MiB and the 5 newest old files are kept.</p>
   <div class="codeblock has-copy">
     <pre tabindex="0"><code>12:18:40 ssh  web1       OPENING         web1
 12:18:41 ssh  web1       UP
@@ -307,7 +335,7 @@ ksproxy check local infra git status</code></pre>
     <li>Command output is returned as-is. A program that prints a secret leaks it to the agent. Replacing local paths and proxy addresses in the output is not redaction.</li>
     <li>The remote user's permissions and Kubernetes RBAC remain the boundary. A workload the identity may create, such as a Pod that mounts a Secret or a service-account token, is not inspected by this tool.</li>
     <li>With <code>"allow": "any"</code> on an ssh target, the command is sent as written, so pipes and redirects work. Local targets refuse <code>"any"</code>.</li>
-    <li>A local command runs as you, on the machine that holds your keys, so give local targets the shortest allow list of all. The "inside the folder" check looks at arguments only: a program can still read elsewhere through its own configuration, includes or a file that names another file; hard links inside the folder cannot be detected; a file can change between the check and the program opening it; a literal in a rule is exempt, including a flag that runs a command or changes directory; a recursive program (<code>grep -r</code>, <code>ls -R</code>) reads everything in the folder, and one that follows links (<code>-R</code>, <code>-L</code>) leaves the folder through links inside it; on a case-sensitive volume on macOS, names that differ only in letter case are treated as the same by the folder check; some programs execute code they find in the folder or in your home configuration (<code>git</code> helpers and hooks, <code>terraform plan</code> data sources, <code>make</code>, <code>npm</code>); a rule that lets the agent write files in the folder, together with a rule that runs something from the folder, lets the agent run its own code; and a program that leaves its process group (<code>setsid</code>) survives the timeout kill. Allow only programs and flags you would run on that folder yourself.</li>
+    <li>A local command runs as you, on the machine that holds your keys, so give local targets the shortest allow list of all. The folder check looks at arguments only: a program can still read other files by itself, and some programs (<code>git</code>, <code>make</code>, <code>npm</code>, <code>terraform plan</code>) run code they find in the folder. The full list is in <a href="https://github.com/ksproxy/cli/blob/main/docs/LOCAL-TARGETS.md">docs/LOCAL-TARGETS.md</a>.</li>
     <li>Protected locations are those recorded by <code>ksproxy start</code> (its own state and configuration folders and every inventory kubeconfig), not whatever the agent host's environment says. Programs are found through the absolute entries of your <code>PATH</code>; relative entries and entries inside any local target's folder are dropped. The folder path is replaced in output, also when its letter case differs; a path cut by the 256 KiB output limit may be only partly replaced.</li>
     <li>After a SIGKILL or power loss, connections and proxies it opened can outlive it until the next <code>ksproxy start</code> closes them.</li>
     <li>Out of scope: creating server users, sudoers rules, RBAC, tokens or kubeconfigs; file transfer; interactive shells; port forwarding for the agent; redacting secrets from output; Windows.</li>

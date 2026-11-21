@@ -32,9 +32,11 @@ test('a full session: opens ssh, a tunnelled cluster and writes the session fold
   assert.match(err, /kube lab +OPENING +port \d+/);
   assert.match(err, /kube lab +UP/);
 
-  for (const name of ['session.json', 'ssh_config', 'kubeconfig', 'AGENT.md', 'mcp.json', 'audit.log']) {
+  for (const name of ['session.json', 'ssh_config', 'kubeconfig', 'AGENT.md', 'mcp.json']) {
     assert.ok(fs.existsSync(path.join(world.sessionDir, name)), name);
   }
+  assert.ok(fs.existsSync(world.auditLog));
+  assert.ok(!fs.existsSync(path.join(world.sessionDir, 'audit.log')));
   assert.equal(fs.statSync(world.sessionDir).mode & 0o777, 0o700);
   assert.equal(fs.statSync(path.join(world.sessionDir, 'session.json')).mode & 0o777, 0o600);
   const session = JSON.parse(fs.readFileSync(path.join(world.sessionDir, 'session.json'), 'utf8'));
@@ -59,7 +61,7 @@ test('a full session: opens ssh, a tunnelled cluster and writes the session fold
   assert.equal(alive(proxyPid), false);
   assert.equal(listenerTotal(run.proc), 0);
 
-  const events = readAuditEntries(path.join(world.sessionDir, 'audit.log')).map(({ entry }) => entry.event);
+  const events = readAuditEntries(world.auditLog).map(({ entry }) => entry.event);
   assert.ok(events.includes('session_start'));
   assert.ok(events.includes('session_closing'));
   assert.equal(events.at(-1), 'session_end');
@@ -480,7 +482,7 @@ test('a follower whose stop throws never stops the clean-up: every master is clo
 
 test('an audit log that cannot be written does not stop the session', async () => {
   const world = await makeWorld();
-  fs.mkdirSync(path.join(world.sessionDir, 'audit.log'), { recursive: true });
+  fs.mkdirSync(world.auditLog, { recursive: true });
   const run = launch(world, { all: true });
   await ready(run);
   assert.match(run.proc.stderr.text, /ssh {2}web1 +UP/);

@@ -58,7 +58,9 @@ test('allow "any" is preserved', () => {
 });
 
 test('empty and ssh-only inventories', () => {
-  assert.deepEqual(validateInventory({}), { ssh: [], kubernetes: [], local: [] });
+  assert.deepEqual(validateInventory({}), {
+    ssh: [], kubernetes: [], local: [], reviewers: {},
+  });
   const inv = validateInventory({ ssh: [{ name: 'a', host: 'h' }] });
   assert.deepEqual(inv.kubernetes, []);
 });

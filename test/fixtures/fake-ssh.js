@@ -7,6 +7,9 @@ const last = argv[argv.length - 1];
 if (process.env.KSPROXY_FAKE_SSH_LOG) {
   fs.appendFileSync(process.env.KSPROXY_FAKE_SSH_LOG, `${JSON.stringify(argv)}\n`);
 }
+if (process.env.KSPROXY_FAKE_SSH_ENV_LOG) {
+  fs.appendFileSync(process.env.KSPROXY_FAKE_SSH_ENV_LOG, `${JSON.stringify({ argv, env: process.env })}\n`);
+}
 
 function valueAfter(flag) {
   const i = argv.indexOf(flag);

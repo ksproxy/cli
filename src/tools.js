@@ -6,15 +6,18 @@ import { liveSession } from './session.js';
 import {
   AllowError, checkRawSshCommand, decide, matchRuleDetail, tokenizeSshCommand,
 } from './allowlist.js';
-import { checkMaster, execArgs } from './ssh.js';
 import {
-  hardRefusalDetail, kubectlArgs, portListening,
+  checkMaster, execArgs, jumpPrefix, zshEqualsWord,
+} from './ssh.js';
+import {
+  READ_VERBS, hardRefusalDetail, kubectlArgs, portListening,
 } from './kube.js';
+import { askReview } from './review.js';
 import {
-  cleanPath, dropDataVolume, isCaseInsensitive, localFolderProblem, localScope, wildcardProblem,
+  cleanPath, dropDataVolume, isCaseInsensitive, localFolderProblem, localScope, reviewProblem, wildcardProblem,
 } from './local.js';
 import {
-  kubectlBin, sessionDir as sessionDirOf, sshBin, stateDir as stateDirOf,
+  auditLogPath, kubectlBin, reviewSocketPath, sessionDir as sessionDirOf, sshBin, stateDir as stateDirOf,
 } from './paths.js';
 
 export const NO_SESSION = 'No active session. Ask the user to run `ksproxy start` in their terminal.';
@@ -93,14 +96,36 @@ export async function targetState(target, env = process.env) {
 }
 
 export function decideSsh(target, input) {
+  const jumped = target.jumps !== undefined;
+  const prefix = jumpPrefix(target.jumps);
+  if (prefix === null) {
+    return {
+      allowed: false,
+      reason: 'this target\'s jumps are not usable; ask the user to restart ksproxy start',
+      short: 'jumps not usable',
+    };
+  }
+  if (jumped && target.allow === 'any') {
+    return { allowed: false, reason: 'a target with jumps needs a list of rules, not "any"', short: 'allowlist is "any"' };
+  }
   try {
     if (target.allow === 'any') {
       return { allowed: true, rule: 'any', command: checkRawSshCommand(input) };
     }
     const tokens = tokenizeSshCommand(input);
+    if (jumped && tokens.some(zshEqualsWord)) {
+      return {
+        allowed: false,
+        reason: 'a word may not start with "=" or contain "==" or ":=" on a target with jumps',
+        short: 'unsafe "=" word',
+      };
+    }
+    const carried = prefix ? { prefix } : {};
     const decision = decide(tokens, target.allow);
-    if (!decision.allowed) return decision;
-    return { allowed: true, rule: decision.rule, command: tokens.join(' ') };
+    if (!decision.allowed) return { ...decision, argv: tokens, ...carried };
+    return {
+      allowed: true, rule: decision.rule, command: tokens.join(' '), ...carried,
+    };
   } catch (err) {
     if (err instanceof AllowError) return { allowed: false, reason: err.message, short: err.short };
     throw err;
@@ -152,7 +177,10 @@ export function decideLocal(target, input, env = process.env, platform = process
     if (usable.length === 0 && target.allow.length > 0) {
       return { allowed: false, reason: 'not on the allowlist for this target', short: 'not on allowlist' };
     }
-    return decide(tokens, usable);
+    const refusal = decide(tokens, usable);
+    if (target.review !== true) return refusal;
+    const problem = reviewProblem(tokens, target, env, scope);
+    return problem === null ? { ...refusal, argv: tokens } : { ...refusal, notReviewed: problem.reason };
   } catch (err) {
     if (err instanceof AllowError) return { allowed: false, reason: err.message, short: err.short };
     throw err;
@@ -162,7 +190,43 @@ export function decideLocal(target, input, env = process.env, platform = process
 export function decideKube(target, args) {
   const refusal = hardRefusalDetail(args, target.manifestRoots ?? []);
   if (refusal !== null) return { allowed: false, reason: refusal.reason, short: refusal.short };
-  return decide(args, target.allow);
+  const decision = decide(args, target.allow);
+  return decision.allowed ? decision : { ...decision, argv: [...args] };
+}
+
+const MAX_REVIEW_WORDS = 64;
+const MAX_REVIEW_WORD = 200;
+const LOOSE_CHAR = /[\s"\u0000-\u001f\u007f-\u009f]/;
+
+// null when the words may be shown to the reviewer as they are, else why not.
+// For ssh the words reach a login shell on the server; the tokenizer already keeps out
+// quotes, ~, globs and braces, so only an assignment and the words that zsh may rewrite remain.
+export function reviewWordsProblem(kind, argv) {
+  if (argv.length > MAX_REVIEW_WORDS) return `the command has more than ${MAX_REVIEW_WORDS} words`;
+  if (argv.some((w) => w.length > MAX_REVIEW_WORD)) return `a word is longer than ${MAX_REVIEW_WORD} characters`;
+  if (argv.some((w) => LOOSE_CHAR.test(w))) return 'a word contains a space, a control character or a double quote';
+  if (kind !== 'ssh') return null;
+  if (argv.some((w) => w.startsWith('='))) return 'a word starts with "=", which the server\'s shell may expand';
+  if (argv.some((w) => w.includes('==') || w.includes(':='))) {
+    return 'a word contains "==" or ":=", which the server\'s shell may rewrite';
+  }
+  if (argv[0].includes('=')) return 'the first word sets an environment variable on the server';
+  return null;
+}
+
+// For a refusal on a target with review on: { argv } to send to the reviewer, { note } saying why it is not sent,
+// or null when review does not apply.
+export function reviewRoute(kind, decision, reviewOn) {
+  if (!reviewOn || decision.allowed === true || decision.unmatched !== true) return null;
+  const note = (why) => ({ note: `It was not sent to the reviewer: ${why}.` });
+  if (typeof decision.notReviewed === 'string') return note(decision.notReviewed);
+  if (!Array.isArray(decision.argv)) return null;
+  const words = reviewWordsProblem(kind, decision.argv);
+  if (words !== null) return note(words);
+  if (kind === 'kubernetes' && !READ_VERBS.has(decision.argv[0])) {
+    return note(`only read verbs are reviewed, and ${decision.argv[0]} is not one`);
+  }
+  return { argv: [...decision.argv] };
 }
 
 function validTimeout(value) {
@@ -221,9 +285,9 @@ function formatResult(result, timeoutSeconds) {
   return parts.join('\n');
 }
 
-function audit(dir, entry, stderr) {
+function audit(env, entry, stderr) {
   try {
-    appendAudit(path.join(dir, 'audit.log'), entry);
+    appendAudit(auditLogPath(env), entry);
   } catch (err) {
     stderr.write(`ksproxy: could not write audit log: ${err.message}\n`);
   }
@@ -235,13 +299,14 @@ function listOpen(session, kind) {
 }
 
 async function listTargets(session, dir, env, stderr) {
-  audit(dir, { event: 'list' }, stderr);
+  audit(env, { event: 'list' }, stderr);
   const targets = await Promise.all(session.targets.map(async (t) => ({
     kind: t.kind,
     name: t.name,
     description: t.description,
     state: await targetState(t, env),
     allow: t.allow,
+    ...(t.review === true ? { review: true } : {}),
   })));
   return { text: JSON.stringify({ startedAt: session.startedAt, targets }, null, 2), isError: false };
 }
@@ -258,7 +323,7 @@ const EXEC_TOOLS = {
   },
 };
 
-async function execTool(tool, args, session, dir, env, stderr) {
+async function execTool(tool, args, session, dir, env, stderr, review) {
   const {
     kind, word, logKind, nameKey, detailKey, label,
   } = EXEC_TOOLS[tool];
@@ -280,7 +345,7 @@ async function execTool(tool, args, session, dir, env, stderr) {
     event: 'call', tool, kind: logKind, target: auditedTarget, [detailKey]: auditedDetail,
   };
   const refuse = (text, short, reason = text) => {
-    audit(dir, {
+    audit(env, {
       ...entry, decision: 'refused', reason, short,
     }, stderr);
     return { text, isError: true };
@@ -305,19 +370,41 @@ async function execTool(tool, args, session, dir, env, stderr) {
   if (kind === 'ssh') decision = decideSsh(target, detail);
   else if (kind === 'kubernetes') decision = decideKube(target, detail);
   else decision = decideLocal(target, detail, env);
+  let reviewed = null;
+  const route = reviewRoute(kind, decision, target.review === true);
+  if (route?.argv) {
+    const { argv } = route;
+    try {
+      reviewed = await review(reviewSocketPath(env), { kind, name, argv: [...argv] });
+    } catch {
+      reviewed = { allowed: false, short: 'review not available' };
+    }
+    if (reviewed?.allowed !== true) {
+      return refuse(
+        `REFUSED (${word} ${clip(name, 64)}): ${decision.reason}. The reviewer did not approve it.`,
+        typeof reviewed?.short === 'string' ? reviewed.short : 'review not available',
+        decision.reason,
+      );
+    }
+    decision = {
+      allowed: true, rule: 'review', argv, command: argv.join(' '), ...(decision.prefix ? { prefix: decision.prefix } : {}),
+    };
+  }
   if (!decision.allowed) {
-    return refuse(`REFUSED (${word} ${clip(name, 64)}): ${decision.reason}`, decision.short, decision.reason);
+    const reason = route?.note ? `${decision.reason}. ${route.note}` : decision.reason;
+    return refuse(`REFUSED (${word} ${clip(name, 64)}): ${reason}`, decision.short, reason);
   }
 
   const limits = { timeoutMs: timeoutSeconds * 1000, maxBytes: MAX_OUTPUT_BYTES };
   let result;
   if (kind === 'ssh') {
-    result = await run(sshBin(env), execArgs(path.join(dir, 'ssh_config'), name, decision.command), {
+    const command = decision.prefix === undefined ? decision.command : `${decision.prefix} ${decision.command}`;
+    result = await run(sshBin(env), execArgs(path.join(dir, 'ssh_config'), name, command), {
       ...limits,
       env: minimalEnv(env),
     });
   } else if (kind === 'kubernetes') {
-    result = await run(kubectlBin(env), kubectlArgs(path.join(dir, 'kubeconfig'), name, detail), {
+    result = await run(kubectlBin(env), kubectlArgs(path.join(dir, 'kubeconfig'), name, decision.argv ?? detail), {
       ...limits,
       env: minimalEnv(env, {
         KUBECONFIG: path.join(dir, 'kubeconfig'), KUBERC: 'off', KUBECTL_KUBERC: 'false',
@@ -332,10 +419,11 @@ async function execTool(tool, args, session, dir, env, stderr) {
     });
   }
 
-  audit(dir, {
+  audit(env, {
     ...entry,
     decision: 'allowed',
     rule: decision.rule,
+    ...(reviewed === null ? {} : { review: { certainty: reviewed.certainty, reason: reviewed.reason } }),
     exitCode: result.exitCode,
     timedOut: result.timedOut,
     spawnError: result.spawnError ?? null,
@@ -353,7 +441,7 @@ async function execTool(tool, args, session, dir, env, stderr) {
   };
 }
 
-export async function callTool(name, args, env = process.env, { stderr = process.stderr } = {}) {
+export async function callTool(name, args, env = process.env, { stderr = process.stderr, review = askReview } = {}) {
   try {
     if (!TOOLS.some((t) => t.name === name)) return { text: `unknown tool: ${name}`, isError: true };
     const dir = sessionDirOf(env);
@@ -363,7 +451,7 @@ export async function callTool(name, args, env = process.env, { stderr = process
     }
     if (name === 'list_targets') return await listTargets(session, dir, env, stderr);
     if (!isPlainObject(args)) return { text: 'invalid arguments: expected an object', isError: true };
-    return await execTool(name, args, session, dir, env, stderr);
+    return await execTool(name, args, session, dir, env, stderr, review);
   } catch (err) {
     return { text: `internal error: ${err?.message ?? err}`, isError: true };
   }

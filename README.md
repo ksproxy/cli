@@ -36,7 +36,7 @@ Homepage: https://ksproxy.github.io/cli/ · Source: https://github.com/ksproxy/c
    ```
 
    The config is the same on every run, so you do this once.
-5. Press Ctrl-C when you are done. Every ssh connection and tunnel is closed, every proxy is stopped, `session.json` and the socket folder are removed, and `audit.log` is kept. The other session files (`ssh_config`, `kubeconfig`, `AGENT.md`, `mcp.json` and the proxy logs) stay until the next `start`.
+5. Press Ctrl-C when you are done. Every ssh connection and tunnel is closed, every proxy is stopped, `session.json` and the socket folder are removed, and the audit log in `logs/` is kept. The other session files (`ssh_config`, `kubeconfig`, `AGENT.md`, `mcp.json` and the proxy logs) stay until the next `start`.
 
 Other commands: `ksproxy status` (live session and each target's state, then the time of the last call and the number of calls this session; exit 0 only when everything is up), `ksproxy log [-n N] [--denied] [--json]` (the history, see "The log"), `ksproxy check <ssh|kube|local> <name> <command...>` (see below), `ksproxy mcp` (the MCP server; your agent starts it, you do not), `ksproxy --help`, `ksproxy --version`.
 
@@ -82,14 +82,17 @@ Any validation failure is an error that names the entry and the field. Unknown k
 
 | Field | Rule |
 |---|---|
-| top level | An object with optional `ssh`, `kubernetes` and `local` arrays. |
+| top level | An object with optional `ssh`, `kubernetes` and `local` arrays, and `reviewers`. |
+| `reviewers`, `review` (optional) | Model review of commands no rule matches. See "Model review (optional)". |
 | `name` | `^[a-z0-9][a-z0-9-]{0,30}$`, unique within its kind. |
 | `ssh[].host` | An ssh destination your own ssh config resolves. `^[A-Za-z0-9][A-Za-z0-9._@-]*$`; it may not start with `-`. |
+| `ssh[].jumps` (optional) | ssh targets only. 1 to 5 ssh commands that follow `host`, in order, for a server that only the first one can reach. Each is `ssh`, then any of `-i -p -l -J` or `-o Key=Value` (listed settings only) with a value as a separate word, then one server. `allow` must be a list, not `"any"`. See "A server behind another server". |
 | `kubernetes[].kubeconfig` | A path; `~/` is expanded. It is your real kubeconfig for that cluster and is read only by `kubectl proxy`. |
 | `proxyPort`, `tunnel.localPort` | Integers 1024-65535, unique across the whole file. |
 | `tunnel` (optional) | `host` as above; `remote` is `host:port`. When present, point the kubeconfig's server at `https://127.0.0.1:<localPort>`; the tool does not verify this. |
 | `manifestRoots` (optional) | Absolute or `~/` directories. The only places `-f` and `--patch-file` may read a single file from. |
 | `local[].cwd` | The folder the commands run in. Required; absolute or `~/`. It is never shown to the agent. |
+| `local[].protect` (optional) | Local targets only. Up to 50 files and folders inside `cwd` that no wildcard argument or argument sent to the model reviewer may name, enter or contain. Plain paths relative to `cwd`, no patterns. See "Local targets". |
 | `description` (optional) | A string shown in the selection list and to the agent. |
 | `allow` | An array of rule strings, or the string `"any"`. Missing means an empty list, which refuses everything. `start` warns for each selected target with an empty list; the warning is printed before the target is opened, even if the target is then skipped. `"any"` is an error for `local` targets: list the commands, and every `local` rule must start with the program name (not `*` or `...`). |
 
@@ -132,7 +135,124 @@ ksproxy check kube lab get secrets                # REFUSED: secret resources ar
 ksproxy check local infra git status              # ALLOWED by rule: git status
 ```
 
-Exit 0 is allowed, 1 is refused, 2 is a usage or inventory problem.
+Exit 0 is allowed, 1 is refused, 2 is a usage or inventory problem. For a command that no rule matches on a reviewed target, `check` prints `NOT ON THE ALLOWLIST: a running session asks reviewer "<name>"` and exits 1. It never calls a model.
+
+## A server behind another server
+
+Some servers are only reachable from another server, with a key that is stored there. `jumps` lists the ssh commands you would type after connecting to `host`:
+
+```json
+{
+  "name": "prod210",
+  "host": "sff_proxy",
+  "jumps": ["ssh -i .ssh/prod_rsa -o LogLevel=ERROR ubuntu@172.16.1.210"],
+  "allow": ["uptime", "systemctl status *"]
+}
+```
+
+`ksproxy start` opens the connection to `host`. For the call `uptime`, ksproxy sends exactly this over it, and `uptime` runs on the last server:
+
+```
+ssh -T -o BatchMode=yes -i .ssh/prod_rsa -o LogLevel=ERROR -o ConnectTimeout=10 ubuntu@172.16.1.210 -- uptime
+```
+
+- The agent's words come after `--`. They cannot become options of that ssh or start another command on the first server.
+- `"allow": "any"` is refused on such a target.
+- The tools never show the jump text to the agent. `ksproxy check ssh prod210 uptime` shows you the exact string.
+- Do not also list the first server as a target, unless you want the agent to run commands on it.
+
+Before you rely on it:
+
+- The key must work without a prompt: no passphrase, and the host key already known on that server.
+- `-i .ssh/prod_rsa` is read on the server before the jump, starting in that login's home folder. `~` is not accepted.
+- `-o LogLevel=ERROR` keeps ssh's own notices, which can name the inner address, out of the output.
+- The first server's own setup is trusted: its shell start-up files and ssh configuration decide what `ssh` does there.
+
+More than one jump, the accepted options and every limit are in [docs/JUMPS.md](docs/JUMPS.md).
+
+## Model review (optional)
+
+When no rule matches a command, ksproxy can ask a model if the command fits a policy you wrote, instead of refusing it. It is off by default and set per target. Any provider with an OpenAI-compatible chat API works.
+
+```json
+{
+  "reviewers": {
+    "groq": {
+      "baseUrl": "https://api.groq.com/openai/v1",
+      "model": "<model id>",
+      "keyEnv": "GROQ_API_KEY"
+    }
+  },
+  "ssh": [
+    {
+      "name": "web1",
+      "host": "web1.example.com",
+      "allow": ["uptime", "df -h"],
+      "review": {
+        "reviewer": "groq",
+        "policy": "read-only diagnostics, no restarts, no file contents",
+        "accept": ["sure"]
+      }
+    }
+  ],
+  "local": [
+    {
+      "name": "infra",
+      "cwd": "~/projects/infra",
+      "allow": ["git status"],
+      "review": { "reviewer": "groq", "policy": "read-only", "programs": ["ls", "wc"] }
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `reviewers.<name>.baseUrl` | `https://`, or `http://` for localhost only. |
+| `reviewers.<name>.model` | The model id. |
+| `reviewers.<name>.keyEnv` | Optional. The environment variable that holds the API key when you run `ksproxy start`. It may not be a variable the session needs (`PATH`, `HOME`, `SSH_*` and similar). It is removed from the environment of every program the session starts. |
+| `reviewers.<name>.timeoutSeconds`, `maxCalls` | Optional. Defaults 10 and 200 calls per session. Failed calls count. |
+| `review.reviewer` | A name from `reviewers`. |
+| `review.policy` | What the agent may do, in plain words. Up to 1000 characters. |
+| `review.accept` | Optional. `sure`, `likely` or both. Default `["sure"]`. |
+| `review.programs` | Local targets only, required there. The programs the model may approve. |
+
+How a command is handled:
+
+1. Fixed refusals and your `allow` rules run first. A match runs the command and the model is not asked.
+2. If no rule matches and the target has `review`, ksproxy checks that the command may be reviewed at all. If not, it is refused, and the refusal says why it was not reviewed.
+3. The model answers allow or refuse, and how certain it is: sure, likely or unsure. The command runs only on allow with a certainty listed in `accept`.
+4. Anything else is a refusal: a timeout, a bad answer, a missing key, a spent call budget, a review service that does not answer.
+
+What is never sent to the model:
+
+| Target | Not reviewed |
+|---|---|
+| All | A word with a space or a double quote, or longer than 200 characters. |
+| ssh | A first word with `=`, such as `VAR=x uptime`. |
+| kubernetes | Any verb that is not a read verb (`get`, `describe`, `logs` and similar). |
+| local | A program that is not in `programs`, a flag with a value (`--format=x`), a path outside the folder. |
+
+Put such a command on the allow list if you need it.
+
+The key is read only from the environment of `ksproxy start`. It is never written to a file or a log. A reviewed call in the log:
+
+```
+14:02:11 ssh  web1       ok       0.4s journalctl -u k3s -n 50  (model: read-only log view)
+14:02:40 ssh  web1       DENIED        systemctl restart k3s  [model refused: restarts a service]
+14:03:30 ssh  web1       DENIED        ps aux  [review failed: reviewer timed out]
+```
+
+### What review cannot do
+
+- The model judges the words of a command, not what it does. `cat notes.txt` looks harmless even when the file holds a password.
+- The agent writes the command, so it can try to make a harmful one look harmless. Keep write commands on the allow list.
+- The command, the policy and the target name go to the provider. Output and credentials do not. A local model avoids even that.
+- On a local target the model decides which flags are fine. Do not list a program that starts other programs or writes outside the folder: `find`, `xargs`, `env`, `make`, `git`, interpreters.
+- The model's reason is not in the tool's reply, but it is in the audit log. An agent that can read ksproxy's state folder can read it there.
+- A reviewer on `localhost` is whatever program listens on that port.
+
+Every check, message and limit is in [docs/MODEL-REVIEW.md](docs/MODEL-REVIEW.md).
 
 ## What Kubernetes commands are available
 
@@ -149,33 +269,45 @@ The kubectl gate is an allowlist: a verb, flag or spelling that is not on a buil
 
 ## Local targets
 
-A `local` target lets the agent run allowlisted commands on this machine, in the folder named by `cwd`, through the `local_exec` tool. It is the riskiest kind: the command runs as you, on the machine that holds your keys. Every call goes through these steps, in this order, and the first one that fails refuses the call:
+A `local` target lets the agent run a short list of commands in one folder on your own machine, through the `local_exec` tool.
 
-1. **Plain words only.** The command is tokenised exactly as for ssh: at most 4096 bytes, split on spaces and tabs, every character one of `A-Z a-z 0-9 _ @ % + = : , . / -`, and the first token may not start with `-`. No quotes, `~`, `$`, pipes, redirects or other shell syntax can get through. The program is started directly with an argument list; no shell is ever involved.
-2. **A wildcard matches plain names and paths only, never a flag.** Both `*` and `...` match arguments that are a plain name or relative path: letters, digits and `_ . / -`, not starting with `-` (`a.txt`, `sub/b.txt`, `main..dev`, `20`, `.`). Everything else is refused with `not a plain argument`: every flag (`-l`, `--oneline`, `--since=2.days`, `-C`, `--upload-pack=sh`), an absolute path, `@`, `%`, `+`, `:`, `,` or `=` inside a positional, `--`, `-`, a `file:` URL. A flag is how a program is told to do something else (`git -C sub` changes the folder that later arguments resolve against; `--upload-pack=sh` names a program to run), so every flag the agent may use must be written literally into the rule: `ls -l ...`, `git log --oneline -n * ...`. A literal token is your own choice and is not checked (a rule such as `curl -d@/etc/hosts *` allows exactly what it says).
-3. **Every plain value is checked.** The plain argument may not contain a `..` segment. Empty and `.` segments are dropped first (`a/./b` and `a//b` mean `a/b`; a trailing slash disappears, so `link/` is judged as `link`, not as a missing path under it; `.` and `./` name the folder itself). A plain argument longer than 512 bytes is refused (`argument too long`) before anything is joined. The result is joined to the real path of `cwd` (a folder is at most 400 bytes, see below), so the path the checks examine is never longer than the path the program opens; a joined path above 1000 bytes is refused with the same message as a backstop. The joined path is resolved so that links are followed in the order the system follows them (an existing path by its real path; a missing one by its nearest existing parent). A path that cannot be resolved is refused as `unresolvable link` (a dangling link, a loop or too many links), and one that cannot be examined is refused as `cannot be examined` (a name too long for the system, a folder you may not search). Only "does not exist" and "a file is in the way" let the check look at the nearest existing parent instead. A path that goes through a symbolic link into `/proc`, `/dev` or `/sys` is refused (`system link`), because such a link can resolve differently in ksproxy and in the command it starts. Neither the path nor its real path may be, contain or lie inside a protected location (`ksproxy files`): the ksproxy state folder, its configuration folder (each as recorded by `ksproxy start`, as written and by real path, letter case ignored on macOS and Windows) or any kubeconfig file named in your inventory. The real path must also be inside the real path of `cwd`; there is no switch that allows paths outside it. To let the agent read one file outside the folder, write it literally into a rule (`cat /etc/hosts`), which allows exactly that command. On macOS a real path is compared without a leading `/System/Volumes/Data` component, so both spellings of one file are the same file. When several rules match loosely, the refusal the agent sees is the most informative one, not `not a plain argument` when another reason exists.
-4. **The program names itself.** The first token is the program. Every allow rule of a local target must start with a literal program name (never `*` or `...`), so the program is always chosen by you and is exempt from the path checks: `venv/bin/python`, a link to a system interpreter, keeps working.
-5. **The allowlist.** The tokens must match one of the target's rules, as described under "Allowlist rules", in order. The first rule that matches and whose wildcard arguments pass the checks above allows the call; if a rule matches but its wildcard arguments are refused, the next rule is tried, and when none allows it the most useful refusal is reported (a specific reason rather than `not a plain argument`). `"any"` is refused here too, in case a session file was edited.
+It is the riskiest kind of target: the command runs as you, on the machine that holds your keys. Keep its allow list short.
 
-Folders that cannot be a local target: when `start` opens the target (and in `ksproxy check local`, and again on every call, against the protected locations recorded by `start`) the real path of `cwd` must not be the filesystem root, your home directory or a parent of it (`folder is too broad: pick a project folder, not <cwd>`), nor equal, contain or lie inside ksproxy's state folder or configuration folder (`folder overlaps ksproxy's own files`), nor contain any kubeconfig file named in your inventory (`folder contains a kubeconfig named in the inventory`), it must be resolvable and may not go through a link into `/proc`, `/dev` or `/sys` (`folder cannot be resolved`), and its real path may be at most 400 bytes (`folder path is too long`). Such a target is `SKIPPED`, with those messages, or with `folder not found` or `not a directory`. The agent is not told which of them applies, only that the folder is not acceptable and that you can run `ksproxy check local <name>`; that command, like `start`, shows you the detailed message. `ksproxy check local` applies the same checks and the same protected kubeconfigs as a live session.
+```json
+{ "name": "infra", "cwd": "~/projects/infra", "allow": ["git status", "ls -l ...", "cat *"], "protect": ["secrets"] }
+```
 
-The program runs with `cwd` as its working folder and with only the minimal environment (`PATH`, `HOME`, `LANG`, `LC_ALL` and `TMPDIR`). Its `PATH` is built from the `PATH` that `ksproxy start` had, keeping only the absolute entries that are not inside the folder of any local target of the session: relative and empty entries (which would resolve against the folder), and entries that lie in a local target's folder or that a link leads into one, are dropped; if nothing is left it is `/usr/bin:/bin`. So a file named `git` in the folder is never the `git` that runs, but a rule that names a program with a slash (`./run.sh`, `venv/bin/python`) runs exactly that file. No `KSPROXY_*` variable and nothing else from your environment reaches the program. The folder and the state folder are replaced in the output by `<folder>` and `<ksproxy>`, as configured, as resolved and as the system spells it, and on macOS and Windows whatever the letter case; a path is replaced only where no letter, digit, `_`, `.` or `-` follows it (a folder `/work/app` is not replaced inside `/work/apple` or `/work/app.log`); a path cut in two by the 256 KiB output limit may be only partly replaced. `list_targets` never shows `cwd`. If the folder disappears the health check logs `DOWN` with `folder is gone`, and `UP` with `folder is back` when it returns.
+### What is checked on every call
 
-The honest limits:
+| Check | What it means |
+|---|---|
+| No shell | Only plain words get through: no quotes, pipes, redirects, `$` or `~`. The program is started directly. |
+| You choose the program | Every rule starts with a program name that you wrote. |
+| You choose the flags | `*` and `...` match plain names and relative paths only, never a flag. Write each flag into the rule: `ls -l ...`. |
+| Paths stay in the folder | A path matched by a wildcard may not contain `..`. Links are followed first, and the result must be inside `cwd`. |
+| Secrets stay closed | Neither a wildcard nor an argument sent to the model reviewer may name a path you listed in `protect`, or a name that usually holds secrets (`.env`, key files, `terraform.tfstate`). |
+| ksproxy's files are off limits | Its state and configuration folders, and the kubeconfig files in your inventory, can never be reached. |
+| Small environment | The program gets only `PATH`, `HOME`, `LANG`, `LC_ALL` and `TMPDIR`. A file in the folder never replaces a system program of the same name. |
 
-- **The check sees arguments, not what a program opens by itself.** A program can still read other files through its own configuration, includes, environment variables (including `HOME`) or a file whose content names another file. Allow only programs you would run on that folder yourself.
-- **A flag you write into a rule is your choice**, including one that runs a command or changes directory. Allow only programs and flags you would run on that folder yourself.
-- **A recursive program reads everything in the folder.** `grep -r`, `ls -R` and the like, given the folder or a directory, walk all of it; only the argument is checked, not what the program finds below it. A recursive program that follows links (`grep -R`, `ls -L`, `find -L`) also leaves the folder through links inside it.
-- **Letter case on macOS.** The folder check treats names that differ only in letter case as the same, as on the default case-insensitive volume; on a case-sensitive volume this can make it refuse a path that is really elsewhere, or treat two different names as one.
-- **Hard links inside the folder cannot be detected.** A hard link to a file elsewhere looks like any other file in the folder.
-- **A file can change between the check and the program opening it** if something else with local write access is racing it; such a process is already outside this tool's protection.
-- **A literal in a rule is exempt**, so a rule such as `curl -d@/etc/hosts *` allows exactly what it says.
-- **Some programs execute code they find in the folder or in your home configuration.** `git` runs configured helpers and hooks, `terraform plan` runs external data sources, and `make`, `npm` and similar run scripts. Allowing such a program lets whatever is in the folder run as you.
-- **A rule that lets the agent write files in the folder, combined with a rule that runs something from the folder, lets the agent run its own code.** For example `tee ...` plus `./run.sh`, or a `git` rule plus a writable `.git/hooks`.
-- **A program that detaches from its process group (`setsid`) survives the timeout kill.** The timeout stops the program and its children in the same group, not one that left it.
-- **Protected locations are those recorded by `ksproxy start`**, not whatever the agent host's environment says: ksproxy's own state and configuration folders and every kubeconfig of the inventory. If you later move one of these, start a new session.
+The first check that fails refuses the call, with a short reason in the log.
 
-`"any"` is refused for local targets on purpose; list the commands.
+### Good to know
+
+- **Folders that cannot be a target:** the filesystem root, your home directory or a parent of it, ksproxy's own folders, and a folder that contains a kubeconfig from your inventory. Such a target is `SKIPPED`; `ksproxy check local <name>` tells you why.
+- **One file outside the folder:** write it into a rule as it is, for example `cat /etc/hosts`. That allows exactly that command.
+- **To open one secret-looking file anyway:** write it into a rule as it is, for example `cat .env.production`. `.env.example`, `.env.sample`, `.env.template` and `.env.dist` are not treated as secrets.
+- **`"allow": "any"` is refused** for local targets. List the commands.
+
+### What the checks cannot do
+
+- They see the arguments, not what a program opens by itself through its own configuration or includes.
+- A recursive command (`grep -r`, `ls -R`) reads the whole folder, and one that follows links can leave it.
+- The secret name check looks only at the argument's own path. `grep -r x .` still reads a secret-looking file below it unless that file is in `protect`. `git diff` and `git log -p` print a tracked secret without naming it. Output is not scrubbed.
+- Some programs run code they find in the folder: `git` hooks, `make`, `npm` scripts, `terraform plan`.
+- A rule that writes files, together with a rule that runs a file from the folder, lets the agent run its own code.
+- Whatever you write literally in a rule is allowed exactly as written.
+
+Allow only programs and flags you would run on that folder yourself. The exact rules, limits and refusal messages are in [docs/LOCAL-TARGETS.md](docs/LOCAL-TARGETS.md).
 
 ## Session folder
 
@@ -188,9 +320,14 @@ The honest limits:
 | `kubeconfig` | credential-free kubeconfig pointing at the local proxy ports |
 | `AGENT.md` | what the agent may use and what is off limits |
 | `mcp.json` | the MCP config block |
-| `audit.log` | JSON lines, one per call, `list_targets` call and session event (kept after exit; see "The log") |
-| `audit.log.1` | the previous `audit.log`, kept when that file grew past 5 MiB before a `start` |
 | `kube-<name>.log` | `kubectl proxy` output |
+
+The audit log is not in the session folder. It sits in `~/.ksproxy/logs/` (mode 0700), which `start` creates and `ksproxy mcp` only writes to:
+
+| File | Content |
+|---|---|
+| `audit.log` | JSON lines, one per call, `list_targets` call and session event (kept after exit; see "The log") |
+| `audit-YYYYMMDD-HHMMSS.log` | an earlier `audit.log`, renamed when it grew past 5 MiB (UTC time; `-2`, `-3` if the name is taken); the newest 5 are kept |
 
 Next to the sockets (`~/.ksproxy/s/`), `start` keeps `kube-<name>.pid` for each proxy process (pid and start time), so a later `start` can stop a proxy left by a killed run.
 
@@ -231,10 +368,11 @@ Columns, one space apart: local time, kind (`ssh`, `kube`, `loc`, `--`), target 
 | `DENIED` | a refused call, with the short reason |
 | `OPENING` `UP` `SKIPPED` `WARN` | a target opening, open, not opened (a local target says `folder not found: <cwd>`, `not a directory: <cwd>`, `folder is too broad: ...`, `folder overlaps ksproxy's own files`, `folder contains a kubeconfig named in the inventory` or `folder cannot be resolved`), or opened with a warning (empty allowlist, token rejected, cluster not answering) |
 | `DOWN` `UP` | the health check found an open target gone, then back |
+| `REVIEW` | a target uses model review: `reviewer NAME, accepts LEVELS` |
 | `LIST` | the agent called `list_targets` |
 | `READY` `CLOSING` `CLOSED` | the session is ready; why it is closing (`Ctrl-C`, `terminal closed`, `terminated`, `output closed`, `error: ...`); and how many calls it served |
 
-Lifecycle lines go to stderr, except `READY`, which goes to stdout with the call lines. When the stream is a terminal, `NO_COLOR` is unset and `TERM` is not `dumb`, the status word is coloured: green `ok` `UP` `READY`, yellow `exit N` `TIMEOUT` `ERROR` `WARN` `SKIPPED`, red `DENIED` `DOWN`. Nothing else is coloured. With `--verbose` an allowed call ends with `  (rule: <rule>, out <n>B, err <n>B)`.
+Lifecycle lines go to stderr, except `READY`, which goes to stdout with the call lines. When the stream is a terminal, `NO_COLOR` is unset and `TERM` is not `dumb`, the status word is coloured: green `ok` `UP` `READY` `REVIEW`, yellow `exit N` `TIMEOUT` `ERROR` `WARN` `SKIPPED`, red `DENIED` `DOWN`. Nothing else is coloured. With `--verbose` an allowed call ends with `  (rule: <rule>, out <n>B, err <n>B)`.
 
 Every 30 seconds `start` checks each open target (override in milliseconds with `KSPROXY_HEALTH_MS`, minimum 200) and logs `DOWN` when one that was up is not, and `UP` when it returns.
 
@@ -242,23 +380,23 @@ Every 30 seconds `start` checks each open target (override in milliseconds with 
 
 | `event` | Other fields |
 |---|---|
-| `call` | `tool`, `kind`, `target`, `command` or `args`, `decision`; when refused `reason` and `short`; when run `rule`, `exitCode`, `timedOut`, `spawnError`, `durationMs`, `stdoutBytes`, `stderrBytes` |
+| `call` | `tool`, `kind`, `target`, `command` or `args`, `decision`; when refused `reason` and `short`; when run `rule` (`review` when a model approved it, with `review.certainty` and `review.reason`), `exitCode`, `timedOut`, `spawnError`, `durationMs`, `stdoutBytes`, `stderrBytes` |
 | `list` | none |
-| `target_opening`, `target_up`, `target_skipped`, `target_warn`, `target_down`, `target_recovered` | `kind`, `target`, `message` |
+| `target_opening`, `target_up`, `target_skipped`, `target_warn`, `target_review`, `target_down`, `target_recovered` | `kind`, `target`, `message` |
 | `session_start` | `pid`, `targets` (`kind`, `name`, `state`), `message` |
 | `session_closing` | `message` (why) |
 | `session_end` | `ok`, `failed`, `denied`, `message` |
 
-An entry without `event` (from an older version) is read as a call. When `audit.log` is larger than 5 MiB at the start of a session it is renamed to `audit.log.1`, replacing any older one.
+An entry without `event` (from an older version) is read as a call. `ksproxy start` renames `audit.log` to `audit-YYYYMMDD-HHMMSS.log` when it is larger than 5 MiB, at the start of a session and during one. The 5 newest old files are kept and older ones are deleted, so the log folder holds about 30 MiB at most. The files of version 0.1.0 (`audit.log` and `audit.log.1` in the session folder) are moved into the logs folder at the next `start`.
 
-`ksproxy log` prints the last 50 entries; `-n N` (1 to 5000) changes the count, `--denied` keeps only refused calls, and `--json` prints the raw lines (with control and bidirectional characters escaped, so each line is still valid JSON). It always includes the verbose detail. With no log it prints `no log yet`.
+`ksproxy log` prints the last 50 entries; `-n N` (1 to 5000) changes the count, `--denied` keeps only refused calls, and `--json` prints the raw lines (with control and bidirectional characters escaped, so each line is still valid JSON). It reads on into the old files, newest first, when the current file has fewer entries than `-n`. It always includes the verbose detail. With no log it prints `no log yet`.
 
 ## Security model and limits
 
 The allowlist is a second lock; the first is that the agent never holds a credential. You open the connections; the agent can only use sockets and proxy ports through the MCP server. What this does not do:
 
 - **A local command runs as you, on the machine that holds your keys.** Give local targets the shortest allow list of all.
-- **The "inside the folder" check looks at arguments only.** A wildcard in a local rule matches only plain names and paths, never a flag (flags and anything else must be written literally in the rule), each plain value is resolved with links followed and must stay in the folder, rules must name the program, and the root, your home directory, its parents and ksproxy's own folders cannot be local targets. But a program can still read elsewhere through its own configuration, includes, environment or a file whose content names another file; hard links inside the folder cannot be detected; a file can change between the check and the program opening it; a literal in a rule is exempt, including a flag that runs a command; a recursive program reads everything in the folder, and one that follows links (`-R`, `-L`) leaves it through links inside it; on a case-sensitive volume on macOS, names that differ only in letter case are treated as the same; some programs (`git`, `terraform plan`, `make`, `npm`) execute code they find in the folder or in your home configuration; a rule that writes files in the folder together with a rule that runs something from it lets the agent run its own code; and a program that leaves its process group survives the timeout. Allow only programs and flags you would run on that folder yourself. Protected locations are the ones `ksproxy start` recorded, and programs are found through the absolute `PATH` entries outside the folder. See "Local targets".
+- **The folder check for local targets looks at arguments only.** A program can still read other files by itself, and some programs run code they find in the folder. See "Local targets".
 - **`"any"` is refused for local targets on purpose.** A local target always lists its commands.
 - **The allowlist binds the MCP path only.** The sockets and proxy ports belong to you, so an agent that also has an unrestricted local shell can call `ssh -S <sock>` or `curl 127.0.0.1:<port>` directly.
 - **An agent that can edit the inventory or session files can widen its own rules.** Same exposure.

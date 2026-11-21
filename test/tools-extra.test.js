@@ -20,6 +20,7 @@ before(() => {
   base = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-tlx-')));
   sessionDir = path.join(base, 'session');
   fs.mkdirSync(path.join(base, 's'));
+  fs.mkdirSync(path.join(base, 'logs'));
   fs.mkdirSync(sessionDir);
   fs.writeFileSync(path.join(sessionDir, 'ssh_config'), '');
   fs.writeFileSync(path.join(base, 's', 'ssh-web1'), '');
@@ -45,7 +46,7 @@ after(() => {
 });
 
 function auditEntries() {
-  const file = path.join(sessionDir, 'audit.log');
+  const file = path.join(base, 'logs', 'audit.log');
   if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) return [];
   return fs.readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
 }
@@ -117,7 +118,7 @@ test('a log that cannot be written is reported on stderr and the call still succ
   try {
     const session = path.join(dir, 'session');
     fs.mkdirSync(session);
-    fs.mkdirSync(path.join(session, 'audit.log'));
+    fs.mkdirSync(path.join(dir, 'logs', 'audit.log'), { recursive: true });
     writeSession(session, {
       version: 1, pid: process.pid, startedAt: 'x', targets: [],
     });
@@ -127,6 +128,26 @@ test('a log that cannot be written is reported on stderr and the call still succ
     assert.equal(r.isError, false);
     assert.equal(messages.length, 1);
     assert.match(messages[0], /^ksproxy: could not write audit log: .*EISDIR/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the MCP side never creates the logs folder: a missing one is reported and the call still succeeds', async () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-tlx3-')));
+  try {
+    const session = path.join(dir, 'session');
+    fs.mkdirSync(session);
+    writeSession(session, {
+      version: 1, pid: process.pid, startedAt: 'x', targets: [],
+    });
+    const messages = [];
+    const stderr = { write: (text) => { messages.push(text); } };
+    const r = await callTool('list_targets', {}, { ...process.env, KSPROXY_STATE_DIR: dir }, { stderr });
+    assert.equal(r.isError, false);
+    assert.equal(messages.length, 1);
+    assert.match(messages[0], /^ksproxy: could not write audit log: .*ENOENT/);
+    assert.ok(!fs.existsSync(path.join(dir, 'logs')));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

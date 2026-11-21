@@ -31,5 +31,9 @@ These are documented limits in the README, not vulnerabilities:
 - Command output is returned as-is. Replacing local paths and proxy addresses in the output is not redaction.
 - The remote user's permissions and Kubernetes RBAC remain the boundary. Workloads the identity may create or change, such as a Pod that mounts a Secret or a service-account token, are not inspected.
 - `"allow": "any"` on an ssh target sends the command as written.
+- The secret checks of a local target look at arguments and names only. A program that reads files by itself, or a secret under an ordinary name, is not covered.
+- Model review judges the words of a command, not what it does. An agent can try to word a harmful command so that it reads as harmless.
+- A program that can write to ksproxy's state folder can impersonate the review service, as it can edit the session files there.
+- A reviewer on `localhost` is whatever program listens on that port. If your model server is not running, another local program can answer in its place and receives the key if `keyEnv` is set.
 - Connections and proxies can outlive a process killed with SIGKILL until the next `ksproxy start`.
 - Creating server users, sudoers rules, RBAC, tokens or kubeconfigs, file transfer, interactive shells, and Windows are out of scope for the tool.

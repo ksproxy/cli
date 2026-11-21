@@ -177,3 +177,10 @@ test('decide returns a short reason next to the unchanged long one', () => {
   assert.equal(empty.reason, 'the allowlist for this target is empty, so every command is refused');
   assert.equal('short' in decide(['df', '-h'], ['df -h']), false);
 });
+
+test('decide marks a refusal for lack of a matching rule', () => {
+  assert.equal(decide(['x'], ['y']).unmatched, true);
+  assert.equal(decide(['x'], []).unmatched, true);
+  assert.equal(Object.hasOwn(decide(['y'], ['y']), 'unmatched'), false);
+  assert.equal(Object.hasOwn(decide(['y'], 'any'), 'unmatched'), false);
+});

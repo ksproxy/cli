@@ -4,6 +4,8 @@ export function mcpConfig(nodePath, binPath) {
   return { mcpServers: { 'ksproxy': { command: nodePath, args: [binPath, 'mcp'] } } };
 }
 
+const REVIEWED = '- A command that is not on this list is reviewed before it runs and may be refused.';
+
 function sshSection(target) {
   const lines = [
     `### ssh server \`${target.name}\`${target.description ? ` - ${target.description}` : ''}`,
@@ -15,6 +17,10 @@ function sshSection(target) {
     lines.push('- A command is plain words only: letters, digits and `_ @ % + = : , . / -`. No quotes, pipes, redirects, variables or other shell syntax.');
     lines.push('- `*` in a rule matches exactly one argument that does not start with `-`; `...` matches any remaining arguments.');
   }
+  if (target.jumps !== undefined) {
+    lines.push('- This server is reached through a further ssh step that the user set up; your command runs on the final server.');
+  }
+  if (target.review === true) lines.push(REVIEWED);
   return lines.join('\n');
 }
 
@@ -29,13 +35,14 @@ function kubeSection(target) {
     '- kubectl takes the verb first and only a fixed set of flags; any other verb or flag is refused. Output formats are `json`, `yaml`, `wide`, `name`, `jsonpath=...`, `jsonpath-as-json=...` and `custom-columns=...`.',
   ];
   if (target.manifestRoots.length > 0) {
-    lines.push(`- \`-f\` and \`--patch-file\` each take one regular file (not a directory) inside:${target.manifestRoots.join(', ')}`);
+    lines.push(`- \`-f\` and \`--patch-file\` each take one regular file (not a directory) inside: ${target.manifestRoots.join(', ')}`);
   } else {
     lines.push('- File flags (`-f`, `--patch-file`) are refused: this cluster has no manifest folders configured.');
   }
   if (target.state !== 'up') {
     lines.push(`- Connection state is \`${target.state}\`: calls may fail until the user fixes it.`);
   }
+  if (target.review === true) lines.push(REVIEWED);
   return lines.join('\n');
 }
 
@@ -45,6 +52,7 @@ function localSection(target) {
     '',
     `- Tool: \`local_exec\` with \`target: "${target.name}"\``,
     `- Allowed commands: ${describeAllow(target.allow)}`,
+    '- Files that usually hold secrets (such as .env and key files) and paths the user protected are refused unless an allowed command above names the file exactly. Do not look for another way to read them.',
     '- A command is plain words only: letters, digits and `_ @ % + = : , . / -`. No quotes, pipes, redirects, variables or other shell syntax; no shell runs it.',
     '- `*` in a rule matches exactly one plain argument and `...` any number of them: a name or relative path made of letters, digits and `_ . / -`, not starting with `-`. A wildcard never matches a flag (`-n`, `--oneline`, `--flag=value`); flags and anything else are refused unless the user wrote them into a rule literally.',
     '- Every plain argument is resolved with links followed and must stay inside the target\'s folder; `..`, links that lead out and links that cannot be resolved are refused.',
@@ -53,6 +61,9 @@ function localSection(target) {
   ];
   if (target.state !== 'up') {
     lines.push(`- The folder is not available (\`${target.state}\`): calls may fail until the user fixes it.`);
+  }
+  if (target.review === true) {
+    lines.push(`- A command that is not on this list is reviewed before it runs and may be refused. Only these programs can be reviewed: ${target.programs.join(', ')}. Flags must be simple (\`-x\`, \`--word\`), with any value as a separate argument.`);
   }
   return lines.join('\n');
 }

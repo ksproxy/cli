@@ -27,6 +27,14 @@ export function sessionDir(env = process.env) {
   return path.join(stateDir(env), 'session');
 }
 
+export function logDir(env = process.env) {
+  return path.join(stateDir(env), 'logs');
+}
+
+export function auditLogPath(env = process.env) {
+  return path.join(logDir(env), 'audit.log');
+}
+
 export function socketDir(env = process.env) {
   return path.join(stateDir(env), 's');
 }
@@ -37,6 +45,12 @@ export function socketPath(kind, name, env = process.env) {
     throw new Error(`socket path too long (${Buffer.byteLength(p)} bytes, limit 100): ${p}; set KSPROXY_STATE_DIR to a shorter directory`);
   }
   return p;
+}
+
+export const REVIEW_SOCKET_NAME = 'review-sock';
+
+export function reviewSocketPath(env = process.env) {
+  return socketPath('review', 'sock', env);
 }
 
 export function sshBin(env = process.env) {

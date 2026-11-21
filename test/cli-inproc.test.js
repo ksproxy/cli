@@ -120,8 +120,9 @@ test('log arguments are validated', async () => {
 });
 
 function writeLog(dir, entries) {
-  fs.mkdirSync(dir, { recursive: true });
-  for (const entry of entries) appendAudit(path.join(dir, 'audit.log'), entry);
+  const logs = path.join(path.dirname(dir), 'logs');
+  fs.mkdirSync(logs, { recursive: true });
+  for (const entry of entries) appendAudit(path.join(logs, 'audit.log'), entry);
 }
 
 test('log says so when there is no log, and otherwise shows the formatted entries', async () => {
@@ -164,12 +165,12 @@ test('log says so when there is no log, and otherwise shows the formatted entrie
 
 test('log skips a row that cannot be shown and prints the rows around it', async () => {
   const { env, sessionDir } = world();
-  fs.mkdirSync(sessionDir, { recursive: true });
+  fs.mkdirSync(path.join(path.dirname(sessionDir), 'logs'), { recursive: true });
   const good = (command) => JSON.stringify({
     event: 'call', tool: 'ssh_exec', kind: 'ssh', target: 'web1', command, decision: 'allowed', rule: command, exitCode: 0,
   });
   const bad = '{"event":"call","target":{"toString":1,"valueOf":1}}';
-  fs.writeFileSync(path.join(sessionDir, 'audit.log'), `${good('first')}\n${bad}\n${good('second')}\n`);
+  fs.writeFileSync(path.join(path.dirname(sessionDir), 'logs', 'audit.log'), `${good('first')}\n${bad}\n${good('second')}\n`);
   let r = await cli(['log'], env);
   assert.equal(r.code, 0);
   const lines = r.stdout.trim().split('\n');

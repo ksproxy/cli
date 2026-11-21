@@ -51,7 +51,7 @@ test('--local opens a folder, records it in the session with the absolute PATH e
   assert.match(run.proc.stderr.text, /CLOSED +2 calls: 1 ok, 0 failed, 1 denied/);
   assert.equal(fs.existsSync(path.join(world.sessionDir, 'session.json')), false);
   assert.equal(listenerTotal(run.proc), 0);
-  const events = readAuditEntries(path.join(world.sessionDir, 'audit.log')).map(({ entry }) => entry);
+  const events = readAuditEntries(world.auditLog).map(({ entry }) => entry);
   assert.deepEqual(events.find((e) => e.event === 'session_start').targets, [{ kind: 'loc', name: 'infra', state: 'up' }]);
   assert.ok(events.filter((e) => e.event === 'call').every((e) => e.kind === 'loc'));
 });

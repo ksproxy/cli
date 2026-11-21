@@ -207,11 +207,12 @@ test('status shows a loc row, up while the folder exists and down when it is gon
 
 test('log shows a loc call in the standard shape', async () => {
   const { env, sessionDir } = world();
-  fs.mkdirSync(sessionDir, { recursive: true });
-  appendAudit(path.join(sessionDir, 'audit.log'), {
+  const logs = path.join(path.dirname(sessionDir), 'logs');
+  fs.mkdirSync(logs, { recursive: true });
+  appendAudit(path.join(logs, 'audit.log'), {
     event: 'call', tool: 'local_exec', kind: 'loc', target: 'infra', command: 'git status', decision: 'allowed', rule: 'git status', exitCode: 0, durationMs: 120, stdoutBytes: 4, stderrBytes: 0,
   });
-  appendAudit(path.join(sessionDir, 'audit.log'), {
+  appendAudit(path.join(logs, 'audit.log'), {
     event: 'call', tool: 'local_exec', kind: 'loc', target: 'infra', command: 'cat /etc/hosts', decision: 'refused', reason: 'long', short: 'outside the folder',
   });
   const r = await cli(['log'], env);

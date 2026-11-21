@@ -1,6 +1,8 @@
 import fs from 'node:fs';
+import path from 'node:path';
 
 export const MAX_LOG_BYTES = 5 * 1024 * 1024;
+export const ROTATED_KEEP = 5;
 
 export function clip(text, max) {
   const s = String(text);
@@ -25,14 +27,71 @@ export function appendAudit(file, entry) {
   fs.appendFileSync(file, `${line}\n`, { mode: 0o600 });
 }
 
-export function rotateAudit(file, maxBytes = MAX_LOG_BYTES) {
+const ROTATED_NAME = /^audit-(\d{8}-\d{6})(?:-(\d+))?\.log$/;
+
+function stamp(when) {
+  return when.toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '-');
+}
+
+export function rotatedLogs(dir) {
+  let names;
   try {
-    if (fs.statSync(file).size <= maxBytes) return false;
-    fs.renameSync(file, `${file}.1`);
-    return true;
+    names = fs.readdirSync(dir);
   } catch {
-    return false;
+    return [];
   }
+  return names
+    .map((name) => ({ name, match: ROTATED_NAME.exec(name) }))
+    .filter(({ match }) => match !== null)
+    .map(({ name, match }) => ({ name, time: Number(match[1].replace('-', '')), n: Number(match[2] ?? 1) }))
+    .sort((a, b) => (b.time - a.time) || (b.n - a.n))
+    .map(({ name }) => name);
+}
+
+export function moveToRotated(file, dir, when) {
+  const base = `audit-${stamp(when)}`;
+  let target = path.join(dir, `${base}.log`);
+  for (let n = 2; fs.existsSync(target); n += 1) target = path.join(dir, `${base}-${n}.log`);
+  fs.renameSync(file, target);
+  return target;
+}
+
+export function pruneRotated(dir) {
+  for (const name of rotatedLogs(dir).slice(ROTATED_KEEP)) {
+    try {
+      fs.rmSync(path.join(dir, name));
+    } catch {
+      // try the others
+    }
+  }
+}
+
+export function rotateAudit(file, maxBytes = MAX_LOG_BYTES, now = new Date(), afterRename = () => {}) {
+  try {
+    if (fs.statSync(file).size <= maxBytes) return null;
+    const target = moveToRotated(file, path.dirname(file), now);
+    afterRename(target);
+    pruneRotated(path.dirname(file));
+    return target;
+  } catch {
+    return null;
+  }
+}
+
+export function adoptOldLogs(sessionDir, file) {
+  const oldCurrent = path.join(sessionDir, 'audit.log');
+  const oldRotated = path.join(sessionDir, 'audit.log.1');
+  for (const old of [oldRotated, oldCurrent]) {
+    try {
+      const st = fs.lstatSync(old);
+      if (!st.isFile()) continue;
+      if (old === oldCurrent && !fs.existsSync(file)) fs.renameSync(old, file);
+      else moveToRotated(old, path.dirname(file), st.mtime);
+    } catch {
+      // not there, or not movable
+    }
+  }
+  pruneRotated(path.dirname(file));
 }
 
 export function readAuditEntries(file) {
@@ -96,6 +155,7 @@ const LIFECYCLE_STATUS = {
   target_up: 'UP',
   target_skipped: 'SKIPPED',
   target_warn: 'WARN',
+  target_review: 'REVIEW',
   target_down: 'DOWN',
   target_recovered: 'UP',
   session_start: 'READY',
@@ -109,6 +169,7 @@ const STATUS_COLOR = {
   ok: GREEN,
   UP: GREEN,
   READY: GREEN,
+  REVIEW: GREEN,
   TIMEOUT: YELLOW,
   ERROR: YELLOW,
   WARN: YELLOW,
@@ -143,11 +204,14 @@ function callDetail(entry, verbose) {
     const bracket = `[${clip(sanitizeForTerminal(reason), 120)}]`;
     return text === '' ? bracket : `${text}  ${bracket}`;
   }
-  if (!verbose) return text;
+  const model = entry.review !== null && typeof entry.review === 'object'
+    ? `model${entry.review.reason ? `: ${clip(sanitizeForTerminal(entry.review.reason), 120)}` : ''}`
+    : null;
   const parts = [];
-  if (entry.rule !== undefined) parts.push(`rule: ${sanitizeForTerminal(entry.rule)}`);
-  if (Number.isFinite(entry.stdoutBytes)) parts.push(`out ${entry.stdoutBytes}B`);
-  if (Number.isFinite(entry.stderrBytes)) parts.push(`err ${entry.stderrBytes}B`);
+  if (verbose && entry.rule !== undefined) parts.push(`rule: ${sanitizeForTerminal(entry.rule)}`);
+  if (model !== null) parts.push(model);
+  if (verbose && Number.isFinite(entry.stdoutBytes)) parts.push(`out ${entry.stdoutBytes}B`);
+  if (verbose && Number.isFinite(entry.stderrBytes)) parts.push(`err ${entry.stderrBytes}B`);
   return parts.length === 0 ? text : `${text}  (${parts.join(', ')})`;
 }
 

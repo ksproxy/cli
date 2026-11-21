@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   appendAudit, clip, formatAuditLine, formatDuration, formatLogLine, logOptionsFor,
-  readAuditEntries, rotateAudit, sanitizeForTerminal,
+  readAuditEntries, sanitizeForTerminal,
 } from '../src/audit.js';
 
 const TS = '2026-11-20T12:18:40.000Z';
@@ -81,20 +81,6 @@ test('readAuditEntries skips lines that are not JSON objects', () => {
   fs.writeFileSync(file, '{"a":1}\nnot json\n\n[1]\n"x"\n{"b":2}\n');
   assert.deepEqual(readAuditEntries(file).map((e) => e.entry), [{ a: 1 }, { b: 2 }]);
   assert.deepEqual(readAuditEntries(path.join(dir, 'missing')), []);
-});
-
-test('rotateAudit renames a log larger than the limit and leaves a small one', () => {
-  const dir = fs.mkdtempSync(path.join('/tmp', 'ks-audit-'));
-  const file = path.join(dir, 'audit.log');
-  fs.writeFileSync(`${file}.1`, 'older');
-  fs.writeFileSync(file, Buffer.alloc(1024, 0x61));
-  assert.equal(rotateAudit(file, 1024), false);
-  assert.equal(fs.readFileSync(`${file}.1`, 'utf8'), 'older');
-  fs.appendFileSync(file, 'b');
-  assert.equal(rotateAudit(file, 1024), true);
-  assert.ok(!fs.existsSync(file));
-  assert.equal(fs.statSync(`${file}.1`).size, 1025);
-  assert.equal(rotateAudit(file, 1024), false);
 });
 
 const EXAMPLE_ROWS = [

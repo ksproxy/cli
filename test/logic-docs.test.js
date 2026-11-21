@@ -38,6 +38,30 @@ function exportedNames(source) {
   return [...names];
 }
 
+function topLevelFunctions(source) {
+  const names = new Set();
+  const declaration = /^(?:export\s+)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)\s*\(/gm;
+  for (const match of source.matchAll(declaration)) names.add(match[1]);
+  const arrow = /^(?:export\s+)?const\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>/gm;
+  for (const match of source.matchAll(arrow)) names.add(match[1]);
+  return [...names];
+}
+
+function shortTexts(source) {
+  const texts = new Set();
+  const literal = /\bshort:\s*'([^'\\\n]*)'(?=\s*[,})\n])/g;
+  for (const match of source.matchAll(literal)) texts.add(match[1]);
+  const lastArgument = /\b(?:AllowError|refuse)\([^\n]*,\s*'([^'\\\n]*)'\)/g;
+  for (const match of source.matchAll(lastArgument)) texts.add(match[1]);
+  return [...texts];
+}
+
+function eventNames(source) {
+  const names = new Set();
+  for (const match of source.matchAll(/\bevent:\s*'([A-Za-z_][\w]*)'/g)) names.add(match[1]);
+  return [...names];
+}
+
 function sections(text) {
   const heads = [...text.matchAll(/^## (.+)$/gm)];
   return heads.map((head, i) => ({
@@ -160,6 +184,42 @@ test('every exported name appears in its file section', () => {
     }
   }
   assert.deepEqual(missing, []);
+});
+
+function missingPerFile(describeMissing) {
+  const byTitle = new Map(sections(doc).map((s) => [s.title, s.body]));
+  const problems = [];
+  for (const file of sourceFiles()) {
+    const body = byTitle.get(file) ?? '';
+    const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
+    const missing = describeMissing(source, body);
+    if (missing.items.length > 0) problems.push(`${file}: ${missing.what}: ${missing.items.join(' | ')}`);
+  }
+  return problems;
+}
+
+test('every top-level function is named in its file section', () => {
+  const problems = missingPerFile((source, body) => ({
+    what: 'functions not named in the section',
+    items: topLevelFunctions(source).filter((name) => !wholeWord(name).test(body)),
+  }));
+  assert.deepEqual(problems, []);
+});
+
+test('every short refusal text appears verbatim in its file section', () => {
+  const problems = missingPerFile((source, body) => ({
+    what: 'short texts missing from the section (add them to a "Short reasons in the log" table)',
+    items: shortTexts(source).filter((text) => !body.includes(text)),
+  }));
+  assert.deepEqual(problems, []);
+});
+
+test('every lifecycle or audit event name appears in its file section', () => {
+  const problems = missingPerFile((source, body) => ({
+    what: 'event names not named in the section',
+    items: eventNames(source).filter((name) => !wholeWord(name).test(body)),
+  }));
+  assert.deepEqual(problems, []);
 });
 
 test('the document has no section for a source file that does not exist', () => {

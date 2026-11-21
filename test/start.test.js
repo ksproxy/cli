@@ -112,6 +112,8 @@ async function setup(extraEnv = {}) {
     env,
     proxyPort,
     sessionDir: path.join(base, 'st', 'session'),
+    logDir: path.join(base, 'st', 'logs'),
+    auditLog: path.join(base, 'st', 'logs', 'audit.log'),
     sockets: [path.join(base, 'st', 's', 'ssh-web1'), path.join(base, 'st', 's', 'tun-lab')],
   };
 }
@@ -214,7 +216,7 @@ test('start --all opens the targets, serves the session and shuts down cleanly',
     assert.ok(!fs.existsSync(sessionFile));
     for (const socket of s.sockets) assert.ok(!fs.existsSync(socket), socket);
     assert.equal(await portListening(s.proxyPort), false);
-    assert.ok(fs.existsSync(path.join(s.sessionDir, 'audit.log')));
+    assert.ok(fs.existsSync(s.auditLog));
     assert.match(run.out.stderr, /^\d\d:\d\d:\d\d -- {3}session {4}CLOSING {9}Ctrl-C$/m);
     assert.match(run.out.stderr, /^\d\d:\d\d:\d\d -- {3}session {4}CLOSED {10}2 calls: 1 ok, 0 failed, 1 denied$/m);
   } finally {
@@ -246,7 +248,8 @@ test('a stale session is cleaned up and replaced', async () => {
   fs.mkdirSync(path.dirname(s.sockets[0]), { recursive: true });
   fs.writeFileSync(path.join(s.sessionDir, 'session.json'), JSON.stringify({ version: 1, pid: 2 ** 22 + 54321, targets: [] }));
   fs.writeFileSync(path.join(s.sessionDir, 'old.log'), 'x');
-  fs.writeFileSync(path.join(s.sessionDir, 'audit.log'), '{"ts":"2026-01-01T00:00:00.000Z"}\n');
+  fs.mkdirSync(s.logDir, { recursive: true });
+  fs.writeFileSync(s.auditLog, '{"ts":"2026-01-01T00:00:00.000Z"}\n');
   fs.writeFileSync(s.sockets[0], '');
   const run = launch(['--ssh', 'web1'], s.env);
   try {
@@ -255,7 +258,7 @@ test('a stale session is cleaned up and replaced', async () => {
     assert.equal(session.pid, run.child.pid);
     assert.deepEqual(session.targets.map((t) => t.name), ['web1']);
     assert.ok(!fs.existsSync(path.join(s.sessionDir, 'old.log')));
-    assert.ok(fs.readFileSync(path.join(s.sessionDir, 'audit.log'), 'utf8').includes('2026-01-01'));
+    assert.ok(fs.readFileSync(s.auditLog, 'utf8').includes('2026-01-01'));
     assert.ok(!run.out.stdout.includes('2026-01-01'), 'old audit lines are not replayed');
     run.child.kill('SIGINT');
     assert.equal((await finished(run, 10000)).code, 0);
@@ -413,7 +416,7 @@ test('a write error on stdout shuts start down and cleans up', async () => {
     const result = await finished(run, 10000);
     assert.equal(result.signal, null);
     assert.match(run.out.stderr, /^\d\d:\d\d:\d\d -- {3}session {4}CLOSING {9}output closed$/m);
-    const logged = fs.readFileSync(path.join(s.sessionDir, 'audit.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const logged = fs.readFileSync(s.auditLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
     assert.equal(logged.find((e) => e.event === 'session_closing').message, 'output closed');
     assert.equal(logged[logged.length - 1].event, 'session_end');
     assert.ok(!fs.existsSync(path.join(s.sessionDir, 'session.json')));
@@ -463,8 +466,8 @@ test('after a hard kill the next start reaps the leftover proxy', async () => {
   }
 });
 
-function auditEntries(sessionDir) {
-  return fs.readFileSync(path.join(sessionDir, 'audit.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+function auditEntries(auditLog) {
+  return fs.readFileSync(auditLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
 }
 
 function setAllow(s, ssh, kube = ['get ...']) {
@@ -524,7 +527,7 @@ test('one session prints the standard lines, reports DOWN and UP, and closes wit
     assert.match(lines[lines.length - 1], /^\d\d:\d\d:\d\d -- {3}session {4}CLOSED {10}2 calls: 1 ok, 0 failed, 1 denied$/);
     assert.ok(!run.out.stdout.includes('CLOSING'));
 
-    const entries = auditEntries(s.sessionDir);
+    const entries = auditEntries(s.auditLog);
     const events = entries.map((e) => e.event);
     assert.deepEqual(events.filter((e) => e !== 'call'), [
       'target_opening', 'target_up', 'target_opening', 'target_up', 'session_start',
@@ -547,7 +550,7 @@ test('one session prints the standard lines, reports DOWN and UP, and closes wit
     assert.equal(ended.failed, 0);
     assert.equal(ended.denied, 1);
     assert.equal(ended.message, '2 calls: 1 ok, 0 failed, 1 denied');
-    assert.equal(fs.statSync(path.join(s.sessionDir, 'audit.log')).mode & 0o777, 0o600);
+    assert.equal(fs.statSync(s.auditLog).mode & 0o777, 0o600);
   } finally {
     await stop(run);
   }
@@ -620,7 +623,7 @@ test('kube states that are not up are reported as WARN lines, an empty allowlist
       assert.match(run.out.stderr, pattern);
       assert.match(run.out.stderr, /^\d\d:\d\d:\d\d kube lab {8}WARN {12}allowlist is empty, every command will be refused$/m);
       assert.ok(!/kube lab {8}UP$/m.test(run.out.stderr));
-      assert.equal(auditEntries(s.sessionDir).find((e) => e.event === 'session_start').targets[0].state, status === '401' ? 'auth' : 'fail');
+      assert.equal(auditEntries(s.auditLog).find((e) => e.event === 'session_start').targets[0].state, status === '401' ? 'auth' : 'fail');
       run.child.kill('SIGINT');
       assert.equal((await finished(run, 10000)).code, 0);
     } finally {
@@ -645,25 +648,27 @@ test('an ssh target with an empty allowlist warns before it opens', async () => 
   }
 });
 
-test('a log larger than 5 MiB is rotated to audit.log.1 when start begins, and that file is kept', async () => {
+test('a log larger than 5 MiB is rotated to a stamped file when start begins, and that file is kept', async () => {
   const s = await setup();
-  fs.mkdirSync(s.sessionDir, { recursive: true });
-  const big = path.join(s.sessionDir, 'audit.log');
-  fs.writeFileSync(`${big}.1`, 'older');
+  fs.mkdirSync(s.logDir, { recursive: true });
+  const rotated = () => fs.readdirSync(s.logDir).filter((n) => /^audit-\d{8}-\d{6}\.log$/.test(n));
+  const big = path.join(s.logDir, 'audit.log');
   fs.writeFileSync(big, Buffer.alloc(6 * 1024 * 1024, 0x20));
   const first = launch(['--ssh', 'web1'], s.env);
   let second = null;
   try {
     await waitFor(() => /READY/.test(first.out.stdout), 15000, 'READY');
-    assert.equal(fs.statSync(`${big}.1`).size, 6 * 1024 * 1024);
+    assert.equal(rotated().length, 1);
+    assert.equal(fs.statSync(path.join(s.logDir, rotated()[0])).size, 6 * 1024 * 1024);
     assert.ok(fs.statSync(big).size < 4096);
-    assert.equal(auditEntries(s.sessionDir)[0].event, 'target_opening');
+    assert.equal(auditEntries(s.auditLog)[0].event, 'target_opening');
     first.child.kill('SIGINT');
     assert.equal((await finished(first, 10000)).code, 0);
 
     second = launch(['--ssh', 'web1'], s.env);
     await waitFor(() => /READY/.test(second.out.stdout), 15000, 'READY again');
-    assert.equal(fs.statSync(`${big}.1`).size, 6 * 1024 * 1024, 'a small log does not rotate and audit.log.1 survives');
+    assert.equal(rotated().length, 1, 'a small log does not rotate and the rotated file survives');
+    assert.equal(fs.statSync(path.join(s.logDir, rotated()[0])).size, 6 * 1024 * 1024);
     second.child.kill('SIGINT');
     assert.equal((await finished(second, 10000)).code, 0);
   } finally {

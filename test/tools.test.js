@@ -22,6 +22,7 @@ before(async () => {
   base = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-tools-')));
   sessionDir = path.join(base, 'session');
   fs.mkdirSync(path.join(base, 's'));
+  fs.mkdirSync(path.join(base, 'logs'));
   fs.mkdirSync(sessionDir, { recursive: true });
   fs.writeFileSync(path.join(sessionDir, 'ssh_config'), '');
   fs.writeFileSync(path.join(sessionDir, 'kubeconfig'), '');
@@ -63,7 +64,7 @@ after(async () => {
 });
 
 function allAuditLines() {
-  const file = path.join(sessionDir, 'audit.log');
+  const file = path.join(base, 'logs', 'audit.log');
   if (!fs.existsSync(file)) return [];
   return fs.readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
 }
@@ -524,5 +525,5 @@ test('list_targets with a live session appends a list entry', async () => {
 test('list_targets without a session writes nothing', async () => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-nolist-')));
   await callTool('list_targets', {}, { ...env, KSPROXY_STATE_DIR: dir });
-  assert.ok(!fs.existsSync(path.join(dir, 'session', 'audit.log')));
+  assert.ok(!fs.existsSync(path.join(dir, 'logs')));
 });

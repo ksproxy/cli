@@ -59,6 +59,11 @@ const VERBS = new Set([
   'cordon', 'uncordon', 'drain', 'taint',
 ]);
 
+export const READ_VERBS = new Set([
+  'get', 'describe', 'logs', 'top', 'explain', 'api-resources', 'api-versions', 'version',
+  'events', 'cluster-info',
+]);
+
 const FLAGS = new Set([
   // scope and selection
   '-n', '--namespace', '-A', '--all-namespaces', '-l', '--selector', '--field-selector', '--all',

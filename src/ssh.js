@@ -1,6 +1,72 @@
 import fs from 'node:fs';
+import { tokenizeSshCommand } from './allowlist.js';
 import { run } from './exec.js';
 import { sshBin } from './paths.js';
+
+export const HOST_RE = /^[A-Za-z0-9][A-Za-z0-9._@-]*$/;
+export const MAX_JUMPS = 5;
+const JUMP_OPTIONS = ['-i', '-p', '-l', '-o', '-J'];
+export const JUMP_SETTINGS = [
+  'Port', 'User', 'IdentityFile', 'IdentitiesOnly', 'StrictHostKeyChecking', 'UserKnownHostsFile', 'HostKeyAlias',
+  'ConnectTimeout', 'AddressFamily', 'LogLevel', 'ServerAliveInterval', 'ServerAliveCountMax', 'ProxyJump', 'Compression',
+  'HostKeyAlgorithms', 'PubkeyAcceptedAlgorithms', 'KexAlgorithms', 'Ciphers', 'MACs', 'PreferredAuthentications',
+];
+const SETTING_RE = /^([^=]+)=(.+)$/;
+
+// A word that zsh may rewrite with a non-default setting: a leading "=", "==" or ":=".
+export function zshEqualsWord(word) {
+  return word.startsWith('=') || word.includes('==') || word.includes(':=');
+}
+
+function checkSetting(value) {
+  const match = SETTING_RE.exec(value);
+  if (match === null) throw new Error('the value of -o must have the form Key=Value');
+  const key = match[1].toLowerCase();
+  if (!JUMP_SETTINGS.some((setting) => setting.toLowerCase() === key)) {
+    throw new Error(`the setting ${match[1]} is not supported in a jump; supported: ${JUMP_SETTINGS.join(' ')}`);
+  }
+}
+
+// Checks the words of one jump and returns its options (flags and values, in order) and its server.
+export function parseJump(words) {
+  if (words[0] !== 'ssh') throw new Error('must start with "ssh"');
+  if (words.some(zshEqualsWord)) throw new Error('a word may not start with "=" or contain "==" or ":="');
+  const options = [];
+  let i = 1;
+  while (i < words.length && words[i].startsWith('-')) {
+    const flag = words[i];
+    if (!JUMP_OPTIONS.includes(flag)) {
+      throw new Error(`option ${flag} is not supported; the supported options are ${JUMP_OPTIONS.join(' ')}, each followed by its value as a separate word; for other settings use -o Key=Value`);
+    }
+    const value = words[i + 1];
+    if (value === undefined) throw new Error(`option ${flag} needs a value`);
+    if (value.startsWith('-')) throw new Error(`the value of ${flag} may not start with "-"`);
+    if (flag === '-o') checkSetting(value);
+    options.push(flag, value);
+    i += 2;
+  }
+  const server = words[i];
+  if (server === undefined) throw new Error('needs a server after the options');
+  if (!HOST_RE.test(server)) throw new Error(`server must match ${HOST_RE} (no leading "-")`);
+  if (i + 1 < words.length) throw new Error('nothing may follow the server; the command comes from the allow list');
+  return { options, server };
+}
+
+// The text that goes before the agent's command: '' without jumps, null when the jumps cannot be used.
+export function jumpPrefix(jumps) {
+  if (jumps === undefined) return '';
+  if (!Array.isArray(jumps) || jumps.length === 0 || jumps.length > MAX_JUMPS) return null;
+  const parts = [];
+  try {
+    for (const jump of jumps) {
+      const { options, server } = parseJump(tokenizeSshCommand(jump));
+      parts.push(['ssh', '-T', '-o', 'BatchMode=yes', ...options, '-o', 'ConnectTimeout=10', server, '--'].join(' '));
+    }
+  } catch {
+    return null;
+  }
+  return parts.join(' ');
+}
 
 export function masterArgs(socket, host, extra = []) {
   return [

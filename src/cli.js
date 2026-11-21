@@ -1,18 +1,18 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  clock, formatLogLine, logOptionsFor, readAuditEntries, sanitizeForTerminal,
+  clock, formatLogLine, logOptionsFor, readAuditEntries, rotatedLogs, sanitizeForTerminal,
 } from './audit.js';
 import { InventoryError, loadInventory, SAMPLE_INVENTORY } from './inventory.js';
 import { localFolderProblem } from './local.js';
 import { serve, SERVER_INFO } from './mcp.js';
 import {
-  configDir, ensureDir, inventoryPath, sessionDir as sessionDirOf, writeFileAtomic,
+  auditLogPath, configDir, ensureDir, inventoryPath, logDir, sessionDir as sessionDirOf, writeFileAtomic,
 } from './paths.js';
 import { liveSession } from './session.js';
 import { start } from './start.js';
 import {
-  decideKube, decideLocal, decideSsh, targetState,
+  decideKube, decideLocal, decideSsh, reviewRoute, targetState,
 } from './tools.js';
 
 const USAGE = `Usage: ksproxy <command>
@@ -101,15 +101,9 @@ function isCall(entry) {
   return entry.event === undefined || entry.event === 'call';
 }
 
-function showLog(options, env, { proc, out }) {
-  const file = path.join(sessionDirOf(env), 'audit.log');
-  if (!fs.existsSync(file)) {
-    out('no log yet');
-    return 0;
-  }
+function logLines(file, options, format) {
   let rows = readAuditEntries(file);
   if (options.denied) rows = rows.filter(({ entry }) => isCall(entry) && entry.decision === 'refused');
-  const format = { ...logOptionsFor(proc.stdout, env), verbose: true };
   const lines = [];
   for (const { entry, raw } of rows) {
     try {
@@ -119,12 +113,39 @@ function showLog(options, env, { proc, out }) {
       // a row that cannot be shown is skipped
     }
   }
+  return lines;
+}
+
+function showLog(options, env, { proc, out }) {
+  const file = auditLogPath(env);
+  const older = rotatedLogs(logDir(env));
+  if (!fs.existsSync(file) && older.length === 0) {
+    out('no log yet');
+    return 0;
+  }
+  const format = { ...logOptionsFor(proc.stdout, env), verbose: true };
+  let lines = logLines(file, options, format);
+  for (const name of older) {
+    if (lines.length >= options.count) break;
+    lines = [...logLines(path.join(logDir(env), name), options, format), ...lines];
+  }
   for (const line of lines.slice(-options.count)) out(line);
   return 0;
 }
 
+// The entries since the session started: the current file, and older files while none of them holds the start.
+function sessionEntries(env) {
+  const read = (file) => readAuditEntries(file).map(({ entry }) => entry);
+  let entries = read(auditLogPath(env));
+  for (const name of rotatedLogs(logDir(env))) {
+    if (entries.some((entry) => entry.event === 'session_start')) break;
+    entries = [...read(path.join(logDir(env), name)), ...entries];
+  }
+  return entries;
+}
+
 function lastCallSummary(env) {
-  const entries = readAuditEntries(path.join(sessionDirOf(env), 'audit.log')).map(({ entry }) => entry);
+  const entries = sessionEntries(env);
   let from = 0;
   entries.forEach((entry, i) => {
     if (entry.event === 'session_start') from = i + 1;
@@ -197,13 +218,24 @@ function check(args, env, ctx) {
       out(`REFUSED: ${problem}`);
       return 1;
     }
-    decision = decideLocal({ ...target, protected: kubeconfigs }, rest.join(' '), env);
+    decision = decideLocal({
+      ...target,
+      protected: kubeconfigs,
+      ...(target.review ? { review: true, programs: target.review.programs } : {}),
+    }, rest.join(' '), env);
   }
   if (decision.allowed) {
     out(`ALLOWED by rule: ${decision.rule}`);
+    if (decision.prefix !== undefined) out(`sent to ${target.host}: ${decision.prefix} ${decision.command}`);
     return 0;
   }
-  out(`REFUSED: ${decision.reason}`);
+  const kind = { ssh: 'ssh', kube: 'kubernetes', local: 'local' }[kindArg];
+  const route = reviewRoute(kind, decision, target.review !== undefined);
+  if (route?.argv) {
+    out(`NOT ON THE ALLOWLIST: a running session asks reviewer "${target.review.reviewer}"`);
+    return 1;
+  }
+  out(`REFUSED: ${decision.reason}${route?.note ? `. ${route.note}` : ''}`);
   return 1;
 }
 

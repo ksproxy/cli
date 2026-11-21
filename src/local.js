@@ -17,6 +17,26 @@ const MAX_VALUE_BYTES = 512;
 const MAX_JOINED_BYTES = 1000;
 const UNRESOLVABLE = ['ENOENT', 'ELOOP'];
 const PSEUDO_ROOTS = ['/proc', '/dev', '/sys'];
+const SECRET_NAMES = new Set([
+  '.env', '.envrc', '.npmrc', '.pypirc', '.netrc', '.pgpass', '.my.cnf', '.git-credentials', '.htpasswd',
+  '.dev.vars', '.vault-token', '.s3cfg', '.terraformrc', 'credentials', 'credentials.json', 'kubeconfig', 'secrets.toml',
+  'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', 'id_ecdsa_sk', 'id_ed25519_sk',
+  '.ssh', '.aws', '.gnupg', '.kube', '.azure',
+]);
+const SECRET_ENDINGS = [
+  '.env', '.pem', '.key', '.p12', '.pfx', '.jks', '.keystore', '.ppk', '.kdbx', '.kubeconfig',
+  '.tfstate', '.tfstate.backup', '.tfvars', '.tfvars.json',
+];
+const ENV_PREFIX = '.env.';
+const ENV_SHARED = ['.example', '.sample', '.template', '.dist'];
+
+// True when one part of a path is a name that usually holds secrets.
+export function looksSecret(name) {
+  const lower = name.toLowerCase();
+  if (SECRET_NAMES.has(lower)) return true;
+  if (lower.startsWith(ENV_PREFIX)) return !ENV_SHARED.some((ending) => lower.endsWith(ending));
+  return SECRET_ENDINGS.some((ending) => lower.endsWith(ending));
+}
 
 export function isInside(child, parent, insensitive = CASE_INSENSITIVE) {
   const c = insensitive ? child.toLowerCase() : child;
@@ -161,12 +181,27 @@ export function protectedPaths(target, env = process.env, platform = process.pla
   return out;
 }
 
-// What one decision needs about the target, worked out once: its real folder and its protected locations.
+// The target's own protect entries inside `folder`, as written and by real path.
+export function guardedPaths(target, folder, platform = process.platform) {
+  const out = [];
+  for (const entry of Array.isArray(target.protect) ? target.protect : []) {
+    if (typeof entry !== 'string' || entry === '') continue;
+    const joined = path.join(folder, entry);
+    out.push(joined);
+    const real = realish(joined, undefined, platform);
+    if (real) out.push(real);
+  }
+  return out;
+}
+
+// What one decision needs about the target, worked out once: its real folder, its protected locations and its protect entries.
 export function localScope(target, env = process.env, platform = process.platform) {
+  const cwdReal = realish(target.cwd, undefined, platform);
   return {
     platform,
-    cwdReal: realish(target.cwd, undefined, platform),
+    cwdReal,
     protectedList: protectedPaths(target, env, platform),
+    guarded: guardedPaths(target, cwdReal ?? target.cwd, platform),
     checked: new Map(),
   };
 }
@@ -210,6 +245,18 @@ export function valueProblem(value, target, env = process.env, scope = localScop
   if (scope.cwdReal === null || !isInside(real, scope.cwdReal)) {
     return { reason: `the argument ${value} points outside this target's folder`, short: 'outside the folder' };
   }
+  for (const guarded of scope.guarded) {
+    if (isInside(resolved, guarded, true) || isInside(real, guarded, true) || isInside(guarded, real, true)) {
+      return {
+        reason: `the argument ${value} is, lies inside or contains a path this target protects`,
+        short: 'protected path',
+      };
+    }
+  }
+  const names = [...simple.split('/'), ...path.relative(scope.cwdReal, real).split(path.sep)];
+  if (names.some(looksSecret)) {
+    return { reason: `the argument ${value} names a file or folder that usually holds secrets`, short: 'secret file' };
+  }
   return null;
 }
 
@@ -220,6 +267,64 @@ export function wildcardProblem(detail, target, env = process.env, scope = local
     if (values === null) {
       return {
         reason: `the argument ${arg} is not a plain name or path; a wildcard in a local rule only matches those. Flags and anything else must be written into the rule literally`,
+        short: 'not a plain argument',
+      };
+    }
+    for (const value of values) {
+      if (!scope.checked.has(value)) scope.checked.set(value, valueProblem(value, target, env, scope));
+      const problem = scope.checked.get(value);
+      if (problem) return problem;
+    }
+  }
+  return null;
+}
+
+const SIMPLE_FLAG = /^--?[A-Za-z0-9][A-Za-z0-9-]*$/;
+
+function isFolder(dir) {
+  try {
+    return fs.statSync(dir).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+// The tails of a simple flag that name an entry in the folder or a protect entry: -oout may mean -o out.
+function gluedValues(flag, scope, target) {
+  const folder = scope.cwdReal ?? target.cwd;
+  const out = [];
+  for (let k = 2; k < flag.length; k += 1) {
+    const tail = flag.slice(k);
+    const joined = path.join(folder, tail);
+    const guards = scope.guarded.some((g) => isInside(g, joined, true) || isInside(joined, g, true));
+    if (!guards) {
+      try {
+        fs.lstatSync(joined);
+      } catch {
+        continue;
+      }
+    }
+    out.push(tail);
+  }
+  return out;
+}
+
+// null when an unlisted command may be sent to the reviewer, else { reason, short }.
+export function reviewProblem(tokens, target, env = process.env, scope = localScope(target, env)) {
+  if (!isFolder(target.cwd)) return { reason: "this target's folder does not exist", short: 'folder missing' };
+  if (!Array.isArray(target.programs) || !target.programs.includes(tokens[0])) {
+    return {
+      reason: `the program ${tokens[0]} is not one the reviewer may approve for this target`,
+      short: 'program not reviewable',
+    };
+  }
+  for (const arg of tokens.slice(1)) {
+    let values = [arg];
+    if (SIMPLE_FLAG.test(arg)) {
+      values = gluedValues(arg, scope, target);
+    } else if (plainValues(arg) === null) {
+      return {
+        reason: `the argument ${arg} is neither a simple flag nor a plain name or path`,
         short: 'not a plain argument',
       };
     }

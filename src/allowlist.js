@@ -101,11 +101,13 @@ export function decide(args, allow) {
       allowed: false,
       reason: 'the allowlist for this target is empty, so every command is refused',
       short: 'allowlist is empty',
+      unmatched: true,
     };
   }
   return {
     allowed: false,
     reason: `not on the allowlist for this target. Allowed: ${describeAllow(allow)}`,
     short: 'not on allowlist',
+    unmatched: true,
   };
 }

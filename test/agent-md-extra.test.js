@@ -45,7 +45,7 @@ test('a cluster with manifest folders lists them and does not say file flags are
       state: 'up',
     }],
   });
-  assert.ok(text.includes('each take one regular file (not a directory) inside:/srv/manifests, /srv/more'));
+  assert.ok(text.includes('each take one regular file (not a directory) inside: /srv/manifests, /srv/more'));
   assert.ok(!text.includes('File flags (`-f`, `--patch-file`) are refused'));
 });
 

@@ -26,6 +26,7 @@ before(() => {
   fs.mkdirSync(cwd);
   fs.mkdirSync(bin);
   fs.mkdirSync(sessionDir, { recursive: true });
+  fs.mkdirSync(path.join(base, 'st', 'logs'));
   fs.writeFileSync(path.join(cwd, 'a.txt'), 'hello a\n');
   script(path.join(cwd, 'probe.js'), [
     "const fs = require('node:fs');",
@@ -76,7 +77,7 @@ after(() => {
 });
 
 function calls() {
-  const file = path.join(sessionDir, 'audit.log');
+  const file = path.join(base, 'st', 'logs', 'audit.log');
   if (!fs.existsSync(file)) return [];
   return fs.readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((l) => l.event === 'call');
 }

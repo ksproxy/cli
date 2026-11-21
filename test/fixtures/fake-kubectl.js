@@ -1,7 +1,12 @@
 #!/usr/bin/env node
+import fs from 'node:fs';
 import http from 'node:http';
 
 const argv = process.argv.slice(2);
+
+if (process.env.KSPROXY_FAKE_KUBECTL_ENV_LOG) {
+  fs.appendFileSync(process.env.KSPROXY_FAKE_KUBECTL_ENV_LOG, `${JSON.stringify({ argv, env: process.env })}\n`);
+}
 
 if (argv.includes('proxy')) {
   const portArg = argv.find((a) => a.startsWith('--port='));

@@ -59,7 +59,7 @@ test('--version prints the version', async () => {
   const { env } = tempEnv();
   const r = await cli(['--version'], env);
   assert.equal(r.code, 0);
-  assert.equal(r.stdout.trim(), '0.1.0');
+  assert.equal(r.stdout.trim(), '0.2.0');
 });
 
 test('--help and no arguments print the usage', async () => {
@@ -137,7 +137,7 @@ function hms(ts) {
 }
 
 function writeAudit(env, lines) {
-  const dir = path.join(env.KSPROXY_STATE_DIR, 'session');
+  const dir = path.join(env.KSPROXY_STATE_DIR, 'logs');
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(
     path.join(dir, 'audit.log'),

@@ -175,6 +175,8 @@ export async function makeWorld({
     kubeconfig,
     proj,
     sessionDir: path.join(base, 'st', 'session'),
+    logDir: path.join(base, 'st', 'logs'),
+    auditLog: path.join(base, 'st', 'logs', 'audit.log'),
     socketDir: path.join(base, 'st', 's'),
     kube,
   };
