@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { InventoryError, validateInventory } from '../src/inventory.js';
 
-const SSH = { name: 'prod210', host: 'sff_proxy', allow: ['uptime'] };
+const SSH = { name: 'app1', host: 'bastion1', allow: ['uptime'] };
 const withJumps = (jumps, extra = {}) => ({ ssh: [{ ...SSH, jumps, ...extra }] });
 
 function rejects(raw, pattern) {
@@ -19,8 +19,8 @@ test('a target without jumps has no jumps key', () => {
 });
 
 test('one jump is kept, and extra spaces are normalised', () => {
-  const [t] = validateInventory(withJumps(['ssh   -i .ssh/prod_rsa \t ubuntu@172.16.1.210 '])).ssh;
-  assert.deepEqual(t.jumps, ['ssh -i .ssh/prod_rsa ubuntu@172.16.1.210']);
+  const [t] = validateInventory(withJumps(['ssh   -i .ssh/app_key \t opsuser@192.0.2.10 '])).ssh;
+  assert.deepEqual(t.jumps, ['ssh -i .ssh/app_key opsuser@192.0.2.10']);
 });
 
 test('several jumps with every supported option are kept in order', () => {
@@ -29,7 +29,7 @@ test('several jumps with every supported option are kept in order', () => {
 });
 
 test('every error names the entry and the field', () => {
-  for (const bad of ['ssh u@h', {}, null, 7]) rejects(withJumps(bad), /ssh "prod210": jumps: must be a list of 1 to 5 ssh commands/);
+  for (const bad of ['ssh u@h', {}, null, 7]) rejects(withJumps(bad), /ssh "app1": jumps: must be a list of 1 to 5 ssh commands/);
   rejects(withJumps([]), /jumps: must be a list of 1 to 5 ssh commands/);
   rejects(withJumps(Array.from({ length: 6 }, () => 'ssh h')), /jumps: must be a list of 1 to 5 ssh commands/);
 });
@@ -79,14 +79,14 @@ test('a word that starts with "=" is refused', () => {
 });
 
 test('an entry that is not a command says what is expected', () => {
-  const message = /ssh "prod210": jumps\[1\]: must be an ssh command, for example "ssh -i \.ssh\/key user@server"$/;
+  const message = /ssh "app1": jumps\[1\]: must be an ssh command, for example "ssh -i \.ssh\/key user@server"$/;
   for (const bad of [7, null, {}, '', '   ', ' \t ']) rejects(withJumps(['ssh h', bad]), message);
 });
 
 test('a "~" is refused and the reason is given', () => {
   rejects(
     withJumps(['ssh -i ~/.ssh/k u@h']),
-    /ssh "prod210": jumps\[0\]: "~" is not allowed; a path without a leading "\/" starts in the home folder of that login$/,
+    /ssh "app1": jumps\[0\]: "~" is not allowed; a path without a leading "\/" starts in the home folder of that login$/,
   );
 });
 
@@ -96,7 +96,7 @@ test('an option that is not a listed setting is refused', () => {
 });
 
 test('"any" together with jumps is an inventory error, and "any" without jumps is not', () => {
-  rejects(withJumps(['ssh h'], { allow: 'any' }), /ssh "prod210": jumps: a target with jumps needs a list of rules, not "any"/);
+  rejects(withJumps(['ssh h'], { allow: 'any' }), /ssh "app1": jumps: a target with jumps needs a list of rules, not "any"/);
   assert.equal(validateInventory({ ssh: [{ ...SSH, allow: 'any' }] }).ssh[0].allow, 'any');
 });
 

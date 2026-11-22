@@ -177,9 +177,9 @@ Some servers are only reachable from another server, with a key that is stored t
 
 ```json
 {
-  "name": "prod210",
-  "host": "sff_proxy",
-  "jumps": ["ssh -i .ssh/prod_rsa -o LogLevel=ERROR ubuntu@172.16.1.210"],
+  "name": "app1",
+  "host": "bastion1",
+  "jumps": ["ssh -i .ssh/app_key -o LogLevel=ERROR opsuser@192.0.2.10"],
   "allow": ["uptime", "systemctl status *"]
 }
 ```
@@ -187,18 +187,18 @@ Some servers are only reachable from another server, with a key that is stored t
 `ksproxy start` opens the connection to `host`. For the call `uptime`, ksproxy sends exactly this over it, and `uptime` runs on the last server:
 
 ```
-ssh -T -o BatchMode=yes -i .ssh/prod_rsa -o LogLevel=ERROR -o ConnectTimeout=10 ubuntu@172.16.1.210 -- uptime
+ssh -T -o BatchMode=yes -i .ssh/app_key -o LogLevel=ERROR -o ConnectTimeout=10 opsuser@192.0.2.10 -- uptime
 ```
 
 - The agent's words come after `--`. They cannot become options of that ssh or start another command on the first server.
 - `"allow": "any"` is refused on such a target.
-- The tools never show the jump text to the agent. `ksproxy check ssh prod210 uptime` shows you the exact string.
+- The tools never show the jump text to the agent. `ksproxy check ssh app1 uptime` shows you the exact string.
 - Do not also list the first server as a target, unless you want the agent to run commands on it.
 
 Before you rely on it:
 
 - The key must work without a prompt: no passphrase, and the host key already known on that server.
-- `-i .ssh/prod_rsa` is read on the server before the jump, starting in that login's home folder. `~` is not accepted.
+- `-i .ssh/app_key` is read on the server before the jump, starting in that login's home folder. `~` is not accepted.
 - `-o LogLevel=ERROR` keeps ssh's own notices, which can name the inner address, out of the output.
 - The first server's own setup is trusted: its shell start-up files and ssh configuration decide what `ssh` does there.
 

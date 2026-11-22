@@ -16,9 +16,9 @@ const env = {
 fs.mkdirSync(env.KSPROXY_CONFIG_DIR);
 fs.writeFileSync(path.join(env.KSPROXY_CONFIG_DIR, 'inventory.json'), JSON.stringify({
   ssh: [{
-    name: 'prod210',
-    host: 'sff_proxy',
-    jumps: ['ssh -i .ssh/prod_rsa ubuntu@172.16.1.210'],
+    name: 'app1',
+    host: 'bastion1',
+    jumps: ['ssh -i .ssh/app_key opsuser@192.0.2.10'],
     allow: ['uptime', 'systemctl status *'],
   }, {
     name: 'plain',
@@ -27,7 +27,7 @@ fs.writeFileSync(path.join(env.KSPROXY_CONFIG_DIR, 'inventory.json'), JSON.strin
   }],
 }));
 
-async function runCli(args, name = 'prod210') {
+async function runCli(args, name = 'app1') {
   const proc = fakeProcess();
   const code = await main(['check', 'ssh', name, ...args], env, { process: proc });
   return { code, stdout: proc.stdout.text.trim() };
@@ -38,7 +38,7 @@ test('check allows a command that matches a rule and shows what would be sent', 
   assert.equal(code, 0);
   assert.equal(stdout, [
     'ALLOWED by rule: systemctl status *',
-    'sent to sff_proxy: ssh -T -o BatchMode=yes -i .ssh/prod_rsa -o ConnectTimeout=10 ubuntu@172.16.1.210 -- systemctl status nginx',
+    'sent to bastion1: ssh -T -o BatchMode=yes -i .ssh/app_key -o ConnectTimeout=10 opsuser@192.0.2.10 -- systemctl status nginx',
   ].join('\n'));
 });
 

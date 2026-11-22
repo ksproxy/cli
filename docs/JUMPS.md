@@ -6,9 +6,9 @@ Some servers are only reachable from another server, with a key that is stored t
 
 ```json
 {
-  "name": "prod210",
-  "host": "sff_proxy",
-  "jumps": ["ssh -i .ssh/prod_rsa -o LogLevel=ERROR ubuntu@172.16.1.210"],
+  "name": "app1",
+  "host": "bastion1",
+  "jumps": ["ssh -i .ssh/app_key -o LogLevel=ERROR opsuser@192.0.2.10"],
   "allow": ["uptime", "systemctl status *"]
 }
 ```
@@ -18,7 +18,7 @@ Some servers are only reachable from another server, with a key that is stored t
 `ksproxy start` opens the connection to `host`. For the call `uptime`, ksproxy sends exactly this over it:
 
 ```text
-ssh -T -o BatchMode=yes -i .ssh/prod_rsa -o LogLevel=ERROR -o ConnectTimeout=10 ubuntu@172.16.1.210 -- uptime
+ssh -T -o BatchMode=yes -i .ssh/app_key -o LogLevel=ERROR -o ConnectTimeout=10 opsuser@192.0.2.10 -- uptime
 ```
 
 ksproxy adds `-T`, `-o BatchMode=yes`, `-o ConnectTimeout=10` and the `--`. The rest is your text.
@@ -26,10 +26,10 @@ ksproxy adds `-T`, `-o BatchMode=yes`, `-o ConnectTimeout=10` and the `--`. The 
 With a second jump `ssh -i .ssh/inner_rsa deploy@10.0.0.5`, each ssh command is nested after the `--` of the one before it:
 
 ```text
-ssh -T -o BatchMode=yes -i .ssh/prod_rsa -o LogLevel=ERROR -o ConnectTimeout=10 ubuntu@172.16.1.210 -- ssh -T -o BatchMode=yes -i .ssh/inner_rsa -o ConnectTimeout=10 deploy@10.0.0.5 -- uptime
+ssh -T -o BatchMode=yes -i .ssh/app_key -o LogLevel=ERROR -o ConnectTimeout=10 opsuser@192.0.2.10 -- ssh -T -o BatchMode=yes -i .ssh/inner_rsa -o ConnectTimeout=10 deploy@10.0.0.5 -- uptime
 ```
 
-`ksproxy check ssh prod210 uptime` prints the string that would be sent, so you can compare it with what you type by hand.
+`ksproxy check ssh app1 uptime` prints the string that would be sent, so you can compare it with what you type by hand.
 
 ## How a jump must be written
 
@@ -40,7 +40,7 @@ ssh -T -o BatchMode=yes -i .ssh/prod_rsa -o LogLevel=ERROR -o ConnectTimeout=10 
 | First word | `ssh`. |
 | Options | `-i`, `-p`, `-l`, `-o` and `-J`, each followed by its value as a separate word. `-p2222` and other flags are refused. |
 | `-o` settings | `Port`, `User`, `IdentityFile`, `IdentitiesOnly`, `StrictHostKeyChecking`, `UserKnownHostsFile`, `HostKeyAlias`, `ConnectTimeout`, `AddressFamily`, `LogLevel`, `ServerAliveInterval`, `ServerAliveCountMax`, `ProxyJump`, `Compression`, `HostKeyAlgorithms`, `PubkeyAcceptedAlgorithms`, `KexAlgorithms`, `Ciphers`, `MACs`, `PreferredAuthentications`. Written as `-o Key=Value`. |
-| Server | One word after the options, such as `ubuntu@172.16.1.210`. Nothing may follow it. |
+| Server | One word after the options, such as `opsuser@192.0.2.10`. Nothing may follow it. |
 | Rules | The target needs a list of rules. `"allow": "any"` is an error. |
 
 Settings that run a program or open a port on that server, such as `ProxyCommand`, `LocalCommand` and `RemoteForward`, are refused.

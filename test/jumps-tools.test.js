@@ -11,9 +11,9 @@ const decideSsh = sshKind.decide;
 
 const fakeSsh = fileURLToPath(new URL('./fixtures/fake-ssh.js', import.meta.url));
 
-const JUMP = 'ssh -i .ssh/prod_rsa ubuntu@172.16.1.210';
-const PREFIX = 'ssh -T -o BatchMode=yes -i .ssh/prod_rsa -o ConnectTimeout=10 ubuntu@172.16.1.210 --';
-const SECRETS = ['prod_rsa', '172.16', 'ubuntu', '.ssh', 'BatchMode'];
+const JUMP = 'ssh -i .ssh/app_key opsuser@192.0.2.10';
+const PREFIX = 'ssh -T -o BatchMode=yes -i .ssh/app_key -o ConnectTimeout=10 opsuser@192.0.2.10 --';
+const SECRETS = ['app_key', '192.0.2', 'opsuser', '.ssh', 'BatchMode'];
 
 let base;
 let env;

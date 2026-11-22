@@ -6,8 +6,8 @@ import {
 
 test('one jump gives the exact prefix', () => {
   assert.equal(
-    jumpPrefix(['ssh -i .ssh/prod_rsa ubuntu@172.16.1.210']),
-    'ssh -T -o BatchMode=yes -i .ssh/prod_rsa -o ConnectTimeout=10 ubuntu@172.16.1.210 --',
+    jumpPrefix(['ssh -i .ssh/app_key opsuser@192.0.2.10']),
+    'ssh -T -o BatchMode=yes -i .ssh/app_key -o ConnectTimeout=10 opsuser@192.0.2.10 --',
   );
 });
 
