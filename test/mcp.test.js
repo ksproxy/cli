@@ -7,19 +7,20 @@ import { fileURLToPath } from 'node:url';
 import { handleMessage, SERVER_INFO } from '../src/mcp.js';
 import { mcpConfig } from '../src/agent-md.js';
 import { writeSession } from '../src/session.js';
+import { tempDir } from './temp.js';
 
 const fakeSsh = fileURLToPath(new URL('./fixtures/fake-ssh.js', import.meta.url));
 const fakeKubectl = fileURLToPath(new URL('./fixtures/fake-kubectl.js', import.meta.url));
 const bin = fileURLToPath(new URL('../bin/ksproxy.js', import.meta.url));
 
 function emptyEnv() {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-mcp-')));
+  const dir = fs.realpathSync(tempDir('ks-mcp-'));
   return { ...process.env, KSPROXY_STATE_DIR: dir, KSPROXY_SSH: fakeSsh, KSPROXY_KUBECTL: fakeKubectl };
 }
 
 test('SERVER_INFO', () => {
   assert.equal(SERVER_INFO.name, 'ksproxy');
-  assert.equal(SERVER_INFO.version, '0.3.0');
+  assert.equal(SERVER_INFO.version, '0.4.0');
 });
 
 test('initialize echoes a known protocol version', async () => {

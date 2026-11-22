@@ -20,6 +20,26 @@ function downMessage(target, state) {
   return 'proxy is not answering';
 }
 
+const SAMPLE = [
+  {
+    name: 'lab',
+    kubeconfig: '~/.kube/lab-agent.yaml',
+    proxyPort: 8001,
+    tunnel: { host: 'bastion.example.com', localPort: 16443, remote: '127.0.0.1:6443' },
+    manifestRoots: ['~/projects/lab/manifests'],
+    description: 'lab cluster',
+    allow: ['get ...', 'describe ...', 'logs ...', 'rollout status ...', 'apply -f *'],
+  },
+];
+
+// The first port from port upward that used does not hold; it is added to used, so the next call skips it.
+function nextFree(port, used) {
+  let next = port;
+  while (used.has(next)) next += 1;
+  used.add(next);
+  return next;
+}
+
 function decideKube(target, args) {
   const refusal = hardRefusalDetail(args, target.manifestRoots ?? []);
   if (refusal !== null) return { allowed: false, reason: refusal.reason, short: refusal.short };
@@ -34,17 +54,16 @@ export default {
   word: 'kube',
   noun: 'cluster',
   countNoun: 'cluster(s)',
-  sample: [
-    {
-      name: 'lab',
-      kubeconfig: '~/.kube/lab-agent.yaml',
-      proxyPort: 8001,
-      tunnel: { host: 'bastion.example.com', localPort: 16443, remote: '127.0.0.1:6443' },
-      manifestRoots: ['~/projects/lab/manifests'],
-      description: 'lab cluster',
-      allow: ['get ...', 'describe ...', 'logs ...', 'rollout status ...', 'apply -f *'],
-    },
-  ],
+  sample: SAMPLE,
+  // The sample with its proxy port, then its tunnel port, moved up to the first port that taken does not hold.
+  freeSample(taken) {
+    const used = new Set(taken);
+    return SAMPLE.map((entry) => ({
+      ...entry,
+      proxyPort: nextFree(entry.proxyPort, used),
+      tunnel: { ...entry.tunnel, localPort: nextFree(entry.tunnel.localPort, used) },
+    }));
+  },
   hint(target) {
     return target.description ? `${target.kubeconfig} — ${target.description}` : target.kubeconfig;
   },
@@ -88,6 +107,11 @@ export default {
   },
   secretFiles(targets) {
     return targets.map((k) => k.kubeconfig);
+  },
+  // The ports on this machine that the entries listen on: the proxy port and the tunnel port of each. The entries are
+  // validated targets, the entries of another inventory file read as JSON, or the targets of a session file.
+  ports(entries) {
+    return entries.flatMap((entry) => [entry.proxyPort, entry.tunnel?.localPort]);
   },
   // Stops the proxies a killed run left, by their pid files.
   async reapStale({ socketDir }) {

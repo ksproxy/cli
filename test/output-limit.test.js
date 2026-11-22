@@ -11,6 +11,7 @@ import { InventoryError, sampleInventory, validateInventory } from '../src/inven
 import { outputKiB } from '../src/checks.js';
 import { agentMdText } from '../src/agent-md.js';
 import { writeSession } from '../src/session.js';
+import { tempDir } from './temp.js';
 
 // A target may raise the output limit of one stream from 256 KiB up to 4 MiB with maxOutputKiB. These tests use a
 // stand-in brokered kind, and ssh with stand-in programs, each in its own temporary home folder.
@@ -25,7 +26,7 @@ const note = (bytes) => `[output truncated at ${bytes} bytes per stream]`;
 const realKinds = [...KINDS];
 const sample = sampleInventory();
 
-const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ks-wide-')));
+const root = fs.realpathSync(tempDir('ks-wide-', os.tmpdir()));
 const stateDir = path.join(root, 'st');
 const sessionDir = path.join(stateDir, 'session');
 fs.mkdirSync(path.join(stateDir, 'logs'), { recursive: true, mode: 0o700 });

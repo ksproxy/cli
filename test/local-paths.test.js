@@ -10,6 +10,7 @@ import { writeSession } from '../src/session.js';
 import {
   cleanPath, localFolderProblem, realish, sessionProtected, valueProblem,
 } from '../src/kinds/local/folder.js';
+import { tempDir } from './temp.js';
 
 const decideLocal = localKind.decide;
 
@@ -25,7 +26,7 @@ const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
 
 before(() => {
   savedHome = process.env.HOME;
-  base = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-lp-')));
+  base = fs.realpathSync(tempDir('ks-lp-'));
   cwd = path.join(base, 'work');
   state = path.join(base, 'st');
   cfg = path.join(base, 'cfg');
@@ -322,7 +323,7 @@ test('L3: a link into the recorded config folder is refused as ksproxy files fro
 });
 
 const insensitiveFs = (() => {
-  const probe = fs.mkdtempSync(path.join('/tmp', 'ks-CaSe-'));
+  const probe = tempDir('ks-CaSe-');
   try {
     return fs.existsSync(probe.toLowerCase());
   } finally {

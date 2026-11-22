@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { InventoryError, loadInventory, validateInventory } from '../src/inventory.js';
+import { tempDir } from './temp.js';
 
 const KUBE = { name: 'lab', kubeconfig: '/tmp/k.yaml', proxyPort: 18001 };
 
@@ -65,7 +66,7 @@ test('a valid tunnel and manifest roots are kept', () => {
 });
 
 test('loadInventory reports a path that exists but cannot be read as a file', () => {
-  const dir = fs.mkdtempSync(path.join('/tmp', 'ks-ivx-'));
+  const dir = tempDir('ks-ivx-');
   try {
     assert.throws(() => loadInventory(dir), (err) => {
       assert.ok(err instanceof InventoryError);

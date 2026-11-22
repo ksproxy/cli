@@ -6,6 +6,7 @@ import {
   guardedPaths, localScope, looksSecret, reviewProblem, valueProblem,
 } from '../src/kinds/local/folder.js';
 import localKind from '../src/kinds/local/index.js';
+import { tempDir } from './temp.js';
 
 const decideLocal = localKind.decide;
 
@@ -31,7 +32,7 @@ const target = (extra = {}) => ({
 
 before(() => {
   savedHome = process.env.HOME;
-  base = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-pp-')));
+  base = fs.realpathSync(tempDir('ks-pp-'));
   dir = path.join(base, 'work');
   for (const d of ['src', 'secrets/deep', 'deploy', '.aws', 'apps/api']) {
     fs.mkdirSync(path.join(dir, d), { recursive: true });

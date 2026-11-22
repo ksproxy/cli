@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import readline from 'node:readline';
 import { loadInventory } from './inventory.js';
-import { inventoryPath } from './paths.js';
+import { inventoryPath, startCommand } from './paths.js';
 import { callTool, toolDefinitions } from './tools.js';
 
 const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
@@ -9,9 +9,14 @@ const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.ur
 export const SERVER_INFO = { name: 'ksproxy', version: pkg.version };
 
 const PROTOCOL_VERSIONS = ['2024-11-05', '2025-03-26', '2025-06-18'];
-const INSTRUCTIONS = 'Run commands on the ssh servers, Kubernetes clusters, local folders and service targets (databases, queues and HTTP APIs) the user has opened. '
-  + 'Call list_targets first. Every call is checked against a per-target allowlist and logged. '
-  + 'If there is no active session, ask the user to run "ksproxy start".';
+
+// The instructions of initialize: the last sentence names the command that starts the session of this project, or of
+// the default.
+export function instructionsFor(env) {
+  return 'Run commands on the ssh servers, Kubernetes clusters, local folders and service targets (databases, queues and HTTP APIs) the user has opened. '
+    + 'Call list_targets first. Every call is checked against a per-target allowlist and logged. '
+    + `If there is no active session, ask the user to run "${startCommand(env)}".`;
+}
 
 function failure(id, code, message) {
   return { jsonrpc: '2.0', id, error: { code, message } };
@@ -57,7 +62,7 @@ export async function handleMessage(message, env = process.env) {
           protocolVersion: PROTOCOL_VERSIONS.includes(asked) ? asked : '2025-06-18',
           capabilities: { tools: {} },
           serverInfo: SERVER_INFO,
-          instructions: INSTRUCTIONS,
+          instructions: instructionsFor(env),
         });
       }
       case 'ping':

@@ -7,6 +7,7 @@ import {
   InventoryError, absolutePath, checkAllow, checkKeys, checkReview,
 } from '../../checks.js';
 import { minimalEnv } from '../../exec.js';
+import { checkCommand } from '../../paths.js';
 import {
   cleanPath, localFolderProblem, localScope, looksSecret, reviewProblem, sessionProtected, wildcardProblem,
 } from './folder.js';
@@ -105,7 +106,7 @@ function decideLocal(target, input, env = process.env, platform = process.platfo
   if (folder !== null) {
     return {
       allowed: false,
-      reason: `this target's folder is not acceptable; ask the user to run "ksproxy check local ${target.name}"`,
+      reason: `this target's folder is not acceptable; ask the user to run "${checkCommand(env)} local ${target.name}"`,
       short: 'folder not allowed',
     };
   }
@@ -176,8 +177,10 @@ export default {
   openingMessage(t) {
     return t.cwd;
   },
-  // Nothing is held open, so there is no close and the check runs at once, without waiting.
-  open(t, { env, secretFiles }) {
+  // Nothing is held open, so there is no close and the check runs at once, without waiting. secretFilesProblem is set
+  // when another inventory file could not be read: the files it names are not known, so no folder opens.
+  open(t, { env, secretFiles, secretFilesProblem }) {
+    if (secretFilesProblem) return { ok: false, error: secretFilesProblem };
     const problem = folderProblem(t.cwd, env, secretFiles);
     if (problem !== null) return { ok: false, error: problem };
     const loose = looseSecrets(t);
@@ -239,7 +242,8 @@ export default {
       { dir: path.resolve(target.cwd), label: '<folder>' },
     ]);
   },
-  forCheck(target, { env, secretFiles }) {
+  forCheck(target, { env, secretFiles, secretFilesProblem }) {
+    if (secretFilesProblem) return { refusal: secretFilesProblem };
     const problem = localFolderProblem(target.cwd, env, secretFiles);
     if (problem !== null) return { refusal: problem };
     return {

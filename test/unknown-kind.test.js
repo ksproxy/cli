@@ -6,6 +6,7 @@ import { runCli } from '../src/cli.js';
 import { callTool, targetState } from '../src/tools.js';
 import { writeSession } from '../src/session.js';
 import { fakeProcess } from './start-helpers.js';
+import { tempDir } from './temp.js';
 
 const dirs = [];
 const SILENT = { stderr: { write() {} } };
@@ -15,7 +16,7 @@ after(() => {
 });
 
 function world(targets) {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-uk-')));
+  const base = fs.realpathSync(tempDir('ks-uk-'));
   dirs.push(base);
   const env = { ...process.env, KSPROXY_STATE_DIR: path.join(base, 'st') };
   writeSession(path.join(base, 'st', 'session'), {

@@ -4,9 +4,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  isInside, localFolderProblem, plainValues, protectedPaths, realish, valueProblem, wildcardProblem,
+  isInside, localFolderProblem, plainValues, protectedPaths, realish, sessionProtected, valueProblem, wildcardProblem,
 } from '../src/kinds/local/folder.js';
-import { isCaseInsensitive } from '../src/paths.js';
+import { isCaseInsensitive, withProject } from '../src/paths.js';
+import { tempDir } from './temp.js';
 
 let base;
 let home;
@@ -17,7 +18,7 @@ let savedHome;
 
 before(() => {
   savedHome = process.env.HOME;
-  base = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-lo-')));
+  base = fs.realpathSync(tempDir('ks-lo-'));
   home = path.join(base, 'home');
   work = path.join(base, 'work');
   state = path.join(base, 'st');
@@ -377,4 +378,35 @@ test('localFolderProblem: a folder that contains a kubeconfig named in the inven
   assert.equal(localFolderProblem(work, env, ['', 5, null, path.join(base, 'kube.yaml')]), null);
   fs.symlinkSync(work, path.join(base, 'work-in'));
   assert.equal(localFolderProblem(work, env, [path.join(base, 'work-in', 'k.yaml')]), message);
+});
+
+test('a project guards the root state folder, every project included, and the whole config folder', () => {
+  const shop = withProject(env, 'shop');
+  const cfg = path.join(base, 'cfg');
+  fs.mkdirSync(path.join(state, 'p', 'ops', 'session'), { recursive: true });
+  fs.mkdirSync(path.join(state, 'p', 'shop'), { recursive: true });
+  fs.mkdirSync(path.join(cfg, 'projects'), { recursive: true });
+  const overlap = "folder overlaps ksproxy's own files";
+  for (const folder of [state, path.join(state, 'session'), path.join(state, 'p'), path.join(state, 'p', 'ops'),
+    path.join(state, 'p', 'ops', 'session'), path.join(state, 'p', 'shop'), path.join(cfg, 'projects')]) {
+    assert.equal(localFolderProblem(folder, shop), overlap, folder);
+  }
+  for (const value of [`${state}/p/ops/session/session.json`, `${state}/session/session.json`, `${state}/p`,
+    path.join(cfg, 'projects', 'ops.json'), 'stlink/p/ops/session/session.json', 'stlink/session/session.json']) {
+    assert.deepEqual(valueProblem(value, tgt(), shop), { reason: "ksproxy's own files are off limits", short: 'ksproxy files' }, value);
+  }
+  assert.deepEqual([...new Set(protectedPaths({}, shop))], [state, cfg]);
+  assert.deepEqual(sessionProtected([], shop), [state, cfg]);
+});
+
+test('a project guards the root state folder also by its real path', () => {
+  const viaLink = path.join(base, 'state-link-3');
+  fs.symlinkSync(state, viaLink);
+  const shop = withProject({ ...env, KSPROXY_STATE_DIR: viaLink }, 'shop');
+  fs.mkdirSync(path.join(state, 'p', 'ops'), { recursive: true });
+  assert.equal(localFolderProblem(path.join(state, 'p', 'ops'), shop), "folder overlaps ksproxy's own files");
+  assert.equal(localFolderProblem(path.join(viaLink, 'p', 'ops'), shop), "folder overlaps ksproxy's own files");
+  assert.equal(valueProblem(`${state}/p/ops/x`, tgt(), shop).short, 'ksproxy files');
+  assert.equal(valueProblem(`${viaLink}/p/ops/x`, tgt(), shop).short, 'ksproxy files');
+  assert.deepEqual(sessionProtected([], shop), [viaLink, state, path.join(base, 'cfg')]);
 });

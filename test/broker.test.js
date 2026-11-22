@@ -6,6 +6,7 @@ import path from 'node:path';
 import {
   CALL_FAILED, MAX_ANSWER_BYTES, MAX_CALL_BYTES, askCall, callRefusal, callSocketOpen, sendAndClose, startCallServer,
 } from '../src/broker.js';
+import { tempDir } from './temp.js';
 
 const call = (extra = {}) => ({
   kind: 'vault', name: 'v1', input: 'say hi', timeoutSeconds: 5, ...extra,
@@ -14,7 +15,7 @@ const refused = (why, word = 'vault', name = 'v1') => ({ text: `REFUSED (${word}
 const plain = (why) => ({ text: `REFUSED: ${why}`, isError: true });
 
 function tmp() {
-  return fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-brk-')));
+  return fs.realpathSync(tempDir('ks-brk-'));
 }
 
 async function withServer(handle, body, options = {}) {

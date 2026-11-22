@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  configDir, dropDataVolume, isCaseInsensitive, stateDir,
+  configDir, dropDataVolume, isCaseInsensitive, rootStateDir,
 } from '../../paths.js';
 
 const CASE_INSENSITIVE = isCaseInsensitive();
@@ -75,9 +75,10 @@ export function realish(p, lstat = fs.lstatSync, platform = process.platform) {
   return found.real ?? null;
 }
 
+// ksproxy's own folders, as written and resolved: the root state folder, every project included, and the config folder.
 function ownDirs(env, platform) {
   const dirs = [];
-  for (const dir of [stateDir(env), configDir(env)]) {
+  for (const dir of [rootStateDir(env), configDir(env)]) {
     dirs.push(dir);
     const real = realish(dir, undefined, platform);
     if (real) dirs.push(real);
@@ -160,7 +161,7 @@ export function plainValues(arg) {
 
 export function protectedPaths(target, env = process.env, platform = process.platform) {
   const out = [];
-  for (const p of [stateDir(env), configDir(env), ...(Array.isArray(target.protected) ? target.protected : [])]) {
+  for (const p of [rootStateDir(env), configDir(env), ...(Array.isArray(target.protected) ? target.protected : [])]) {
     if (typeof p !== 'string' || p === '') continue;
     out.push(p);
     const real = realish(p, undefined, platform);

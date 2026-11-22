@@ -30,12 +30,62 @@ export function configDir(env = process.env) {
   return path.join(os.homedir(), '.config', 'ksproxy');
 }
 
-export function inventoryPath(env = process.env) {
-  return path.join(configDir(env), 'inventory.json');
+export const PROJECT_KEY = 'KSPROXY_PROJECT';
+export const PROJECT_RE = /^[a-z0-9][a-z0-9_-]{0,23}$/;
+export const PROJECT_RULE = '--project: a project name is 1 to 24 characters: lower-case letters, digits, "-" and "_", starting with a letter or a digit';
+
+// The project of a command, or null. Only the CLI sets it, through withProject; a present value that breaks the rule
+// throws, so that a mistake can never fall back to the default session.
+export function projectOf(env = process.env) {
+  const name = env[PROJECT_KEY];
+  if (name === undefined) return null;
+  if (typeof name !== 'string' || !PROJECT_RE.test(name)) throw new Error(PROJECT_RULE);
+  return name;
 }
 
-export function stateDir(env = process.env) {
+// A copy of env for one project, or for none: an inherited value is removed first, so only the flag chooses.
+export function withProject(env, name) {
+  const out = { ...env };
+  delete out[PROJECT_KEY];
+  if (name !== null) out[PROJECT_KEY] = name;
+  return out;
+}
+
+export function projectsDir(env = process.env) {
+  return path.join(configDir(env), 'projects');
+}
+
+export function inventoryPath(env = process.env) {
+  const project = projectOf(env);
+  return project === null ? path.join(configDir(env), 'inventory.json') : path.join(projectsDir(env), `${project}.json`);
+}
+
+// The state folder of every project and of the default session. The guards that keep ksproxy's own files out of reach
+// use it, never stateDir, so that no project can reach the files of another one.
+export function rootStateDir(env = process.env) {
   return env.KSPROXY_STATE_DIR || path.join(os.homedir(), '.ksproxy');
+}
+
+// Where this session keeps its files: the root for no project, else root/p/NAME.
+export function stateDir(env = process.env) {
+  const project = projectOf(env);
+  return project === null ? rootStateDir(env) : path.join(rootStateDir(env), 'p', project);
+}
+
+// The commands a message tells the user to run, for this project or for none.
+export function initCommand(env = process.env) {
+  const project = projectOf(env);
+  return project === null ? 'ksproxy init' : `ksproxy init --project ${project}`;
+}
+
+export function startCommand(env = process.env) {
+  const project = projectOf(env);
+  return project === null ? 'ksproxy start' : `ksproxy start --project ${project}`;
+}
+
+export function checkCommand(env = process.env) {
+  const project = projectOf(env);
+  return project === null ? 'ksproxy check' : `ksproxy check --project ${project}`;
 }
 
 export function sessionDir(env = process.env) {
@@ -54,10 +104,18 @@ export function socketDir(env = process.env) {
   return path.join(stateDir(env), 's');
 }
 
+const SOCKET_LIMIT = 100;
+// OpenSSH binds a master socket at its control path plus a dot and 16 random characters, then renames it to the
+// control path: those 17 bytes must fit as well, so an ssh master socket is at most 83 bytes.
+const SSH_TEMPORARY_BYTES = 17;
+const SSH_MASTERS = ['ssh', 'tun'];
+
 export function socketPath(kind, name, env = process.env) {
   const p = path.join(socketDir(env), `${kind}-${name}`);
-  if (Buffer.byteLength(p) > 100) {
-    throw new Error(`socket path too long (${Buffer.byteLength(p)} bytes, limit 100): ${p}; set KSPROXY_STATE_DIR to a shorter directory`);
+  const limit = SSH_MASTERS.includes(kind) ? SOCKET_LIMIT - SSH_TEMPORARY_BYTES : SOCKET_LIMIT;
+  if (Buffer.byteLength(p) > limit) {
+    const shorter = projectOf(env) === null ? '' : ' or use a shorter project name';
+    throw new Error(`socket path too long (${Buffer.byteLength(p)} bytes, limit ${limit}): ${p}; set KSPROXY_STATE_DIR to a shorter directory${shorter}`);
   }
   return p;
 }

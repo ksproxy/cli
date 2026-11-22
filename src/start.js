@@ -5,15 +5,18 @@ import { StringDecoder } from 'node:string_decoder';
 import {
   adoptOldLogs, appendAudit, formatLogLine, logOptionsFor, MAX_LOG_BYTES, rotateAudit,
 } from './audit.js';
-import { NODE_FLAGS, agentMdText, mcpConfig } from './agent-md.js';
+import { agentMdText, mcpConfig } from './agent-md.js';
 import { allowWarnings } from './allowlist.js';
 import { InventoryError, loadInventory } from './inventory.js';
 import {
-  auditLogPath, callSocketPath, ensureDir, inventoryPath, logDir as logDirOf, reviewSocketPath, sessionDir as sessionDirOf,
-  socketDir as socketDirOf, stateDir as stateDirOf, writeFileAtomic,
+  auditLogPath, callSocketPath, ensureDir, initCommand, inventoryPath, logDir as logDirOf, projectOf, reviewSocketPath,
+  rootStateDir, sessionDir as sessionDirOf, socketDir as socketDirOf, stateDir as stateDirOf, writeFileAtomic,
 } from './paths.js';
 import { startCallServer } from './broker.js';
-import { KINDS, kindByKey, secretFilesOf } from './kinds/index.js';
+import { KINDS, kindByKey } from './kinds/index.js';
+import {
+  everySecretFile, otherInventories, portProblem, usedPorts,
+} from './projects.js';
 import { startReviewServer } from './review.js';
 import { checkbox } from './select.js';
 import {
@@ -317,6 +320,16 @@ function shortFormSources(kind, target, secrets, skip) {
   }
 }
 
+// The state folder of this run, mode 0700. For a project it is root/p/NAME, and the root and root/p are made private
+// too, whoever made them first: ensureDir sets the mode of the last folder only.
+function ensureStateDir(env, project) {
+  if (project !== null) {
+    ensureDir(rootStateDir(env));
+    ensureDir(path.dirname(stateDirOf(env)));
+  }
+  ensureDir(stateDirOf(env));
+}
+
 export async function start(options, startEnv = process.env, host = {}) {
   let env = startEnv;
   const { process: proc = process } = host;
@@ -564,9 +577,12 @@ export async function start(options, startEnv = process.env, host = {}) {
   };
 
   const run = async () => {
+    // The project of this run, or null. A value that breaks the rule throws here, before any file is read or written:
+    // the run rejects and start rejects with it.
+    const project = projectOf(env);
     let inventory;
     try {
-      inventory = loadInventory(inventoryPath(env));
+      inventory = loadInventory(inventoryPath(env), initCommand(env));
     } catch (err) {
       if (err instanceof InventoryError) {
         say(err.message);
@@ -605,13 +621,17 @@ export async function start(options, startEnv = process.env, host = {}) {
       return 1;
     }
     const { selection } = chosen;
-    const secretFiles = secretFilesOf(inventory);
+    // Every other inventory file is read once, before any target opens: for the files that hold credentials in each of
+    // them, and with every other live session for the ports.
+    const inventories = otherInventories(env);
+    const { files: secretFiles, problem: secretFilesProblem } = everySecretFile(inventory, inventories);
+    const ports = usedPorts(env, inventories);
     if (KINDS.every((kind) => selection[kind.key].length === 0)) {
       say('nothing selected');
       return 1;
     }
 
-    ensureDir(stateDirOf(env));
+    ensureStateDir(env, project);
     ensureDir(socketDir);
     ensureDir(sessionDir);
     ensureDir(logDirOf(env));
@@ -650,6 +670,13 @@ export async function start(options, startEnv = process.env, host = {}) {
           lifecycle({
             event: 'target_opening', kind: kind.label, target: t.name, message: kind.openingMessage(t),
           });
+          const blocked = portProblem(kind, t, ports);
+          if (blocked !== null) {
+            lifecycle({
+              event: 'target_skipped', kind: kind.label, target: t.name, message: blocked,
+            });
+            continue;
+          }
           const secrets = readSecrets(kind, t, held);
           if (secrets.error !== undefined) {
             lifecycle({
@@ -658,7 +685,7 @@ export async function start(options, startEnv = process.env, host = {}) {
             continue;
           }
           const ctx = {
-            env, sessionDir, secretFiles, prepared: prepared.get(kind.key).get(t.name), secrets: secrets.secrets,
+            env, sessionDir, secretFiles, secretFilesProblem, prepared: prepared.get(kind.key).get(t.name), secrets: secrets.secrets,
           };
           // The result of open is always awaited. A kind with close is closed again when a stop arrived meanwhile.
           const r = await openGuarded(
@@ -787,8 +814,11 @@ export async function start(options, startEnv = process.env, host = {}) {
           }
         }
       }
+      // A project's session file and session_start entry name the project; the default's carry no project field.
+      const projectField = project === null ? {} : { project };
       const session = {
         version: 1,
+        ...projectField,
         pid: proc.pid,
         startedAt: new Date().toISOString(),
         targets: sessionTargets,
@@ -799,6 +829,7 @@ export async function start(options, startEnv = process.env, host = {}) {
       const followFrom = fileSize(auditFile);
       const ready = record({
         event: 'session_start',
+        ...projectField,
         pid: proc.pid,
         targets: sessionTargets.map((t) => ({
           kind: logKind(t.kind), name: t.name, state: t.state,
@@ -806,7 +837,7 @@ export async function start(options, startEnv = process.env, host = {}) {
         message: `${sessionTargets.length} targets, pid ${proc.pid}`,
       });
 
-      const config = mcpConfig(proc.execPath, BIN_PATH);
+      const config = mcpConfig(proc.execPath, BIN_PATH, project);
       const configText = `${JSON.stringify(config, null, 2)}\n`;
       // Each kind's own files, in list order, written even when no target of that kind is open.
       for (const kind of KINDS) {
@@ -823,7 +854,7 @@ export async function start(options, startEnv = process.env, host = {}) {
         `Session folder: ${sessionDir}`,
         'MCP config (add once to your agent):',
         configText.trimEnd(),
-        `Claude Code: claude mcp add ksproxy -- ${[proc.execPath, ...NODE_FLAGS, BIN_PATH].join(' ')} mcp`,
+        `Claude Code: claude mcp add ksproxy -- ${[config.mcpServers.ksproxy.command, ...config.mcpServers.ksproxy.args].join(' ')}`,
         '',
         'Leave this running. Ctrl-C closes every connection.',
         '',

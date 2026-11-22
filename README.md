@@ -20,7 +20,7 @@ It is not a general proxy, a tunnel, or a tool to move data. These limits follow
 | Small results from databases | MongoDB returns at most 100 documents per call and never leaves a cursor open, so a larger result is read page by page with a filter. MySQL returns at most 1,000 rows. Change streams, `getMore` and other calls that wait or continue are refused. |
 | No file transfer | Nothing copies a file to or from a target. |
 | Rules match words, not meaning | A rule decides by the words of a call. It does not understand what a command does, so the rights of the account a target uses are the real boundary. Use a read-only account wherever you can. |
-| Not a wall against your own user | A process that runs as your user and can inspect processes or read your files can reach what `ksproxy start` holds. Run the agent without a shell of your user, in a sandbox, or as another user. |
+| Not a wall against your own user | A process that runs as your user and can inspect processes or read your files can reach what `ksproxy start` holds. Run the agent without a shell of your user, in a sandbox, or as another user. Projects do not change this. |
 | macOS and Linux only | Node.js 24 or newer; the `ksproxy` program needs an `env` that knows `-S` (macOS, or GNU coreutils 8.30 or newer). |
 
 The details are in [Security model and limits](#security-model-and-limits) and, for databases, queues and HTTP APIs, in [docs/SERVICES.md](docs/SERVICES.md).
@@ -57,13 +57,35 @@ Homepage: https://ksproxy.github.io/cli/ · Source: https://github.com/ksproxy/c
    The config is the same on every run, so you do this once.
 5. Press Ctrl-C when you are done. Every ssh connection and tunnel is closed, every proxy is stopped, `session.json` and the socket folder are removed, and the audit log in `logs/` is kept. The other session files (`ssh_config`, `kubeconfig`, `AGENT.md`, `mcp.json` and the proxy logs) stay until the next `start`.
 
-Other commands: `ksproxy status` (live session and each target's state, then the time of the last call and the number of calls this session; exit 0 only when everything is up), `ksproxy log [-n N] [--denied] [--json]` (the history, see "The log"), `ksproxy check <flag of the kind> <name> <command...>`, for example `ksproxy check ssh web1 uptime` (see below), `ksproxy mcp` (the MCP server; your agent starts it, you do not), `ksproxy --help`, `ksproxy --version`.
+Other commands: `ksproxy status [--project NAME]` (every live session and each target's state, then the time of the last call and the number of calls this session; exit 0 only when everything is up), `ksproxy log [-n N] [--denied] [--json] [--project NAME]` (the history, see "The log"), `ksproxy check [--project NAME] <flag of the kind> <name> <command...>`, for example `ksproxy check ssh web1 uptime` (see below), `ksproxy mcp [--project NAME]` (the MCP server; your agent starts it, you do not), `ksproxy --help`, `ksproxy --version`. `ksproxy init` and `ksproxy start` take `--project NAME` too.
 
-Only one session runs at a time. `start` refuses while a live session exists and cleans up a stale one.
+Only one session runs at a time for each project, and for the default (no project). `start` refuses while a live session of the same project exists and cleans up a stale one. See "Projects" below.
+
+## Projects
+
+A project is a set of targets for one agent, kept in its own inventory file. Use projects when two agents work in two repositories at the same time and each should be offered only its own targets. Nothing changes for you if you never pass `--project`.
+
+1. `ksproxy init --project shop` writes a sample to `~/.config/ksproxy/projects/shop.json` (folder mode 0700, file mode 0600). The file has the same format as `inventory.json`, with its own `reviewers`. It never overwrites a file.
+2. `ksproxy start --project shop --all` opens the targets of that file only. The picker, `--all` and the kind flags choose among them. The session files and the log are in `~/.ksproxy/p/shop/`. If the file is missing, `start` says `inventory not found: <path>; run: ksproxy init --project shop`.
+3. The MCP config and the Claude Code line that `start` prints end with `mcp --project shop`. Add them to the MCP configuration of the repository of that agent:
+
+   ```
+   claude mcp add ksproxy -- <node> --disable-sigusr1 <path to bin/ksproxy.js> mcp --project shop
+   ```
+
+   `ksproxy mcp --project shop` reads only the session of `shop`. With no live session every tool answers `No active session. Ask the user to run` and the command `ksproxy start --project shop`.
+
+A project name is 1 to 24 characters: lower-case letters, digits, `-` and `_`, starting with a letter or a digit. It is short because it is part of every socket path. Any other name is a usage error (exit 2). Only the flag chooses a project; an environment variable of your shell never does.
+
+Sessions of different projects, and the default session, run at the same time. Each has its own ssh connections, proxies, sockets, working folders and log. `ksproxy status` without `--project` lists every live session, the default first, then each project by name, under `session pid N, started T` or `project shop: session pid N, started T`. It exits 0 when at least one session is live and every target is up. With `--project shop` it shows that session only, and with none live it says `no session — run: ksproxy start --project shop`. `ksproxy log --project shop` shows the log of that project; without `--project` it shows the default log. `ksproxy check --project shop ssh web1 uptime` reads the file of that project, and there `--project` must come before the kind.
+
+Nothing is shared between two project files. A target written in two files is opened twice, once for each running project. A Kubernetes port, `proxyPort` or `tunnel.localPort`, may be named in one inventory file only, because the port is what ties a cluster to its proxy. When another inventory file, or a live session of another project or of the default, names the same port, `start` skips that cluster with `port 8001 is also used by project ops; give each project its own port`, so a call through one project never reaches the cluster of another. When another inventory file cannot be read or is not valid JSON, `start` skips every cluster with `cannot read <file> to check its ports`. `ksproxy init`, with or without `--project`, writes a sample whose ports no other inventory file and no live session uses. A project is not a wall between your own agents: see [SECURITY.md](SECURITY.md).
+
+An agent on another machine can use a project of this machine over ssh only with a key that is limited to that one command. Put the options `restrict,command="<node path> --disable-sigusr1 <path to bin/ksproxy.js> mcp --project shop"` before that key in `~/.ssh/authorized_keys` of this machine; then the MCP command of the other machine is `ssh <this machine>`, and the key can run nothing else. Without those options the other machine gets a full shell of this user, which reaches the credentials and sockets of every project. ksproxy opens no network port for this.
 
 ## Inventory reference
 
-`inventory.json` lives in `$KSPROXY_CONFIG_DIR`, else `$XDG_CONFIG_HOME/ksproxy`, else `~/.config/ksproxy`.
+`inventory.json` lives in `$KSPROXY_CONFIG_DIR`, else `$XDG_CONFIG_HOME/ksproxy`, else `~/.config/ksproxy`. The file of a project has the same format and lives in the `projects` folder there, as `projects/NAME.json` (see "Projects").
 
 ```json
 {
@@ -107,7 +129,7 @@ Any validation failure is an error that names the entry and the field. Unknown k
 | `ssh[].host` | An ssh destination your own ssh config resolves. `^[A-Za-z0-9][A-Za-z0-9._@-]*$`; it may not start with `-`. |
 | `ssh[].jumps` (optional) | ssh targets only. 1 to 5 ssh commands that follow `host`, in order, for a server that only the first one can reach. Each is `ssh`, then any of `-i -p -l -J` or `-o Key=Value` (listed settings only) with a value as a separate word, then one server. `allow` must be a list, not `"any"`. See "A server behind another server". |
 | `kubernetes[].kubeconfig` | A path; `~/` is expanded. It is your real kubeconfig for that cluster and is read only by `kubectl proxy`. |
-| `proxyPort`, `tunnel.localPort` | Integers 1024-65535, unique across the whole file. |
+| `proxyPort`, `tunnel.localPort` | Integers 1024-65535, unique across the whole file, and not named in any other inventory file (see "Projects"). |
 | `tunnel` (optional) | `host` as above; `remote` is `host:port`. When present, point the kubeconfig's server at `https://127.0.0.1:<localPort>`; the tool does not verify this. |
 | `manifestRoots` (optional) | Absolute or `~/` directories. The only places `-f` and `--patch-file` may read a single file from. |
 | `local[].cwd` | The folder the commands run in. Required; absolute or `~/`. It is never shown to the agent. |
@@ -116,7 +138,7 @@ Any validation failure is an error that names the entry and the field. Unknown k
 | `maxOutputKiB` (optional) | Any kind of target. The output limit of each of the two streams of a call, in KiB: an integer from 256 to 4096. Without it the limit is 256 KiB. It only raises the limit for this target; `list_targets` and `AGENT.md` show it when it is not 256. The agent cannot ask for more. |
 | `allow` | An array of rule strings, or the string `"any"`. Missing means an empty list, which refuses everything. `start` warns for each selected target with an empty list; the warning is printed before the target is opened, even if the target is then skipped. `"any"` is an error for `local` targets: list the commands, and every `local` rule must start with the program name (not `*` or `...`). |
 
-State is kept in `~/.ksproxy` (override: `KSPROXY_STATE_DIR`). Keep that path short: unix socket paths are limited in length, and `start` fails with a clear message if one would exceed 100 bytes. Directories are created 0700 and files 0600. `ssh` and `kubectl` are found on `PATH`; `KSPROXY_SSH` and `KSPROXY_KUBECTL` override them with absolute paths. `KSPROXY_PSQL`, `KSPROXY_MYSQL` and `KSPROXY_MONGOSH` do the same for the database clients.
+State is kept in `~/.ksproxy` (override: `KSPROXY_STATE_DIR`). Keep that path short: unix socket paths are limited in length, and `start` fails with a clear message if one would exceed 100 bytes, or 83 bytes for the socket of an ssh connection or a cluster tunnel, because ssh first creates that socket under a name 17 bytes longer. Directories are created 0700 and files 0600. `ssh` and `kubectl` are found on `PATH`; `KSPROXY_SSH` and `KSPROXY_KUBECTL` override them with absolute paths. `KSPROXY_PSQL`, `KSPROXY_MYSQL` and `KSPROXY_MONGOSH` do the same for the database clients.
 
 ## Allowlist rules
 
@@ -320,14 +342,14 @@ It is the riskiest kind of target: the command runs as you, on the machine that 
 | You choose the flags | `*` and `...` match plain names and relative paths only, never a flag. Write each flag into the rule: `ls -l ...`. |
 | Paths stay in the folder | A path matched by a wildcard may not contain `..`. Links are followed first, and the result must be inside `cwd`. |
 | Secrets stay closed | Neither a wildcard nor an argument sent to the model reviewer may name a path you listed in `protect`, or a name that usually holds secrets (`.env`, key files, `terraform.tfstate`). |
-| ksproxy's files are off limits | Its state and configuration folders, and the kubeconfig files in your inventory, can never be reached. |
+| ksproxy's files are off limits | Its state and configuration folders, and the kubeconfig and Kafka client files named in any of your inventory files (the default and every project file), can never be reached. |
 | Small environment | The program gets only `PATH`, `HOME`, `LANG`, `LC_ALL` and `TMPDIR`. A file in the folder never replaces a system program of the same name. |
 
 The first check that fails refuses the call, with a short reason in the log.
 
 ### Good to know
 
-- **Folders that cannot be a target:** the filesystem root, your home directory or a parent of it, ksproxy's own folders, and a folder that contains a kubeconfig from your inventory. Such a target is `SKIPPED`; `ksproxy check local <name>` tells you why.
+- **Folders that cannot be a target:** the filesystem root, your home directory or a parent of it, ksproxy's own folders, and a folder that contains a kubeconfig or Kafka client file named in any of your inventory files. Such a target is `SKIPPED`; `ksproxy check local <name>`, or `ksproxy check --project NAME local <name>` for a target of a project, tells you why, and a refused call tells the agent to ask you for that same command. When another inventory file cannot be read or is not valid JSON, the files it names are not known, so every local target is `SKIPPED` with `cannot read <file> to protect the files it names`, and `ksproxy check` refuses the same way.
 - **One file outside the folder:** write it into a rule as it is, for example `cat /etc/hosts`. That allows exactly that command.
 - **To open one secret-looking file anyway:** write it into a rule as it is, for example `cat .env.production`. `.env.example`, `.env.sample`, `.env.template` and `.env.dist` are not treated as secrets.
 - **`"allow": "any"` is refused** for local targets. List the commands.
@@ -369,11 +391,11 @@ The inventory fields, the words that a rule sees, the fixed refusals, the progra
 
 ## Session folder
 
-`start` writes `~/.ksproxy/session/`, each file by write-to-temp and rename; `session.json` is written last, so its presence means the session is ready. A target skipped at opening appears in none of these files.
+`start` writes `~/.ksproxy/session/` (for a project, `~/.ksproxy/p/NAME/session/`; its `s/`, `run/` and `logs/` folders are under `~/.ksproxy/p/NAME/` in the same way), each file by write-to-temp and rename; `session.json` is written last, so its presence means the session is ready. A target skipped at opening appears in none of these files.
 
 | File | Content |
 |---|---|
-| `session.json` | `pid`, `startedAt`, and per open target what the MCP server needs: kind, name, description, allow rules, socket path or proxy port, manifest roots, and for a local target its folder, the cleaned `PATH` of `ksproxy start` (absolute entries outside the folder) and the protected locations it must never touch (the inventory's kubeconfig files and ksproxy's own state and configuration folders) |
+| `session.json` | `project` (for a project only), `pid`, `startedAt`, and per open target what the MCP server needs: kind, name, description, allow rules, socket path or proxy port, manifest roots, and for a local target its folder, the cleaned `PATH` of `ksproxy start` (absolute entries outside the folder) and the protected locations it must never touch (the inventory's kubeconfig files and ksproxy's own state and configuration folders) |
 | `ssh_config` | credential-free ssh config; it can only reuse a master you opened |
 | `kubeconfig` | credential-free kubeconfig pointing at the local proxy ports |
 | `AGENT.md` | what the agent may use and what is off limits |
@@ -389,7 +411,7 @@ The audit log is not in the session folder. It sits in `~/.ksproxy/logs/` (mode 
 
 Next to the sockets (`~/.ksproxy/s/`), `start` keeps `kube-<name>.pid` for each proxy process (pid and start time), so a later `start` can stop a proxy left by a killed run.
 
-The MCP server re-reads the session on every call. With no live session every tool answers that the user must run `ksproxy start`. Tools: `list_targets`, `ssh_exec { server, command, timeout_seconds? }`, `kubectl { cluster, args, timeout_seconds? }`, `local_exec { target, command, timeout_seconds? }`, and one tool for each service kind in the table above, listed only when the inventory holds a target of that kind. A service call is sent over the private socket `call-sock` in the socket folder to `ksproxy start`, which decides it, carries it out and writes its audit entry. Timeouts are 1-600 seconds (default 60); stdout and stderr are each capped at 256 KiB, or at the `maxOutputKiB` of the target.
+The MCP server re-reads the session on every call. With no live session every tool answers that the user must run `ksproxy start` (`ksproxy start --project NAME` for a project). When a session stops, the `run/` folder of a project is left empty, and the next start of that project removes it. Tools: `list_targets`, `ssh_exec { server, command, timeout_seconds? }`, `kubectl { cluster, args, timeout_seconds? }`, `local_exec { target, command, timeout_seconds? }`, and one tool for each service kind in the table above, listed only when the inventory holds a target of that kind. A service call is sent over the private socket `call-sock` in the socket folder to `ksproxy start`, which decides it, carries it out and writes its audit entry. Timeouts are 1-600 seconds (default 60); stdout and stderr are each capped at 256 KiB, or at the `maxOutputKiB` of the target.
 
 Each call of a target tool appends an audit entry with the time, tool, target, the call (`command`, `args`, `query` or `request`), the decision, the reason when refused, and when run the exit code, duration and output sizes. Output is not logged.
 
@@ -424,7 +446,7 @@ Columns, one space apart: local time, kind (`ssh`, `kube`, `loc`, `http`, `cmd`,
 | `TIMEOUT` | an allowed call that ran out of time (duration `0.4s`, or `1m05s` from a minute up) |
 | `ERROR` | an allowed call whose program could not start |
 | `DENIED` | a refused call, with the short reason |
-| `OPENING` `UP` `SKIPPED` `WARN` | a target opening, open, not opened (a local target says `folder not found: <cwd>`, `not a directory: <cwd>`, `folder is too broad: ...`, `folder overlaps ksproxy's own files`, `folder contains a kubeconfig named in the inventory` or `folder cannot be resolved`), or opened with a warning (empty allowlist, token rejected, cluster not answering, a secret shorter than 8 characters) |
+| `OPENING` `UP` `SKIPPED` `WARN` | a target opening, open, not opened (a local target says `folder not found: <cwd>`, `not a directory: <cwd>`, `folder is too broad: ...`, `folder overlaps ksproxy's own files`, `folder contains a kubeconfig named in the inventory`, `folder cannot be resolved` or `cannot read <file> to protect the files it names`), or opened with a warning (empty allowlist, token rejected, cluster not answering, a secret shorter than 8 characters) |
 | `DOWN` `UP` | the health check found an open target gone, then back |
 | `REVIEW` | a target uses model review: `reviewer NAME, accepts LEVELS` |
 | `LIST` | the agent called `list_targets` |
@@ -441,7 +463,7 @@ Every 30 seconds `start` checks each open target (override in milliseconds with 
 | `call` | `tool`, `kind`, `target`, the call as `command`, `args`, `query` or `request` (the field named by the tool of the kind; `request` is an object, see docs/KINDS.md), `decision`; when refused `reason` and `short`; when run `rule` (`review` when a model approved it, with `review.certainty` and `review.reason`), `exitCode`, `timedOut`, `spawnError`, `durationMs`, `stdoutBytes`, `stderrBytes` |
 | `list` | none |
 | `target_opening`, `target_up`, `target_skipped`, `target_warn`, `target_review`, `target_down`, `target_recovered` | `kind`, `target`, `message` |
-| `session_start` | `pid`, `targets` (`kind`, `name`, `state`), `message` |
+| `session_start` | `project` (for a project only), `pid`, `targets` (`kind`, `name`, `state`), `message` |
 | `session_closing` | `message` (why) |
 | `session_end` | `ok`, `failed`, `denied`, `message` |
 

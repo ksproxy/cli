@@ -11,6 +11,7 @@ import sshKind from '../src/kinds/ssh/index.js';
 import kubernetesKind from '../src/kinds/kubernetes/index.js';
 import { READ_VERBS } from '../src/kinds/kubernetes/cluster.js';
 import { writeSession } from '../src/session.js';
+import { tempDir } from './temp.js';
 
 const decideSsh = sshKind.decide;
 const decideKube = kubernetesKind.decide;
@@ -32,7 +33,7 @@ const lastAudit = () => JSON.parse(fs.readFileSync(path.join(base, 'logs', 'audi
 const approve = (reason = '') => fakeReview({ allowed: true, certainty: 'sure', reason });
 
 before(async () => {
-  base = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-rt-')));
+  base = fs.realpathSync(tempDir('ks-rt-'));
   sessionDir = path.join(base, 'session');
   fs.mkdirSync(path.join(base, 's'));
   fs.mkdirSync(path.join(base, 'logs'));

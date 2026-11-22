@@ -7,12 +7,13 @@ import { KINDS } from '../src/kinds/index.js';
 import { decide, tokenizeSshCommand } from '../src/allowlist.js';
 import { answerCall } from '../src/tools.js';
 import { runClient } from '../src/kinds/engines/command.js';
+import { tempDir } from './temp.js';
 
 const VISIBLE = 262144;
 const TOKEN = 'pw-Zq9X7kLm4R2tV8nB-unmistakable';
 const NOTE = '[output truncated at 262144 bytes per stream]';
 
-const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ks-core-')));
+const root = fs.realpathSync(tempDir('ks-core-', os.tmpdir()));
 fs.mkdirSync(path.join(root, 'st', 'logs'), { recursive: true, mode: 0o700 });
 fs.mkdirSync(path.join(root, 'cfg'), { recursive: true, mode: 0o700 });
 const env = {

@@ -6,9 +6,10 @@ import { spawnSync } from 'node:child_process';
 import {
   writeSession, readSession, isLive, liveSession, clearSession, processStartTime,
 } from '../src/session.js';
+import { tempDir } from './temp.js';
 
 function tmp() {
-  return fs.mkdtempSync(path.join('/tmp', 'ks-sess-'));
+  return tempDir('ks-sess-');
 }
 
 function deadPid() {

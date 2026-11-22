@@ -349,7 +349,7 @@ test('AGENT.md lists the original tools, and http_request only when the session 
 
 test('the usage lists the flags from the list of kinds, a brokered kind on a line of its own, wrapped', async (t) => {
   const help = await cli(['--help'], {});
-  assert.ok(help.stdout.includes('  start [--ssh a,b] [--kube x,y] [--local a,b] [--all] [-v|--verbose]\n        [--http x,y] [--command a,b] [--es x,y] [--mq a,b] [--redis x,y]\n        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y]\n                                            pick targets'), help.stdout);
+  assert.ok(help.stdout.includes('  start [--ssh a,b] [--kube x,y] [--local a,b] [--all] [-v|--verbose]\n        [--http x,y] [--command a,b] [--es x,y] [--mq a,b] [--redis x,y]\n        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y] [--project NAME]\n                                            pick targets'), help.stdout);
   const extra = Array.from({ length: 6 }, (_, i) => ({ flag: `brokered-kind-${i}`, brokered: true }));
   KINDS.push(...extra);
   t.after(() => KINDS.splice(KINDS.length - extra.length, extra.length));
@@ -360,7 +360,7 @@ test('the usage lists the flags from the list of kinds, a brokered kind on a lin
     '        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y]',
     '        [--brokered-kind-0 a,b] [--brokered-kind-1 x,y]',
     '        [--brokered-kind-2 a,b] [--brokered-kind-3 x,y]',
-    '        [--brokered-kind-4 a,b] [--brokered-kind-5 x,y]',
+    '        [--brokered-kind-4 a,b] [--brokered-kind-5 x,y] [--project NAME]',
   ]);
   assert.ok(lines.slice(from, from + 6).every((line) => line.length <= 78));
 });

@@ -34,7 +34,7 @@ sequenceDiagram
     Tools->>Session: liveSession of the session folder
     Session-->>Tools: the session, or null when none is live
     alt no live session
-        Tools-->>Server: NO_SESSION text, isError except for list_targets
+        Tools-->>Server: noSessionText, which names the start command of the project, isError except for list_targets
     else list_targets
         Tools->>Log: append an entry with event list
         Tools->>Target: targetState of each target, by ssh check, folder stat or port probe
@@ -132,8 +132,8 @@ This diagram shows the first steps of start, up to the check for a live session.
 
 ```mermaid
 flowchart TD
-    A1["main: parseStartArgs, then start with the options"] --> A2["register handlers for SIGINT, SIGTERM, SIGHUP,<br/>uncaughtException, unhandledRejection and stream errors"]
-    A2 --> A3["loadInventory of inventoryPath"]
+    A1["main: takeProject and withProject, then parseStartArgs of the arguments left, then start with the options and the project environment"] --> A2["register handlers for SIGINT, SIGTERM, SIGHUP,<br/>uncaughtException, unhandledRejection and stream errors"]
+    A2 --> A3["projectOf of env, a value that breaks the rule rejects here, see The project of a run in src/start.js, then loadInventory of inventoryPath with initCommand as the hint"]
     A3 --> A4{"thrown?"}
     A4 -->|"InventoryError"| A5["print its message, exit 1, nothing to clean"]
     A4 -->|"any other error"| A6["rethrown: start rejects, runCli prints it, exit 1"]
@@ -169,25 +169,26 @@ flowchart TD
     Y2["comes from: 2a.2, the state is clear"] --> A16["chooseTargets: flags, or the picker, see start.js"]
     A16 --> A17{"error?"}
     A17 -->|"yes"| A18["print the error, exit 1"]
-    A17 -->|"no"| A19{"no target selected in any kind?"}
+    A17 -->|"no"| A16p["otherInventories, read once, then everySecretFile of the inventory and of them, and usedPorts: the ports of every other inventory file and live session, see src/projects.js"]
+    A16p --> A19{"no target selected in any kind?"}
     A19 -->|"yes"| A20["print nothing selected, exit 1"]
-    A19 -->|"no"| A21["ensureDir of the state, socket, session and logs folders, each mode 0700"]
+    A19 -->|"no"| A21["ensureStateDir, then ensureDir of the socket, session and logs folders, each mode 0700:<br/>for a project the root and root/p are made private too, see start.js"]
     A21 --> A22["adoptOldLogs: for audit.log.1, then audit.log, in the session folder (files only):<br/>audit.log is renamed to logs/audit.log when that does not exist, any other one is moved to logs/audit-YYYYMMDD-HHMMSS.log named after its modification time,<br/>failures ignored, then only the newest 5 rotated files stay"]
     A22 --> A22a["emptyDirectory of the session folder, keeping nothing"]
     A22a --> A23["rotateAudit: logs/audit.log over 5 MiB is renamed to audit-YYYYMMDD-HHMMSS.log and the newest 5 rotated files stay, a failure is ignored"]
     A23 --> A24["prepare of each kind in list order that has it: the ssh socket of each ssh target, then the tunnel socket of each selected cluster with a tunnel,<br/>then reviewSocketPath once when any selected target has a review,<br/>then callSocketPath once when any selected target is of a brokered kind"]
-    A24 --> A25{"a socket path over 100 bytes?"}
-    A25 -->|"yes"| A26["print the first error: socket path too long (N bytes, limit 100): PATH, set KSPROXY_STATE_DIR to a shorter directory, exit 1, nothing opened"]
+    A24 --> A25{"a socket path over its limit: 83 bytes for an ssh or tunnel socket, 100 for the others?"}
+    A25 -->|"yes"| A26["print the first error: socket path too long (N bytes, limit 83 or 100): PATH, set KSPROXY_STATE_DIR to a shorter directory, and for a project: or use a shorter project name, exit 1, nothing opened"]
     A25 -->|"no"| A27["open the targets kind by kind, diagram 2b"]
     A16 -->|"it throws"| A16x["ERROR: not caught by the run, cleanup, start rejects, runCli prints ksproxy: MESSAGE, exit 1, no CLOSING or CLOSED"]
     A21 -->|"a folder cannot be created"| A16x
 ```
 
-The exact texts behind the two labels that had to drop a semicolon: `a session is already running (pid N); stop it with Ctrl-C in its terminal` and `socket path too long (N bytes, limit 100): PATH; set KSPROXY_STATE_DIR to a shorter directory`. The picker (`chooseTargets`) and the folder step (`ensureDir`) run before the `try` block that guards the opening, so an error thrown there leaves through `start` and `runCli` and prints no CLOSING or CLOSED line.
+The exact texts behind the two labels that had to drop a semicolon: `a session is already running (pid N); stop it with Ctrl-C in its terminal` and `socket path too long (N bytes, limit 100): PATH; set KSPROXY_STATE_DIR to a shorter directory`, with `limit 83` for an ssh or tunnel socket, which for a project ends with ` or use a shorter project name`. The picker (`chooseTargets`) and the folder step (`ensureDir`) run before the `try` block that guards the opening, so an error thrown there leaves through `start` and `runCli` and prints no CLOSING or CLOSED line.
 
 ### 2b. Opening the targets, kind by kind
 
-The kinds are walked in list order (ssh, kubernetes, local, then the brokered kinds), and inside a kind its selected targets in inventory order, one at a time. The log label is the kind's label (`ssh`, `kube`, `loc`, `http` and so on). The secret files are `secretFilesOf` of the whole inventory, every entry and not only the selected ones: today the kubeconfig of every cluster entry.
+The kinds are walked in list order (ssh, kubernetes, local, then the brokered kinds), and inside a kind its selected targets in inventory order, one at a time. The log label is the kind's label (`ssh`, `kube`, `loc`, `http` and so on). The secret files are `secretFilesOf` of the whole inventory, every entry and not only the selected ones, then those that every other inventory file names (`everySecretFile` in `src/projects.js`): today the kubeconfig of every cluster entry and the client file of every Kafka entry. When another inventory file cannot be read, `secretFilesProblem` is set and every local target is refused by its `open` with it.
 
 ```mermaid
 flowchart TD
@@ -202,7 +203,10 @@ flowchart TD
     B17 -->|"yes"| B18["WARN: allow[N]: the warning, one line per such rule: this pattern can be very slow on some inputs,<br/>or for a SQL kind also: a star matches one value here, write backslash star for the SQL star,<br/>and a star after from, join, into, update, table or describe can never match"]
     B17 -->|"no"| B5["OPENING with openingMessage of the kind"]
     B18 --> B5
-    B5 --> B5a["open it: see 2b, continued: opening one target"]
+    B5 --> B5p{"portProblem of the kind, the target and the used ports, only a kind that has ports, today kubernetes?"}
+    B5p -->|"another file cannot be read, or a port of the target is named in another file or live session"| B5q["SKIPPED: cannot read FILE to check its ports, or port N is also used by WHERE, give each project its own port, open is not called"]
+    B5q --> B1
+    B5p -->|"none"| B5a["open it: see 2b, continued: opening one target"]
     B5a -->|"done, next target"| B1
     B5a -->|"leave this kind"| B30
     B1 -->|"no target left"| B0
@@ -210,7 +214,7 @@ flowchart TD
     B0 -->|"no kind left"| C0["diagram 2c"]
 ```
 
-The pattern warning is advice: the rule still works.
+The pattern warning is advice: the rule still works. WHERE is `project NAME`, or `the default inventory`, and the real text has a semicolon before `give each project its own port`.
 
 ### 2b, continued: opening one target
 
@@ -222,7 +226,7 @@ flowchart TD
     B5t -->|"no"| B5k{"kind?"}
     B5k -->|"ssh"| B6["the host, then 1 jump or then N jumps when the target has jumps,<br/>open: openMaster on the prepared socket ssh-NAME, to the host only, the jumps are not tried"]
     B5k -->|"kubernetes"| K6["port PORT, open: openCluster"]
-    B5k -->|"local"| L6["the folder, open: the folder checks of the local kind, awaited like every open"]
+    B5k -->|"local"| L6["the folder, open: secretFilesProblem first, then the folder checks of the local kind, awaited like every open"]
     B5k -->|"a kind with secrets"| S6["open of the kind, with its secrets in the context"]
     B6 --> B7{"through openGuarded: opened by a kind that has close, but a stop arrived meanwhile?"}
     K6 --> B7
@@ -230,7 +234,7 @@ flowchart TD
     S6 --> B7
     B7 -->|"yes"| B8["closeOne: closeMaster bounded to 15 s, or closeCluster bounded to 20 s and SIGKILL of the proxy on timeout,<br/>then leave this kind"]
     B7 -->|"no"| B9{"ok?"}
-    B9 -->|"no"| B11["SKIPPED with the error: VAR is not set, PATH cannot be read or PATH is empty from readSecrets,<br/>or the error of open: the ssh error, the cluster error, the folder problem"]
+    B9 -->|"no"| B11["SKIPPED with the error: VAR is not set, PATH cannot be read or PATH is empty from readSecrets,<br/>or the error of open: the ssh error, the cluster error, the folder problem, cannot read FILE to protect the files it names"]
     B9 -->|"yes"| B10["added to the opened list: with its socket, its handle, or nothing more, and its secrets kept in memory by kind and name"]
     B10 --> B12{"a warn from open? only a cluster whose state is not up"}
     B12 -->|"no"| B13["UP"]
@@ -323,15 +327,15 @@ This diagram shows how the session is written, READY is printed and the health l
 
 ```mermaid
 flowchart TD
-    Y2["comes from: 2d.2b, the call service is settled"] --> W7["session: version 1, pid, startedAt, targets"]
+    Y2["comes from: 2d.2b, the call service is settled"] --> W7["session: version 1, project NAME for a project only, pid, startedAt, targets"]
     W7 --> W8{"processStartTime of own pid known?"}
     W8 -->|"yes"| W9["add processStartedAt"]
     W8 -->|"no"| W10["follow the audit log from its current size"]
     W9 --> W10
-    W10 --> W11["record session_start in logs/audit.log, not printed yet"]
+    W10 --> W11["record session_start in logs/audit.log, with project NAME for a project only, not printed yet"]
     W11 --> W12["sessionFiles of each kind in list order that has it, given its opened targets, also none:<br/>ssh_config, then kubeconfig, then AGENT.md and mcp.json, each atomically"]
     W12 --> W13["writeSession: session.json last, so its presence means ready"]
-    W13 --> W14["print on stdout: session folder, MCP config,<br/>the claude mcp add line, leave this running"]
+    W13 --> W14["print on stdout: session folder, MCP config,<br/>the claude mcp add line, which ends with mcp, or mcp --project NAME for a project, leave this running"]
     W14 --> W15["READY line on stdout"]
     W15 --> W16["start the audit follower: new call and list lines print live"]
     W16 --> W17["startHealth, diagram 5"]
@@ -571,7 +575,7 @@ This diagram shows what each method of a valid request with an id answers.
 ```mermaid
 flowchart TD
     Y1["comes from: 6.1, a valid request with an id"] --> M13{"method?"}
-    M13 -->|"initialize"| M14["protocol version, tools capability, SERVER_INFO, instructions"]
+    M13 -->|"initialize"| M14["protocol version, tools capability, SERVER_INFO, instructionsFor of the env"]
     M13 -->|"ping"| M15["empty result"]
     M13 -->|"tools/list"| M16["toolDefinitions of the inventory: list_targets and the tools of the kinds that are not brokered,<br/>then the tool of each brokered kind with a target in the inventory, every one when it cannot be read"]
     M13 -->|"tools/call"| M17{"params has a string name and arguments absent or a plain object?"}
@@ -727,11 +731,30 @@ flowchart TD
 
 Builds the text of AGENT.md (`agentMdText`) and the MCP config block (`mcpConfig`) that `start` writes into the session folder. The notes of each kind of target and its line in the Tools list are written by the kind itself, drawn in the kind sections; this file names no kind and walks the list. It reads the list when it is called.
 
+### mcpConfig
+
+This diagram shows the MCP config block, for the default and for a project.
+
 ```mermaid
 flowchart TD
-    C1["mcpConfig of nodePath and binPath"] --> C2["mcpServers, entry ksproxy: command nodePath, args NODE_FLAGS, binPath and mcp"]
-    C2 --> C3["NODE_FLAGS is the disable-sigusr1 flag of the shebang: the agent runs node itself, so the shebang is not read.<br/>start prints the claude mcp add line with the same flag"]
-    A1["agentMdText of the session"] --> A2["for each session target, in order: agentSection of the kind with that key"]
+    C1["mcpConfig of nodePath, binPath and project, null by default"] --> C4{"project is null?"}
+    C4 -->|"yes"| C2["mcpServers, entry ksproxy: command nodePath, args NODE_FLAGS, binPath and mcp, as before projects"]
+    C4 -->|"no"| C5["mcpServers, entry ksproxy: command nodePath, args NODE_FLAGS, binPath, mcp, --project and NAME:<br/>the MCP server of the agent then reads the session of that project only"]
+    C2 --> C3["NODE_FLAGS is the disable-sigusr1 flag of the shebang: the agent runs node itself, so the shebang is not read.<br/>start prints the claude mcp add line from these args, so it has the same flag and the same project"]
+    C5 --> C3
+```
+
+### agentMdText
+
+This diagram shows how the text of AGENT.md is put together.
+
+```mermaid
+flowchart TD
+    A1["agentMdText of the session"] --> T1{"the session has a project field?"}
+    T1 -->|"no"| T2["the title line: ksproxy session, as before projects"]
+    T1 -->|"yes"| T3["the title line: ksproxy session: project NAME"]
+    T2 --> A2["for each session target, in order: agentSection of the kind with that key"]
+    T3 --> A2
     A2 --> L1{"outputLine: outputKiB of the target is DEFAULT_OUTPUT_KIB, 256?"}
     L1 -->|"yes"| L2["nothing more"]
     L1 -->|"no"| L3["one more line under the section: Output is cut at N KiB per stream for this target."]
@@ -1457,36 +1480,71 @@ flowchart TD
     M2 -->|"yes"| M3["OK: print usage, 0"]
     M2 -->|"no"| M4{"--version?"}
     M4 -->|"yes"| M5["OK: print the package version, 0"]
-    M4 -->|"no"| M6{"command?"}
-    M6 -->|"init"| M7["init"]
-    M6 -->|"start"| M8["parseStartArgs"]
+    M4 -->|"no"| P1["takeProject of the arguments, for check only before the kind"]
+    P1 --> P2{"error?"}
+    P2 -->|"yes"| U1["usageError: message and usage on stderr, 2"]
+    P2 -->|"no"| P3["withProject of the environment and the project: a copy without any inherited project, then the flag value when given"]
+    P3 --> M6{"command?"}
+    M6 -->|"init"| M7["init with the project environment"]
+    M6 -->|"start"| M8["parseStartArgs of the arguments left"]
     M8 --> M9{"error?"}
-    M9 -->|"yes"| U1["usageError: message and usage on stderr, 2"]
-    M9 -->|"no"| M10["start with the options, its result is the exit code"]
-    M6 -->|"status"| M11["status"]
-    M6 -->|"log"| M12["parseLogArgs"]
+    M9 -->|"yes"| U1
+    M9 -->|"no"| M10["start with the options and the project environment, its result is the exit code"]
+    M6 -->|"status"| M11["status with the project environment"]
+    M6 -->|"log"| M12["parseLogArgs of the arguments left"]
     M12 --> M13{"error?"}
     M13 -->|"yes"| U1
-    M13 -->|"no"| M14["showLog"]
-    M6 -->|"check"| M15["check"]
-    M6 -->|"mcp"| M16["serve on stdin and stdout until the input ends, then 0"]
+    M13 -->|"no"| M14["showLog with the project environment"]
+    M6 -->|"check"| M15["check with the project environment"]
+    M6 -->|"mcp"| M16["serve on stdin and stdout with the project environment until the input ends, then 0"]
     M6 -->|"anything else"| U2["usage error: unknown command: NAME, 2"]
+```
+
+```mermaid
+flowchart TD
     R1["runCli of argv, proc"] --> R2["main with proc.env and the process"]
     R2 --> R3{"settled how?"}
     R3 -->|"resolved"| R4["process.exitCode is the result"]
     R3 -->|"rejected"| R5["print ksproxy: MESSAGE on stderr, exitCode 1"]
 ```
 
+Help, the version and the empty command line are answered before any path is built. After that no path is read before the project environment exists, so an inherited project variable of the caller never chooses a project: only the flag does. Every command gets the project environment, never the caller's own.
+
+### takeProject
+
+```mermaid
+flowchart TD
+    T1["takeProject of args and beforeKind"] --> T2["next argument"]
+    T2 --> T3{"beforeKind and the argument does not start with a dash?"}
+    T3 -->|"yes"| T4["the kind is reached: later words are the checked command"]
+    T3 -->|"no"| T5{"the kind reached, or the argument is neither --project nor starts with --project=?"}
+    T4 --> T5
+    T5 -->|"yes"| T6["keep the word in rest"]
+    T5 -->|"no"| T7{"a project already taken?"}
+    T7 -->|"yes"| E1["ERROR: --project given twice"]
+    T7 -->|"no"| T8["the value: after the equals sign, or the next argument which is consumed"]
+    T8 --> T9{"no value or an empty one?"}
+    T9 -->|"yes"| E2["ERROR: --project needs a project name"]
+    T9 -->|"no"| T10{"the value matches PROJECT_RE?"}
+    T10 -->|"no"| E3["ERROR: the PROJECT_RULE text"]
+    T10 -->|"yes"| T11["the project is the value"]
+    T6 --> T12{"more arguments?"}
+    T11 --> T12
+    T12 -->|"yes"| T2
+    T12 -->|"no"| T13["OK: the project or null, and rest"]
+```
+
 ### startUsage
 
-This diagram shows how the start line and the check lines of the usage text are built from the list of kinds each time the usage is printed. The rest of the usage text is fixed.
+This diagram shows how the start line and the check lines of the usage text are built from the list of kinds each time the usage is printed. The rest of the usage text is fixed: it shows `[--project NAME]` after init, status, log and mcp, says that status shows every live session and each target's state, and has the option line `--project NAME` with the text `use the project NAME (projects/NAME.json)` after `--version`.
 
 ```mermaid
 flowchart TD
     U1["startUsage"] --> U2["each kind in list order gives its flag, then a,b at an even index or x,y at an odd one"]
     U2 --> U3["the first line: two spaces, start, the flags of the kinds that are not brokered, then --all and -v or --verbose"]
     U3 --> U4{"next brokered kind?"}
-    U4 -->|"none left"| U7{"a line in progress?"}
+    U4 -->|"none left"| U11["the item [--project NAME] comes last and is placed by the same wrapping rule"]
+    U11 --> U7{"a line in progress?"}
     U4 -->|"yes"| U5{"a line in progress, and eight spaces, it, a space and this flag over 78 characters?"}
     U5 -->|"yes"| U6["that line, after eight spaces, is done, a new line starts"]
     U5 -->|"no"| U8["the flag joins the line in progress"]
@@ -1496,8 +1554,8 @@ flowchart TD
     U7 -->|"no"| U10["OK: the lines joined, today the first line and two lines with the flags of the brokered kinds"]
     U9 --> U10
     K1["checkKinds"] --> K2["the flag of each kind in list order, joined by a bar, between angle brackets"]
-    K3["checkUsage"] --> K4["two spaces, check and checkKinds, then a new line, eight spaces, name and command"]
-    K5["the usage error of check"] --> K6["usage: ksproxy check, checkKinds, name and command, on one line"]
+    K3["checkUsage"] --> K4["two spaces, check and [--project NAME], then on new lines after eight spaces: checkKinds, then name and command"]
+    K5["the usage error of check"] --> K6["usage: ksproxy check, [--project NAME], checkKinds, name and command, on one line"]
 ```
 
 ### parseStartArgs
@@ -1570,33 +1628,61 @@ flowchart TD
     L15 -->|"no"| L14["OK: print the last count lines, oldest first, 0"]
 ```
 
-### status and init
+### status
 
 ```mermaid
 flowchart TD
-    S1["status"] --> S2["liveSession of the session folder"]
-    S2 --> S3{"none, or targets not a list?"}
-    S3 -->|"yes"| S4["print the no-session hint to run ksproxy start, 1"]
-    S3 -->|"no"| S5["print session pid and start time"]
-    S5 --> S6["next target: targetState, print state, the label of its kind, two dashes when no kind has its key, and name"]
-    S6 --> S7{"state is not up?"}
-    S7 -->|"yes"| S8["not all up"]
-    S7 -->|"no"| S15{"more targets?"}
-    S8 --> S15
-    S15 -->|"yes"| S6
-    S15 -->|"no"| S9["lastCallSummary, see the next diagram"]
-    S9 --> S10{"any calls?"}
-    S10 -->|"yes"| S11["print the time of the last call and the number of calls this session"]
-    S10 -->|"no"| S12{"all up?"}
+    S1["status of the project environment"] --> S2["liveSessions, in src/projects.js"]
+    S2 --> S3{"a project in the environment?"}
+    S3 -->|"yes"| S4["keep that project only"]
+    S3 -->|"no"| S5["keep every live session"]
+    S4 --> S8["next session: sessionLines, see below"]
+    S5 --> S8
+    S8 --> S9{"null, its file is malformed?"}
+    S9 -->|"yes"| S10["left out, as a session that is not live, the next sessions are still listed"]
+    S9 -->|"no"| S11["kept"]
+    S10 --> S12{"more sessions?"}
     S11 --> S12
-    S12 -->|"yes"| S13["OK: 0"]
-    S12 -->|"no"| S14["1"]
-    I1["init"] --> I2{"inventory.json exists?"}
-    I2 -->|"yes"| I3["OK: print already exists, 0, never overwritten"]
-    I2 -->|"no"| I4["ensureDir of the config folder"]
-    I4 --> I5["writeFileAtomic of sampleInventory as JSON"]
-    I5 --> I6["OK: print wrote FILE, 0"]
+    S12 -->|"yes"| S8
+    S12 -->|"no"| S6{"none kept?"}
+    S6 -->|"yes"| S7["print on stdout: no session, a dash, run: and startCommand, which names the project when there is one, 1"]
+    S6 -->|"no"| S13["print the lines of each kept session, in order"]
+    S13 --> S15{"every target of every kept session up?"}
+    S15 -->|"yes"| S16["OK: 0"]
+    S15 -->|"no"| S17["1"]
 ```
+
+### sessionLines
+
+```mermaid
+flowchart TD
+    L1["sessionLines of a live session"] --> L2["the header, see below"]
+    L2 --> L3["next target: targetState with the environment of that session"]
+    L3 --> L4{"it throws, as for a target that is not an object?"}
+    L4 -->|"yes"| L9["null: the file is malformed"]
+    L4 -->|"no"| L5{"the state is a text?"}
+    L5 -->|"no, as for a recorded state that is a number"| L9
+    L5 -->|"yes"| L6["the line: state, the label of its kind, two dashes when no kind has its key, and name,<br/>not all up when the state is not up"]
+    L6 --> L7{"more targets?"}
+    L7 -->|"yes"| L3
+    L7 -->|"no"| L8["lastCallSummary with the environment of that session, added when it has calls,<br/>OK: the lines and whether all are up"]
+```
+
+The header is `session pid N, started T` for the default and `project NAME: session pid N, started T` for a project. `liveSessions` is drawn in the `src/projects.js` section. A session file that cannot be read, or that has no list of targets, is not live there, so it is left out in the same way.
+
+### init
+
+```mermaid
+flowchart TD
+    I1["init of the project environment"] --> I2{"the inventory file of the project, or inventory.json, exists?"}
+    I2 -->|"yes"| I3["OK: print already exists, 0, never overwritten"]
+    I2 -->|"no"| I7["taken: the ports of usedPorts of the project environment, in src/projects.js:<br/>every port that another inventory file or another live session names, a file that cannot be read adds none"]
+    I7 --> I4["ensureDir of the folder of the file, mode 0700: the config folder, or projects"]
+    I4 --> I5["writeFileAtomic of sampleInventory of taken as JSON: the cluster sample gets the first free proxy port from 8001 upward and the first free tunnel port from 16443 upward"]
+    I5 --> I6["OK: print wrote FILE and the hint to run startCommand, which names the project when there is one, 0"]
+```
+
+With no other inventory file and no other live session, which is the case of a user without projects, the sample keeps the ports 8001 and 16443.
 
 ### lastCallSummary and sessionEntries
 
@@ -1620,9 +1706,11 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    C1["check KIND NAME WORDS"] --> C2{"kindByFlag finds KIND (the flag of any kind), NAME given and at least one word?"}
-    C2 -->|"no"| C3["usage error, 2: the message reads usage: ksproxy check, checkKinds with the flag of every kind, then name and command words"]
-    C2 -->|"yes"| C4["loadInventory"]
+    C1["check KIND NAME WORDS, after takeProject took the flag before the kind"] --> C2{"kindByFlag finds KIND (the flag of any kind), NAME given and at least one word?"}
+    C2 -->|"no"| C3["usage error, 2: the message reads usage: ksproxy check [--project NAME], checkKinds with the flag of every kind, then name and command words"]
+    C2 -->|"yes"| CP{"NAME starts with --project? A target name never starts with a dash"}
+    CP -->|"yes"| CQ["usage error, 2: --project must come before the kind: ksproxy check --project NAME, kind, name and command"]
+    CP -->|"no"| C4["loadInventory of the inventory file of the project, with initCommand as the hint"]
     C4 --> C5{"thrown?"}
     C5 -->|"InventoryError"| C6["print it, 2"]
     C5 -->|"any other error"| C7["rethrown"]
@@ -1635,16 +1723,16 @@ flowchart TD
     W3 --> C10
 ```
 
-KEY is the kind's key, for example `ssh`, `kubernetes`, `local` or `http`, and the name is in double quotes, as in inventory errors. The warnings come before any verdict line.
+KEY is the kind's key, for example `ssh`, `kubernetes`, `local` or `http`, and the name is in double quotes, as in inventory errors. The warnings come before any verdict line. The exact text of the placement error is `--project must come before the kind: ksproxy check --project NAME <kind> <name> <command...>`; it covers both `--project shop` and `--project=shop` written after the kind.
 
 ### check, the verdict
 
 ```mermaid
 flowchart TD
     C10{"the kind has forCheck, today local, command and kafka?"} -->|"no"| C15["the inventory target as it is"]
-    C10 -->|"yes"| C13["forCheck of the target, env and secretFilesOf the inventory,<br/>for local: localFolderProblem first, then the target with protected, review and programs. The command and kafka kinds give their own, drawn in their sections"]
+    C10 -->|"yes"| C13["forCheck of the target, env, and everySecretFile of the inventory and of otherInventories, the files and the problem as start has them,<br/>for local: the problem first, then localFolderProblem, then the target with protected, review and programs. The command and kafka kinds give their own, drawn in their sections"]
     C13 --> C14{"a refusal?"}
-    C14 -->|"yes"| R1["REFUSE: print REFUSED and the folder problem, 1"]
+    C14 -->|"yes"| R1["REFUSE: print REFUSED and the refusal: cannot read FILE to protect the files it names, or the folder problem, 1"]
     C14 -->|"no"| C15b["the target forCheck gave"]
     C15 --> C11["decide of the kind: the words as args when its tool takes an array, today kube,<br/>else the words joined by spaces, and when the kind has checkInput, today http, elasticsearch, rabbitmq and mongodb, what checkInput makes of the words"]
     C15b --> C11
@@ -1753,14 +1841,26 @@ flowchart TD
 
 ## src/inventory.js
 
-Reads and validates inventory.json (`loadInventory`, `validateInventory`) and throws an `InventoryError` that names the entry and field; `sampleInventory` builds, from the `sample` of each kind in list order, what `ksproxy init` writes. Each kind validates its own entries; those checks are drawn in the section of the kind. The `reviewers` block and each target's `review` are checked as drawn in "Reviewers and the review of a target".
+Reads and validates an inventory file, inventory.json or projects/NAME.json for a project (`loadInventory`, `validateInventory`) and throws an `InventoryError` that names the entry and field; `sampleInventory` builds, from the `sample` of each kind in list order, what `ksproxy init` writes. Each kind validates its own entries; those checks are drawn in the section of the kind. The `reviewers` block and each target's `review` are checked as drawn in "Reviewers and the review of a target".
+
+### sampleInventory
+
+```mermaid
+flowchart TD
+    S1["sampleInventory of taken, an empty set when not given"] --> S2["next kind, in list order"]
+    S2 --> S3{"the kind has freeSample?"}
+    S3 -->|"no"| S4["its sample, as it is"]
+    S3 -->|"yes, today kubernetes"| S5["freeSample of taken: its sample with each port moved past the ports in taken"]
+    S4 --> S6["OK: one list under the key of each kind"]
+    S5 --> S6
+```
 
 ### loadInventory and the top level
 
 ```mermaid
 flowchart TD
-    L1["loadInventory of file"] --> L2{"read works?"}
-    L2 -->|"ENOENT"| E1["ERROR: inventory not found, run ksproxy init"]
+    L1["loadInventory of file and initHint, ksproxy init when not given"] --> L2{"read works?"}
+    L2 -->|"ENOENT"| E1["ERROR: inventory not found: FILE, run: the initHint, for a project ksproxy init --project NAME"]
     L2 -->|"another error"| E2["ERROR: cannot read inventory"]
     L2 -->|"yes"| L3{"valid JSON?"}
     L3 -->|"no"| L4{"the text holds a backslash before a star, the backslash not itself after a backslash?"}
@@ -1808,7 +1908,7 @@ The review block of one target is checked by `checkReview`, drawn in the `src/ch
 
 ## src/kinds/index.js
 
-The ordered list of kinds and the lookups the core uses. The order is `ssh`, `kubernetes`, `local`, `http`, `command`, `elasticsearch`, `rabbitmq`, `redis`, `postgres`, `mysql`, `mongodb`, `kafka`: the order of opening, of the session file, of the agent notes and of the tools. The core reads `KINDS` when a function is called, so a test may add a kind to it. `kindByKey`, `kindByFlag` and `kindByTool` return the kind for a name, or `undefined`. `secretFilesOf` of a validated inventory collects the files that hold credentials, over every kind that has `secretFiles` and over all of its inventory entries, not only the selected ones, so that no kind reads another kind's entries.
+The ordered list of kinds and the lookups the core uses. The order is `ssh`, `kubernetes`, `local`, `http`, `command`, `elasticsearch`, `rabbitmq`, `redis`, `postgres`, `mysql`, `mongodb`, `kafka`: the order of opening, of the session file, of the agent notes and of the tools. The core reads `KINDS` when a function is called, so a test may add a kind to it. `kindByKey`, `kindByFlag` and `kindByTool` return the kind for a name, or `undefined`. `secretFilesOf` of a validated inventory collects the files that hold credentials, over every kind that has `secretFiles` and over all of its inventory entries, not only the selected ones, so that no kind reads another kind's entries. `everySecretFile` in `src/projects.js` adds to them the files of every other inventory file.
 
 ```mermaid
 flowchart TD
@@ -1881,13 +1981,13 @@ The checks run in this order for an ssh entry: `checkCommon`, `checkKeys`, `chec
 
 ### decideSsh
 
-`decide` of this kind. `execTool` and `ksproxy check` call it with the target, the command as one string, and env, which it does not use.
+`decide` of this kind. `execTool` and `ksproxy check` call it with the target, the command as one string, and env, which it uses only for the command in the refusal of jumps that are not usable: `startCommand` of env, `ksproxy start` or `ksproxy start --project NAME`.
 
 ```mermaid
 flowchart TD
-    D1["decideSsh of target and command"] --> J0["jumpPrefix of the jumps, once"]
+    D1["decideSsh of target, command and env"] --> J0["jumpPrefix of the jumps, once"]
     J0 --> J2{"the prefix is null?"}
-    J2 -->|"yes"| R3["REFUSE: jumps not usable, no unmatched mark, no argv"]
+    J2 -->|"yes"| R3["REFUSE: jumps not usable, the reason asks the user to restart startCommand of env, no unmatched mark, no argv"]
     J2 -->|"no"| J1{"the target has a jumps key?"}
     J1 -->|"no"| D2{"allow is any?"}
     J1 -->|"yes"| J3{"allow is any?"}
@@ -1951,7 +2051,7 @@ flowchart TD
     R1["reapStale of the socket folder and env, after the cluster proxies are stopped"] --> R2["closeStaleSockets of src/kinds/ssh/master.js: every leftover socket closed, the tunnel sockets of clusters included"]
     R2 --> R3["OK: no line to print"]
     P1["prepare of the selected ssh targets and env"] --> P2["socketPath ssh-NAME for each, in inventory order"]
-    P2 --> P3{"a path over 100 bytes?"}
+    P2 --> P3{"a path over 83 bytes, the limit of an ssh master socket?"}
     P3 -->|"yes"| P4["thrown: start prints the error, exit 1"]
     P3 -->|"no"| P5["OK: the socket path by target name"]
     M1["openingMessage of a target"] --> M2{"the target has jumps?"}
@@ -1997,6 +2097,23 @@ The kind also holds `sample`, `hint` (the kubeconfig path, then a dash and the d
 flowchart TD
     S1["the kubernetes kind object"] --> S2["names: key, flag, label, word, noun, countNoun"]
     S1 --> S3["tool: name kubectl, nameKey cluster, detailKey args, detailIsArray true, definition"]
+```
+
+### The ports: ports, freeSample and nextFree
+
+`sample` is the list `SAMPLE`, one cluster with the proxy port 8001 and the tunnel port 16443. `ports` lets the core keep two inventory files from sharing a port (`usedPorts` and `portProblem` in `src/projects.js`), and `freeSample` lets `ksproxy init` write a sample that shares none. `nextFree` is private to this file.
+
+```mermaid
+flowchart TD
+    P1["ports of entries: validated targets, entries of another file read as JSON, or targets of a session file"] --> P2["for each entry: its proxyPort, then the localPort of its tunnel, undefined when it has none"]
+    P2 --> P3["OK: that list, the core keeps the integers, a session target has no tunnel port"]
+    F1["freeSample of taken"] --> F2["used: a copy of taken, so taken is not changed"]
+    F2 --> F3["for the entry of SAMPLE: proxyPort is nextFree of 8001, then the tunnel localPort is nextFree of 16443"]
+    F3 --> F4["OK: a copy of the sample with those two ports"]
+    N1["nextFree of port and used"] --> N2{"used holds the port?"}
+    N2 -->|"yes"| N3["the next port up"]
+    N3 --> N2
+    N2 -->|"no"| N4["add it to used, so the tunnel port never takes the proxy port, OK: that port"]
 ```
 
 
@@ -2092,7 +2209,7 @@ flowchart TD
     R3 -->|"yes"| R4["one line: closed N proxy process(es) left by an earlier run"]
     R3 -->|"no"| R5["no line"]
     P1["prepare of the selected clusters and env"] --> P2["socketPath tun-NAME for each cluster with a tunnel, only to check its length, openCluster builds it again"]
-    P2 --> P3{"a path over 100 bytes?"}
+    P2 --> P3{"a path over 83 bytes, the limit of an ssh master socket?"}
     P3 -->|"yes"| P4["thrown: start prints the error, exit 1"]
     P3 -->|"no"| P5["OK: nothing prepared"]
     M1["openingMessage of a target"] --> M2["port PORT"]
@@ -2216,7 +2333,7 @@ The real messages put a colon after the entry name (`WHERE: protect[J]: ...`), w
 
 ### decideLocal
 
-`decide` of this kind. The folder check and the strict tokenizer run before any rule, so no rule of either sort can bring back what they refuse.
+`decide` of this kind. The folder check and the strict tokenizer run before any rule, so no rule of either sort can bring back what they refuse. The reason of the folder refusal is `this target's folder is not acceptable; ask the user to run "ksproxy check local NAME"`, with `ksproxy check --project PROJECT` in place of `ksproxy check` for a target of a project (`checkCommand` of `src/paths.js`).
 
 ```mermaid
 flowchart TD
@@ -2224,7 +2341,7 @@ flowchart TD
     L2 -->|"no"| R1["REFUSE: allowlist is empty"]
     L2 -->|"yes"| L3["localFolderProblem with the recorded protected list"]
     L3 --> L4{"a problem?"}
-    L4 -->|"yes"| R2["REFUSE: folder not allowed"]
+    L4 -->|"yes"| R2["REFUSE: folder not allowed, the reason asks the user to run checkCommand of env, local and the name"]
     L4 -->|"no"| L5["usableRule keeps the rules it accepts, see its diagram"]
     L5 --> L6["localScope, once for this decision"]
     L6 --> L7["tokenizeSshCommand"]
@@ -2296,7 +2413,9 @@ flowchart TD
     V1["reviewServerCheck of the review entry and the subject, in startReviewServer"] --> V2{"the first word is in the entry's review programs?"}
     V2 -->|"yes"| V3["true, the review service goes on"]
     V2 -->|"no"| V4["false, the reply is review not available"]
-    F1["forCheck of the inventory target, env and the secret files of the inventory"] --> F2{"localFolderProblem of the folder with the secret files?"}
+    F1["forCheck of the inventory target, env, the secret files of every inventory file and secretFilesProblem"] --> F0{"secretFilesProblem is set?"}
+    F0 -->|"yes"| F3
+    F0 -->|"no"| F2{"localFolderProblem of the folder with the secret files?"}
     F2 -->|"a problem"| F3["the refusal: ksproxy check prints REFUSED and the problem, 1"]
     F2 -->|"none"| F4["the target for decide: protected is the secret files,<br/>review true and the programs when the target has a review"]
 ```
@@ -2308,12 +2427,14 @@ What `start` calls for this kind, drawn in diagrams 2a to 5 of Part 1. This kind
 ```mermaid
 flowchart TD
     M1["openingMessage of a target"] --> M2["the folder"]
-    O1["open of a target, env and the secret files of the inventory"] --> F1["folderProblem of the folder"]
+    O1["open of a target, env, the secret files of every inventory file and secretFilesProblem"] --> O0{"secretFilesProblem is set: another inventory file could not be read?"}
+    O0 -->|"yes"| O9["not ok: cannot read FILE to protect the files it names, the folder is not looked at"]
+    O0 -->|"no"| F1["folderProblem of the folder"]
     F1 --> F2{"stat of the folder works?"}
     F2 -->|"no"| F3["not ok: folder not found: CWD"]
     F2 -->|"yes"| F4{"a directory?"}
     F4 -->|"no"| F5["not ok: not a directory: CWD"]
-    F4 -->|"yes"| F6["localFolderProblem with the secret files of the inventory as protected"]
+    F4 -->|"yes"| F6["localFolderProblem with the secret files of every inventory file as protected"]
     F6 --> F7{"a problem?"}
     F7 -->|"yes"| F8["not ok, with that problem"]
     F7 -->|"no"| L1["looseSecrets of the target"]
@@ -2537,6 +2658,8 @@ The diagrams draw a double quote as a single quote. This is the exact short text
 
 Path checks for local targets: the wildcard and value checks (`wildcardProblem`, `plainValues`, `valueProblem`), path resolution (`realish`, `isInside`; `dropDataVolume` and `isCaseInsensitive` are imported from `src/paths.js`), the link check (`crossesPseudoFs`), the folder check (`localFolderProblem`) and what a session records and uses (`sessionProtected`, `protectedPaths`, `guardedPaths`, `localScope`, `cleanPath`) and the name check (`looksSecret`).
 
+ksproxy's own files are the root state folder, every project included (`rootStateDir`, never the `stateDir` of the session), and the config folder, every project file included, each as written and by its real path. `ownDirs` gives them to `localFolderProblem` and `sessionProtected`; `protectedPaths` gives them to `valueProblem`. A local target of one project therefore cannot reach the state of another project, of the default session or of its own project.
+
 ### wildcardProblem and plainValues
 
 ```mermaid
@@ -2684,7 +2807,7 @@ flowchart TD
     F3 -->|"yes"| R2["REFUSE: folder path is too long"]
     F3 -->|"no"| F4{"real path is the filesystem root,<br/>or the real home folder is inside it?"}
     F4 -->|"yes"| R3["REFUSE: folder is too broad: pick a project folder, not CWD"]
-    F4 -->|"no"| F5{"ownDirs, the state and config folders: one of them, as written or real,<br/>inside the real path, or the real path inside one?"}
+    F4 -->|"no"| F5{"ownDirs, the root state folder, every project included, and the config folder:<br/>one of them, as written or real, inside the real path, or the real path inside one?"}
     F5 -->|"yes"| R4["REFUSE: folder overlaps ksproxy's own files"]
     F5 -->|"no"| F6{"a non-empty string in protectedList, as written or real, inside the real path?"}
     F6 -->|"yes"| R5["REFUSE: folder contains a kubeconfig named in the inventory"]
@@ -2726,8 +2849,8 @@ This diagram shows the four helpers that build the lists of protected places and
 
 ```mermaid
 flowchart TD
-    S1["sessionProtected of kubeconfigs"] --> S2["unique list: the kubeconfigs, the state and config folders, and their real paths"]
-    Q1["protectedPaths of target"] --> Q2["state folder, config folder, then target.protected entries"]
+    S1["sessionProtected of kubeconfigs"] --> S2["unique list: the kubeconfigs, the root state folder, every project included,<br/>the config folder, and their real paths"]
+    Q1["protectedPaths of target"] --> Q2["the root state folder, every project included, the config folder, then target.protected entries"]
     Q2 --> Q3{"a non-empty string?"}
     Q3 -->|"no"| Q4["skipped"]
     Q3 -->|"yes"| Q5["kept, plus its real path when it resolves"]
@@ -3144,7 +3267,7 @@ flowchart TD
 
 ## src/mcp.js
 
-The stdio MCP server: `serve` reads JSON-RPC lines and writes answers, `handleMessage` answers one message, `inventoryForTools` reads the inventory for the tool listing, and `SERVER_INFO` gives the name ksproxy and the package version.
+The stdio MCP server: `serve` reads JSON-RPC lines and writes answers, `handleMessage` answers one message, `inventoryForTools` reads the inventory for the tool listing, `instructionsFor` gives the instructions of `initialize`, and `SERVER_INFO` gives the name ksproxy and the package version. The env of `ksproxy mcp --project NAME` carries the project, so `inventoryForTools`, `instructionsFor` and `callTool` all use that project's files and texts.
 
 ### serve
 
@@ -3182,7 +3305,7 @@ flowchart TD
     H6 -->|"initialize"| I1{"asked protocolVersion is 2024-11-05, 2025-03-26 or 2025-06-18?"}
     I1 -->|"yes"| I2["that version"]
     I1 -->|"no"| I3["2025-06-18"]
-    I2 --> I4["OK: capabilities tools, serverInfo SERVER_INFO, instructions"]
+    I2 --> I4["OK: capabilities tools, serverInfo SERVER_INFO, instructions from instructionsFor of env, see below"]
     I3 --> I4
     H6 -->|"ping"| P1["OK: empty result"]
     H6 -->|"tools/list"| L1["OK: tools from toolDefinitions of inventoryForTools, see the next diagram"]
@@ -3194,13 +3317,28 @@ flowchart TD
     H6 -->|"a handler throws"| E5["error -32603 Internal error: MESSAGE"]
 ```
 
+### instructionsFor
+
+This diagram shows the instructions that `initialize` gives, for the default and for a project.
+
+```mermaid
+flowchart TD
+    N1["instructionsFor of env"] --> N2["startCommand of env, in the src/paths.js section"]
+    N2 --> N3{"projectOf env is null?"}
+    N3 -->|"yes"| N4["the command: ksproxy start"]
+    N3 -->|"no"| N5["the command: ksproxy start --project NAME"]
+    N4 --> N6["three fixed sentences: the targets, call list_targets first, the allowlist and the log,<br/>then: If there is no active session, ask the user to run, and the command in double quotes"]
+    N5 --> N6
+    N2 -->|"the env holds a project value that breaks the rule"| N7["ERROR: PROJECT_RULE, handleMessage answers -32603 Internal error"]
+```
+
 ### inventoryForTools
 
 This diagram shows how the server reads the inventory for `tools/list`. The inventory holds no credential, and nothing else is read; no outcome stops the server.
 
 ```mermaid
 flowchart TD
-    V1["inventoryForTools of env"] --> V2{"a file at inventoryPath?"}
+    V1["inventoryForTools of env"] --> V2{"a file at inventoryPath: inventory.json, or projects/NAME.json for a project?"}
     V2 -->|"no"| V3["an inventory with no target: the brokered tools are left out"]
     V2 -->|"yes"| V4{"loadInventory reads and validates it?"}
     V4 -->|"yes"| V5["that inventory: a brokered tool is listed when it holds a target of the kind"]
@@ -3212,13 +3350,15 @@ flowchart TD
 
 ## src/paths.js
 
-Where ksproxy keeps things and how it writes them: `expandHome`, `configDir`, `inventoryPath`, `stateDir`, `sessionDir`, `logDir`, `auditLogPath`, `socketDir`, `socketPath`, `reviewSocketPath` (the socket `REVIEW_SOCKET_NAME` in the socket folder), `callSocketPath` (the socket `CALL_SOCKET_NAME`, `call-sock`, of the brokered kinds), `sshBin`, `kubectlBin`, `mongoshBin`, `ensureDir` and `writeFileAtomic`, and two path helpers that `src/tools.js` uses for the output of every kind and the local mechanics use for their checks: `isCaseInsensitive` and `dropDataVolume`.
+Where ksproxy keeps things and how it writes them: `expandHome`, `configDir`, `projectsDir`, `inventoryPath`, `rootStateDir`, `stateDir`, `sessionDir`, `logDir`, `auditLogPath`, `socketDir`, `socketPath`, `reviewSocketPath` (the socket `REVIEW_SOCKET_NAME` in the socket folder), `callSocketPath` (the socket `CALL_SOCKET_NAME`, `call-sock`, of the brokered kinds), `sshBin`, `kubectlBin`, `mongoshBin`, `ensureDir` and `writeFileAtomic`, and two path helpers that `src/tools.js` uses for the output of every kind and the local mechanics use for their checks: `isCaseInsensitive` and `dropDataVolume`.
+
+Projects: `PROJECT_KEY` is `KSPROXY_PROJECT`, the key of the `env` object that names the project of a command. `projectOf` reads it, `withProject` sets it, `PROJECT_RE` is the name rule and `PROJECT_RULE` the error text, `--project: a project name is 1 to 24 characters: lower-case letters, digits, "-" and "_", starting with a letter or a digit`. `initCommand`, `startCommand` and `checkCommand` are the commands a message tells the user to run. `stateDir` and `inventoryPath` follow the project, so every path built on `stateDir` (the session, log and socket folders, the sockets, the working folders of the command engine) follows it too. `rootStateDir` and `configDir` never do: the guards that keep ksproxy's own files out of reach use them, in `src/kinds/local/folder.js`, `src/kinds/command/index.js` and the scrub of `src/tools.js`, so that no project reaches the files of another one or of the default session.
 
 ### Locations and programs
 
 #### Folders
 
-This diagram shows where the config, state, session, log and socket folders are.
+This diagram shows where the config, state, session, log and socket folders are. The session, log and socket folders are built on `stateDir`, so they are those of the project when there is one.
 
 ```mermaid
 flowchart TD
@@ -3227,8 +3367,8 @@ flowchart TD
     C2 -->|"no"| C4{"XDG_CONFIG_HOME set and not empty?"}
     C4 -->|"yes"| C5["XDG_CONFIG_HOME/ksproxy"]
     C4 -->|"no"| C6["home/.config/ksproxy"]
-    I1["inventoryPath"] --> I2["configDir/inventory.json"]
-    S1["stateDir"] --> S2{"KSPROXY_STATE_DIR set and not empty?"}
+    J1["projectsDir"] --> J2["configDir/projects"]
+    S1["rootStateDir, the same for every project"] --> S2{"KSPROXY_STATE_DIR set and not empty?"}
     S2 -->|"yes"| S3["that folder"]
     S2 -->|"no"| S4["home/.ksproxy"]
     D1["sessionDir"] --> D2["stateDir/session"]
@@ -3237,6 +3377,63 @@ flowchart TD
     K1["socketDir"] --> K2["stateDir/s"]
 ```
 
+#### projectOf
+
+This diagram shows how the project of a command is read. A value that breaks the rule is never taken as no project.
+
+```mermaid
+flowchart TD
+    P1["projectOf of env"] --> P2{"PROJECT_KEY in env, not undefined?"}
+    P2 -->|"no"| P3["OK: null, no project"]
+    P2 -->|"yes"| P4{"a string that PROJECT_RE matches: a lower-case letter or a digit,<br/>then at most 23 lower-case letters, digits, dashes or underscores?"}
+    P4 -->|"no"| P5["THROW: PROJECT_RULE"]
+    P4 -->|"yes"| P6["OK: the name"]
+```
+
+#### withProject
+
+This diagram shows how the env of one project, or of none, is built. Only the CLI calls it, with the value of the flag.
+
+```mermaid
+flowchart TD
+    W1["withProject of env and name"] --> W2["a copy of env, env itself is not changed"]
+    W2 --> W3["PROJECT_KEY removed from the copy, so an inherited value never chooses a project"]
+    W3 --> W4{"name is null?"}
+    W4 -->|"yes"| W5["OK: the copy, no project"]
+    W4 -->|"no"| W6["OK: the copy with PROJECT_KEY set to name"]
+```
+
+#### stateDir and inventoryPath, with and without a project
+
+```mermaid
+flowchart TD
+    T1["stateDir of env"] --> T2["projectOf of env, a throw goes on to the caller"]
+    T2 --> T3{"a project?"}
+    T3 -->|"no"| T4["OK: rootStateDir"]
+    T3 -->|"yes"| T5["OK: rootStateDir/p/NAME"]
+    I1["inventoryPath of env"] --> I2["projectOf of env, a throw goes on to the caller"]
+    I2 --> I3{"a project?"}
+    I3 -->|"no"| I4["OK: configDir/inventory.json"]
+    I3 -->|"yes"| I5["OK: projectsDir/NAME.json"]
+```
+
+#### initCommand, startCommand and checkCommand
+
+```mermaid
+flowchart TD
+    N1["initCommand of env"] --> N2{"projectOf of env gives a project? A throw goes on to the caller"}
+    N2 -->|"no"| N3["ksproxy init"]
+    N2 -->|"yes"| N4["ksproxy init --project NAME"]
+    M1["startCommand of env"] --> M2{"projectOf of env gives a project? A throw goes on to the caller"}
+    M2 -->|"no"| M3["ksproxy start"]
+    M2 -->|"yes"| M4["ksproxy start --project NAME"]
+    C1["checkCommand of env"] --> C2{"projectOf of env gives a project? A throw goes on to the caller"}
+    C2 -->|"no"| C3["ksproxy check"]
+    C2 -->|"yes"| C4["ksproxy check --project NAME"]
+```
+
+Every text that tells the user, or the agent, to run a ksproxy command builds it with one of these: the hint of `init`, the no-session texts of `status`, `ksproxy mcp` and its tools, the message of a missing inventory, the refusal of an ssh target whose jumps are not usable and the refusal of a local target whose folder is not acceptable. For the default they give the texts of before projects.
+
 #### Sockets and programs
 
 This diagram shows the socket paths and the programs ksproxy starts: ssh and kubectl, the shell of the mongodb kind, and the database clients of the postgres and mysql kinds.
@@ -3244,8 +3441,14 @@ This diagram shows the socket paths and the programs ksproxy starts: ssh and kub
 ```mermaid
 flowchart TD
     P1["socketPath of kind and name"] --> P2["socketDir/KIND-NAME"]
-    P2 --> P3{"over 100 bytes?"}
-    P3 -->|"yes"| P4["ERROR: socket path too long (N bytes, limit 100): PATH, set KSPROXY_STATE_DIR to a shorter directory"]
+    P2 --> P8{"KIND is ssh or tun, an ssh master socket?"}
+    P8 -->|"yes"| P9["the limit is 83: SOCKET_LIMIT 100 less SSH_TEMPORARY_BYTES 17"]
+    P8 -->|"no"| P10["the limit is SOCKET_LIMIT, 100"]
+    P9 --> P3{"over the limit?"}
+    P10 --> P3
+    P3 -->|"yes"| P6{"projectOf of env gives a project?"}
+    P6 -->|"no"| P4["ERROR: socket path too long (N bytes, limit LIMIT): PATH, set KSPROXY_STATE_DIR to a shorter directory"]
+    P6 -->|"yes"| P7["ERROR: the same text, then: or use a shorter project name"]
     P3 -->|"no"| P5["OK: the path"]
     R1["reviewSocketPath"] --> R2["socketPath of review and sock, the name REVIEW_SOCKET_NAME"]
     Q1["callSocketPath"] --> Q2["socketPath of call and sock, the name CALL_SOCKET_NAME"]
@@ -3255,6 +3458,8 @@ flowchart TD
     B7["psqlBin"] --> B8["KSPROXY_PSQL when set and not empty, else psql"]
     B9["mysqlBin of env and client"] --> B10["KSPROXY_MYSQL when set and not empty, else the client: mysql when not given, or mariadb"]
 ```
+
+The exact text of the error is `socket path too long (N bytes, limit 100): PATH; set KSPROXY_STATE_DIR to a shorter directory`; with a project, ` or use a shorter project name` follows it. The project name is part of every socket path, which is why it is short. `SSH_MASTERS` holds the two kinds of socket that ssh binds itself, `ssh` and `tun`: OpenSSH first binds a master at the control path plus a dot and 16 random characters (`SSH_TEMPORARY_BYTES`, 17 bytes) and then renames it, so the path of such a socket is at most 83 bytes and its error reads `limit 83`. The review and call sockets are bound by Node at their own path, so they keep 100.
 
 #### Path helpers
 
@@ -3287,6 +3492,117 @@ flowchart TD
     W5 -->|"yes"| W6["remove the temp file, rethrow"]
     W5 -->|"no"| W7["OK"]
 ```
+
+## src/projects.js
+
+What one command needs to know of the other inventory files and the other live sessions. `liveSessions` gives every live session, for `ksproxy status` and for the ports. `otherInventories` reads every inventory file but the one of this command as JSON, without checking it. `usedPorts` collects the ports those files and the other live sessions name, and `portProblem` says why a target may not open because of them. `otherSecretFiles` collects the files that hold credentials in those files, and `everySecretFile` adds them to the files of this command's inventory for the local targets, in `start` and in `ksproxy check`. `start` calls `usedPorts` once before any target opens and `portProblem` for each selected target; `ksproxy init` calls `usedPorts` for the ports of its sample. `whereOf` names where a port comes from in a message: `the default inventory` for the default, its file or its session, and `project NAME` for a project. `NO_FOLDER` holds the two errors of a projects folder that mean it holds no project file, `ENOENT` and `ENOTDIR`. `entriesOf` gives the entries of one kind in a file read as JSON.
+
+### liveSessions
+
+```mermaid
+flowchart TD
+    L1["liveSessions of the environment"] --> L2["readdir with the type of each entry of p in the root state folder"]
+    L2 --> L3{"the folder can be read?"}
+    L3 -->|"no"| L4["no project names"]
+    L3 -->|"yes"| L5["keep the entries that are folders themselves, a link to a folder is not one and is never followed,<br/>whose names match PROJECT_RE, sorted"]
+    L4 --> L6["the default first, then each name in order"]
+    L5 --> L6
+    L6 --> L7["next: withProject and that project, liveSession of its session folder"]
+    L7 --> L8{"live, and its targets are a list?"}
+    L8 -->|"yes"| L9["add the project, the session and its environment"]
+    L8 -->|"no"| L10["skip it"]
+    L9 --> L11{"more?"}
+    L10 --> L11
+    L11 -->|"yes"| L7
+    L11 -->|"no"| L12["OK: the list"]
+```
+
+### otherInventories
+
+```mermaid
+flowchart TD
+    O1["otherInventories of env"] --> O2["readdir of projectsDir"]
+    O2 --> O3{"it works?"}
+    O3 -->|"no, ENOENT or ENOTDIR"| O4["no project names"]
+    O3 -->|"no, any other error"| O5["OK: no others, unreadable is the projects folder"]
+    O3 -->|"yes"| O6["the names that end in .json, without it, that match PROJECT_RE, sorted"]
+    O4 --> O7["the default first, then each name in order"]
+    O6 --> O7
+    O7 --> O8{"the project of this command, or the default for none?"}
+    O8 -->|"yes"| O9["skip it"]
+    O8 -->|"no"| O10["read inventoryPath of withProject and that project, then JSON.parse"]
+    O10 --> O11{"thrown?"}
+    O11 -->|"ENOENT, also a link to a file that is gone"| O9
+    O11 -->|"any other error, or not JSON"| O12["OK: the others so far, unreadable is that file, the later files are not read"]
+    O11 -->|"no"| O13["add whereOf of the project and the value read, not checked"]
+    O9 --> O14{"more?"}
+    O13 --> O14
+    O14 -->|"yes"| O8
+    O14 -->|"no"| O15["OK: the others, unreadable null"]
+```
+
+### usedPorts and entriesOf
+
+```mermaid
+flowchart TD
+    U1["usedPorts of env and the other inventories, otherInventories of env when not given"] --> U2["the sessions of liveSessions whose project is not the project of this command"]
+    U2 --> U3["next kind in list order"]
+    U3 --> U4{"the kind has ports?"}
+    U4 -->|"no"| U9
+    U4 -->|"yes"| U5["the sources: each other file with entriesOf of it and the key of the kind,<br/>then each of those sessions with its targets that are objects of that kind"]
+    U5 --> U6["ports of the kind for the entries of each source, in that order"]
+    U6 --> U7{"an integer that used does not hold yet?"}
+    U7 -->|"yes"| U8["used maps it to whereOf of the source"]
+    U7 -->|"no"| U6
+    U8 --> U6
+    U6 -->|"no port left"| U9{"more kinds?"}
+    U9 -->|"yes"| U3
+    U9 -->|"no"| U10["OK: used, and unreadable of the inventories"]
+    E1["entriesOf of a value read and a key"] --> E2{"the value is an object and its key holds a list?"}
+    E2 -->|"yes"| E3["the objects in that list"]
+    E2 -->|"no"| E4["none"]
+```
+
+So the first place that names a port is the one a message names: the default file, the project files in name order, then the live sessions. A file that cannot be read gives no ports, and `portProblem` then refuses every target of a kind that has ports.
+
+### otherSecretFiles and everySecretFile
+
+```mermaid
+flowchart TD
+    S1["otherSecretFiles of the other inventories"] --> S2["for each kind in list order that has secretFiles, and each other file in order"]
+    S2 --> S3["secretFiles of the kind for entriesOf of that file and the key of the kind"]
+    S3 --> S4{"a text?"}
+    S4 -->|"no, such as a missing field"| S5["dropped"]
+    S4 -->|"yes"| S6["expandHome of it"]
+    S6 --> S7{"an absolute path?"}
+    S7 -->|"no, such as a relative or empty path"| S5
+    S7 -->|"yes"| S8["kept, normalised by path.resolve"]
+    A1["everySecretFile of the inventory of this command and the other inventories"] --> A2["files: secretFilesOf of the inventory, as before projects, then otherSecretFiles"]
+    A2 --> A3{"unreadable is set?"}
+    A3 -->|"yes"| A4["problem: cannot read FILE to protect the files it names"]
+    A3 -->|"no"| A5["problem: null"]
+    A4 --> A6["start gives files and problem to open and record, ksproxy check to forCheck:<br/>the local kind refuses every folder while problem is set"]
+    A5 --> A6
+```
+
+The files of the other inventory files are kept in `session.json` too, in the `protected` list of each local target, so a call checks them as `start` did.
+
+### portProblem
+
+```mermaid
+flowchart TD
+    P1["portProblem of kind, target and the used ports"] --> P2{"the kind has ports?"}
+    P2 -->|"no, every kind but kubernetes today"| P3["OK: null"]
+    P2 -->|"yes"| P4{"unreadable is set?"}
+    P4 -->|"yes"| P5["cannot read FILE to check its ports"]
+    P4 -->|"no"| P6{"a port of the target, from ports of the kind, is in used?"}
+    P6 -->|"no"| P3
+    P6 -->|"yes"| P7["port N is also used by WHERE, give each project its own port, for the first such port"]
+    P5 --> P8["start records SKIPPED with it after the OPENING line, and open is not called"]
+    P7 --> P8
+```
+
+The real text is `port N is also used by project NAME; give each project its own port`, with `the default inventory` in place of `project NAME` for the default. The port is the only thing that ties a cluster to its proxy, so two files that name it would let a call of one project reach the cluster of another.
 
 ## src/review.js
 
@@ -3649,7 +3965,7 @@ flowchart TD
 
 ## src/start.js
 
-Runs `ksproxy start`: `start` sets up the session around the run drawn in Part 1 (diagrams 2a to 2d, 3, 5 and 8), with the helpers `bounded`, `emptyDirectory`, `fileSize`, `startFollower`, and `credentialVariables`, `withoutVariables` and `readSecrets` for the credentials. The call service of the brokered kinds (`startCallServer` of `src/broker.js`, with `answerCall` of `src/tools.js` as its handler) is drawn in 2d.2b, its closing in 3b. `logKind` gives the log label of a kind from its key (`kindByKey` of the key, then its label); every log line of a lifecycle event uses it. `withOutputLimit` adds the `maxOutputKiB` of the inventory entry to the record of each opened target that has one (diagram 2d.2): the session file carries it for `ksproxy mcp`, and the call service uses the record in memory. A raised limit prints no line in the terminal: no setting of a target has a WARN line of its own, and settings such as read-write are named only in the opening line that a kind writes.
+Runs `ksproxy start`: `start` sets up the session around the run drawn in Part 1 (diagrams 2a to 2d, 3, 5 and 8), with the helpers `bounded`, `emptyDirectory`, `fileSize`, `startFollower`, `ensureStateDir` for the state folder of the default or of a project, and `credentialVariables`, `withoutVariables` and `readSecrets` for the credentials. The call service of the brokered kinds (`startCallServer` of `src/broker.js`, with `answerCall` of `src/tools.js` as its handler) is drawn in 2d.2b, its closing in 3b. `logKind` gives the log label of a kind from its key (`kindByKey` of the key, then its label); every log line of a lifecycle event uses it. `withOutputLimit` adds the `maxOutputKiB` of the inventory entry to the record of each opened target that has one (diagram 2d.2): the session file carries it for `ksproxy mcp`, and the call service uses the record in memory. A raised limit prints no line in the terminal: no setting of a target has a WARN line of its own, and settings such as read-write are named only in the opening line that a kind writes.
 
 The run walks `KINDS` and names no kind: what is particular to a kind sits in its object (the "The session" diagrams of `src/kinds/ssh/index.js`, `src/kinds/kubernetes/index.js` and `src/kinds/local/index.js`). The core keeps the skeleton: the stop checks, the empty-allow warning, the order of the lines, the guard that closes a target opened during a stop, the review service, the files, the follower and the health loop. `closeOne` closes one opened target through its kind's `close`, bounded by `limits[closeLimit]` and with the kind's `onCloseTimeout` past it; the time limits keep their names `sshCloseMs` and `kubeCloseMs`. `closeStaleSockets` lives in `src/kinds/ssh/master.js` and is no longer exported from here.
 
@@ -3690,6 +4006,47 @@ flowchart TD
     R5 --> R6{"a line?"}
     R6 -->|"yes"| R7["write it: lifecycle lines on stderr, the READY line on stdout"]
     R6 -->|"no"| W3
+```
+
+### The project of a run
+
+This diagram shows what the project changes in a run. Every path of the run comes from the env through `src/paths.js`, so for a project NAME the session, socket, logs and run folders are those under root/p/NAME, and the inventory is projects/NAME.json.
+
+```mermaid
+flowchart TD
+    P1["the run, after the handlers are added"] --> P2["projectOf of env, its first step"]
+    P2 -->|"a value that breaks the project rule"| P3["ERROR: PROJECT_RULE, the run rejects before any file is read or written,<br/>cleanup has nothing to remove, every handler is removed, start rejects"]
+    P2 -->|"null for the default, else NAME"| P4["loadInventory of inventoryPath, with initCommand of env for the message of a missing file"]
+    P4 --> E1["ensureStateDir, once a target is selected"]
+    E1 --> E2{"a project?"}
+    E2 -->|"no"| E3["ensureDir of the root, the state folder of the default"]
+    E2 -->|"yes"| E4["ensureDir of the root, of root/p, then of root/p/NAME:<br/>each folder on the way gets mode 0700, also one that someone else made, as ensureDir sets the mode of its last folder only"]
+    E3 --> J1{"a project, when the session is written?"}
+    E4 --> J1
+    J1 -->|"no"| J2["session.json and the session_start entry carry no project field,<br/>mcpConfig with project null: mcp.json and the claude mcp add line end with mcp, as before projects"]
+    J1 -->|"yes"| J3["session.json and the session_start entry carry project NAME after version and event,<br/>mcpConfig with NAME: mcp.json and the claude mcp add line end with mcp --project NAME"]
+    J2 --> J4["the claude mcp add line is the command and args of that config, joined by spaces.<br/>AGENT.md from agentMdText of the session: its title names the project when the session has one"]
+    J3 --> J4
+```
+
+### Several sessions at once
+
+This diagram shows which folders a start creates, cleans and removes, so that the default and any number of projects run side by side from one root state folder.
+
+```mermaid
+flowchart TD
+    K1["one root state folder, shared by the default and every project"] --> K2{"whose start?"}
+    K2 -->|"the default"| K3["its own folders: root/session, root/s, root/logs and root/run"]
+    K2 -->|"project NAME"| K4["its own folders: session, s, logs and run under root/p/NAME"]
+    K3 --> K5{"its own session is live?"}
+    K4 --> K5
+    K5 -->|"yes"| K6["refused: a session is already running (pid N), nothing is touched, exit 1"]
+    K5 -->|"no"| K7["cleans its own folders only: session.json, then in reverse list order its run folder,<br/>the proxies by the pid files in its s and the stale sockets in its s, then it empties its s"]
+    K7 --> K8["creates with mode 0700: the state folder, see ensureStateDir, then s, session and logs.<br/>Moves old logs into its logs, empties its session folder, rotates its audit.log"]
+    K8 --> K9["its own sockets, ssh masters, cluster proxies, review and call services, log and working folders in run"]
+    K9 --> K10["at stop it removes its session.json and empties its s, nothing else"]
+    K10 --> K11["never touched by it: the folders of another project, for a project the root's own session, s, run and logs,<br/>for the default anything under root/p"]
+    K12["a cluster whose proxyPort or tunnel.localPort another inventory file or another live session names"] --> K13["SKIPPED before it opens, with port N is also used by WHERE, in every start that sees it, so two projects never share a proxy, the other targets open"]
 ```
 
 ### The credentials: credentialVariables, withoutVariables and readSecrets
@@ -3912,7 +4269,7 @@ flowchart TD
 
 ## src/tools.js
 
-The MCP tools: `toolDefinitions` (`list_targets` first, then the tool of each kind in list order that is listed, built when called), `callTool` and its exec path, `detailOf` (the call among the arguments), `reviewRoute` and `reviewWordsProblem` for what may go to the reviewer, `targetState`, `scrubOutput`, and the `NO_SESSION` answer. The exec path shares three helpers with `answerCall`, the handler of a brokered call inside `ksproxy start`: `detailProblem` (the type of the call), `auditedDetailOf` (the call as the audit entry records it) and `reviewStep` (the review route, the reviewer and the refusal texts). `answerCall` uses `performWithin` and `validResult` for the run; both paths shape each stream with `fitStream`, which uses `dropCutSecret`, `dropLast` and `capBytes` with the visible limit of the target from `visibleLimit` and the fixed `OUTPUT_MARGIN`; `answerLimit` gives the longest answer line of a brokered call; `callSocketOrNull` and `brokeredState` serve the mcp side of a brokered kind.
+The MCP tools: `toolDefinitions` (`list_targets` first, then the tool of each kind in list order that is listed, built when called), `callTool` and its exec path, `detailOf` (the call among the arguments), `reviewRoute` and `reviewWordsProblem` for what may go to the reviewer, `targetState`, `scrubOutput`, and `noSessionText`, the answer while no session is live. The exec path shares three helpers with `answerCall`, the handler of a brokered call inside `ksproxy start`: `detailProblem` (the type of the call), `auditedDetailOf` (the call as the audit entry records it) and `reviewStep` (the review route, the reviewer and the refusal texts). `answerCall` uses `performWithin` and `validResult` for the run; both paths shape each stream with `fitStream`, which uses `dropCutSecret`, `dropLast` and `capBytes` with the visible limit of the target from `visibleLimit` and the fixed `OUTPUT_MARGIN`; `answerLimit` gives the longest answer line of a brokered call; `callSocketOrNull` and `brokeredState` serve the mcp side of a brokered kind.
 
 The decisions, the commands, the state checks and the output rewrites of each kind live in the kind objects (`src/kinds/ssh/index.js`, `src/kinds/kubernetes/index.js`, `src/kinds/local/index.js`). This file finds the kind with `kindByTool` or `kindByKey` and calls it. It imports nothing under `src/kinds/` except the list.
 
@@ -3942,7 +4299,7 @@ flowchart TD
     C2 -->|"no"| C3["unknown tool: NAME, isError"]
     C2 -->|"yes"| C4["liveSession of the session folder"]
     C4 --> C5{"none, or targets not a list?"}
-    C5 -->|"yes"| C6["NO_SESSION, isError unless the tool is list_targets"]
+    C5 -->|"yes"| C6["noSessionText of env, see below, isError unless the tool is list_targets"]
     C5 -->|"no"| C7{"list_targets?"}
     C7 -->|"yes"| C8["listTargets: audit an entry with event list,<br/>a failed write is reported on stderr"]
     C8 --> C9["OK: JSON with startedAt and each target's kind, name, description, state from targetState, allow, review true<br/>for a reviewed target, and outputLimit N KiB per stream when outputKiB of the target is not 256, isError false"]
@@ -3950,6 +4307,20 @@ flowchart TD
     C10 -->|"no"| C11["invalid arguments: expected an object, isError"]
     C10 -->|"yes"| C12["execTool, next diagrams"]
     C1 -->|"anything throws"| C13["internal error: MESSAGE, isError"]
+```
+
+The session folder, the sockets and the log of a call all come from the env, so the MCP server of a project reads and reaches the session of that project only, and never another project's or the default's.
+
+### noSessionText
+
+This diagram shows the answer of every tool while the session is not live.
+
+```mermaid
+flowchart TD
+    O1["noSessionText of env"] --> O2["startCommand of env, in the src/paths.js section"]
+    O2 --> O3{"projectOf env is null?"}
+    O3 -->|"yes"| O4["No active session. Ask the user to run ksproxy start in their terminal.<br/>The command is in backticks, the text the default always had"]
+    O3 -->|"no"| O5["No active session. Ask the user to run ksproxy start --project NAME in their terminal.<br/>The command is in backticks"]
 ```
 
 ### reviewRoute and reviewWordsProblem
@@ -4183,7 +4554,7 @@ Nothing is held without a bound. At the largest setting, 4 MiB, one brokered cal
 
 ```mermaid
 flowchart TD
-    S1["scrubOutput of text, session"] --> S2["hide the state folder as ksproxy in angle brackets"]
+    S1["scrubOutput of text, session"] --> S2["hide rootStateDir, the root state folder, every project included, as ksproxy in angle brackets"]
     S2 --> S3["for each kind in list order that has scrubDirs: hide each folder it gives for its own session targets with its label,<br/>today the local kind, each folder as written and resolved, as folder in angle brackets"]
     S3 --> S4["each hidden path also by its real path from realOrNull, null when it does not resolve, and each of those<br/>without a leading /System/Volumes/Data on darwin, skipping one-character forms"]
     S4 --> S5{"anything to hide?"}
@@ -4194,6 +4565,8 @@ flowchart TD
 ```
 
 The folders are all collected before any is replaced, so the longest folder wins whichever kind gave it, and the text rewrites run only after every folder is replaced.
+
+The state folder hidden is the root, not the `stateDir` of the session, so a path of any project's state folder, or of the default session's, shows as `<ksproxy>/p/NAME/...` or `<ksproxy>/...`, by its configured and by its real path.
 
 ## src/kinds/engines/command.js
 
@@ -4330,7 +4703,7 @@ flowchart TD
     R5 -->|"no"| E2["FAIL: program PATH is not an executable file"]
     R5 -->|"yes"| R6
     R6 --> R7["the path and its real path by realish"]
-    R7 --> R8{"either inside ownFolders by isInside: the state and config folders, as written and resolved?"}
+    R7 --> R8{"either inside ownFolders by isInside: the root state folder, every project included,<br/>and the config folder, as written and resolved?"}
     R8 -->|"yes"| E3["FAIL: program PATH is inside ksproxy's own folders"]
     R8 -->|"no"| R9["OK: the absolute path that will run"]
     X1["isExecutableFile of a path"] --> X2{"stat says a file, and access says executable?"}
@@ -4401,7 +4774,7 @@ flowchart TD
 ```mermaid
 flowchart TD
     S1["secrets of a target"] --> S2["env: each source name of env once, files: none"]
-    K1["reapStale of env"] --> K2["rmSync of the folder run under the state folder, recursive and forced, no line"]
+    K1["reapStale of env"] --> K2["rmSync of the folder run under stateDir, the state folder of this session, recursive and forced, no line"]
     O1["openingMessage"] --> O2["the program, N fixed arguments, then envText"]
     O2 --> O3{"envText: any variables?"}
     O3 -->|"no"| O4["no secrets"]

@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import localKind from '../src/kinds/local/index.js';
+import { withProject } from '../src/paths.js';
+import { tempDir } from './temp.js';
 
 const decideLocal = localKind.decide;
 
@@ -19,7 +21,7 @@ const ALLOW = [
 
 before(() => {
   savedHome = process.env.HOME;
-  base = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-dl-')));
+  base = fs.realpathSync(tempDir('ks-dl-'));
   cwd = path.join(base, 'work');
   fs.mkdirSync(path.join(cwd, 'sub'), { recursive: true });
   fs.writeFileSync(path.join(cwd, 'a.txt'), 'a\n');
@@ -467,6 +469,35 @@ test('tampered rules are ignored: a non-string, a leading * and a leading ... ne
   const listed = refused('rm a.txt', 'not on allowlist', { allow: ['* ...', 5, 'ls ...'] });
   assert.equal(listed.reason, 'not on the allowlist for this target. Allowed: ls ...');
   refused('ls', 'allowlist is empty', { allow: [] });
+});
+
+test('a local target of project shop refuses another project\'s state, the root session and every project file', () => {
+  const shop = withProject(env, 'shop');
+  fs.mkdirSync(path.join(base, 'st', 'p', 'ops', 'session'), { recursive: true });
+  fs.writeFileSync(path.join(base, 'st', 'p', 'ops', 'session', 'session.json'), '{}\n');
+  fs.mkdirSync(path.join(base, 'cfg', 'projects'), { recursive: true });
+  fs.writeFileSync(path.join(base, 'cfg', 'projects', 'ops.json'), '{}\n');
+  fs.symlinkSync(path.join(base, 'cfg'), path.join(cwd, 'cfgdir'));
+  try {
+    const commands = [
+      'cat stlink/p/ops/session/session.json', 'cat stlink/session/session.json', 'cat cfgdir/projects/ops.json',
+      'cat stlink/p/shop/x', 'ls stlink/p',
+    ];
+    for (const command of commands) {
+      const d = decideLocal(target, command, shop);
+      assert.equal(d.allowed, false, command);
+      assert.equal(d.short, 'ksproxy files', command);
+      assert.equal(d.reason, 'ksproxy\'s own files are off limits', command);
+    }
+    for (const folder of [path.join(base, 'st', 'p', 'ops'), path.join(base, 'st', 'session'), path.join(base, 'cfg', 'projects')]) {
+      const d = decideLocal({ ...target, cwd: folder }, 'ls', shop);
+      assert.equal(d.short, 'folder not allowed', folder);
+      // The refusal names the check command of the project.
+      assert.equal(d.reason, FOLDER_REFUSAL.replace('ksproxy check local', 'ksproxy check --project shop local'), folder);
+    }
+  } finally {
+    fs.rmSync(path.join(cwd, 'cfgdir'));
+  }
 });
 
 test('when several rules match loosely, the most useful refusal is reported, not "not a plain argument"', () => {

@@ -8,7 +8,7 @@ import { checkKind } from './kind-contract.js';
 
 const OPTIONAL = [
   'wordsNotForReview', 'notForReview', 'reviewServerCheck', 'scrubDirs', 'scrubText', 'forCheck', 'checkExtra', 'secretFiles',
-  'reapStale', 'prepare', 'close', 'onCloseTimeout', 'sessionFiles', 'secrets', 'checkInput',
+  'reapStale', 'prepare', 'close', 'onCloseTimeout', 'sessionFiles', 'secrets', 'checkInput', 'ports', 'freeSample',
 ];
 
 test('every built-in kind meets the contract', () => {
@@ -183,7 +183,11 @@ test('the list holds the kinds in their fixed order', () => {
 test('the sample inventory holds the sample of every kind, in list order', () => {
   const sample = sampleInventory();
   assert.deepEqual(Object.keys(sample), KINDS.map((kind) => kind.key));
-  for (const kind of KINDS) assert.equal(sample[kind.key], kind.sample);
+  for (const kind of KINDS) {
+    // A kind with freeSample gives a copy of its sample, with the same ports when no port is taken.
+    if (kind.freeSample === undefined) assert.equal(sample[kind.key], kind.sample);
+    else assert.deepEqual(sample[kind.key], kind.sample);
+  }
 });
 
 test('the lookups return the kind for each of its names and undefined for an unknown name', () => {

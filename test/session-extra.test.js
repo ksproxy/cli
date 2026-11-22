@@ -5,9 +5,10 @@ import path from 'node:path';
 import {
   readSession, isLive, psEnv, parseLstart, processStartTime,
 } from '../src/session.js';
+import { tempDir } from './temp.js';
 
 function tmp() {
-  return fs.mkdtempSync(path.join('/tmp', 'ks-sx-'));
+  return tempDir('ks-sx-');
 }
 
 test('readSession is null when the file holds JSON that is not an object', () => {

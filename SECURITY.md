@@ -37,6 +37,7 @@ These are documented limits in the README, not vulnerabilities:
 
 - The allowlist binds only the MCP path. An agent that also has an unrestricted local shell can use the sockets and proxy ports directly, or edit the inventory and session files.
 - A process that runs as the same user and can inspect processes or read the user's files can read the credentials that `ksproxy start` holds: the environment `start` was started with stays visible to such a process (`ps -E`, `/proc/<pid>/environ`), exactly as the user's private keys and cluster configuration are. `ksproxy` keeps the Node inspector closed on `SIGUSR1` (Node runs with `--disable-sigusr1`, and the process also ignores the signal), which removes only the route through a debugger. The agent must therefore run without a shell of that user, inside a sandbox, or under another user.
+- A project is not a wall between agents of the same user. It decides what each agent is offered, not what a process of that user can reach: any process of the user can run `ksproxy mcp --project NAME` for any project, and can read the state and configuration folders of every project.
 - A rule is only as safe as the program it allows. Programs such as `find`, `awk`, `vim`, `less` and `sudo` can run other commands.
 - Command output is returned as-is. Replacing local paths and proxy addresses in the output is not redaction.
 - The remote user's permissions and Kubernetes RBAC remain the boundary. Workloads the identity may create or change, such as a Pod that mounts a Secret or a service-account token, are not inspected.

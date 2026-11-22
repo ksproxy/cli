@@ -6,7 +6,7 @@ import {
 import {
   InventoryError, checkAllow, checkKeys, checkReview, checkSecretVariable, isObject,
 } from '../../checks.js';
-import { configDir, expandHome, stateDir } from '../../paths.js';
+import { configDir, expandHome, rootStateDir, stateDir } from '../../paths.js';
 import { clip } from '../../text.js';
 import { REVIEWED } from '../shared.js';
 import { isInside, realish } from '../local/folder.js';
@@ -112,9 +112,9 @@ function isExecutableFile(file) {
   }
 }
 
-// ksproxy's state and configuration folders, as written and resolved.
+// ksproxy's state and configuration folders, as written and resolved: the root state folder, every project included.
 function ownFolders(env) {
-  return [stateDir(env), configDir(env)].flatMap((dir) => [dir, realish(dir)]).filter(Boolean);
+  return [rootStateDir(env), configDir(env)].flatMap((dir) => [dir, realish(dir)]).filter(Boolean);
 }
 
 // The program as it will run: { program } with an absolute path, or { error }. A plain name is looked up on the

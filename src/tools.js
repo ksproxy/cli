@@ -11,10 +11,16 @@ import {
 import { clip } from './text.js';
 import { DEFAULT_OUTPUT_KIB, MAX_OUTPUT_KIB, outputKiB } from './checks.js';
 import {
-  auditLogPath, callSocketPath, dropDataVolume, isCaseInsensitive, reviewSocketPath, sessionDir as sessionDirOf, stateDir as stateDirOf,
+  auditLogPath, callSocketPath, dropDataVolume, isCaseInsensitive, reviewSocketPath, rootStateDir, sessionDir as sessionDirOf,
+  startCommand,
 } from './paths.js';
 
-export const NO_SESSION = 'No active session. Ask the user to run `ksproxy start` in their terminal.';
+// The answer of every tool while the session of this project, or of the default, is not live: it names the command
+// that starts that session.
+export function noSessionText(env) {
+  return `No active session. Ask the user to run \`${startCommand(env)}\` in their terminal.`;
+}
+
 const KIB = 1024;
 // The room past the visible limit of a stream that it is read with, OUTPUT_MARGIN: a path cut by the read limit is
 // less than LONGEST_PATH bytes, and hiding or scrubbing makes each of its bytes at most GROWTH bytes ([hidden] for one
@@ -136,7 +142,7 @@ export function scrubOutput(text, session, env = process.env, insensitive = isCa
   };
   const targets = session.targets ?? [];
   const ofKind = (kind) => targets.filter((t) => t.kind === kind.key);
-  hide(stateDirOf(env), '<ksproxy>');
+  hide(rootStateDir(env), '<ksproxy>');
   for (const kind of KINDS) {
     if (kind.scrubDirs === undefined) continue;
     for (const { dir, label } of kind.scrubDirs(ofKind(kind))) hide(dir, label);
@@ -578,7 +584,7 @@ export async function callTool(name, args, env = process.env, { stderr = process
     const dir = sessionDirOf(env);
     const session = liveSession(dir);
     if (session === null || !Array.isArray(session.targets)) {
-      return { text: NO_SESSION, isError: name !== 'list_targets' };
+      return { text: noSessionText(env), isError: name !== 'list_targets' };
     }
     if (name === 'list_targets') return await listTargets(session, dir, env, stderr);
     if (!isPlainObject(args)) return { text: 'invalid arguments: expected an object', isError: true };

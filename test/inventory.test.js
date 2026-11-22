@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { InventoryError, sampleInventory, validateInventory, loadInventory } from '../src/inventory.js';
+import { tempDir } from './temp.js';
 
 const SAMPLE_INVENTORY = sampleInventory();
 
@@ -128,7 +129,7 @@ test('errors name the kind and entry', () => {
 });
 
 test('loadInventory', () => {
-  const dir = fs.mkdtempSync(path.join('/tmp', 'ks-inv-'));
+  const dir = tempDir('ks-inv-');
   const file = path.join(dir, 'inventory.json');
   assert.throws(
     () => loadInventory(file),

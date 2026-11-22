@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import localKind from '../src/kinds/local/index.js';
 import { validateInventory } from '../src/inventory.js';
+import { tempDir } from './temp.js';
 
 let base;
 let cwd;
@@ -13,7 +14,7 @@ let savedHome;
 
 before(() => {
   savedHome = process.env.HOME;
-  base = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-rl-')));
+  base = fs.realpathSync(tempDir('ks-rl-'));
   cwd = path.join(base, 'work');
   fs.mkdirSync(path.join(cwd, 'sub'), { recursive: true });
   fs.writeFileSync(path.join(cwd, 'a.txt'), 'a\n');

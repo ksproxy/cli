@@ -5,6 +5,7 @@ import path from 'node:path';
 import { main } from '../src/cli.js';
 import { agentMdText } from '../src/agent-md.js';
 import { fakeProcess } from './start-helpers.js';
+import { tempDir } from './temp.js';
 
 const dirs = [];
 
@@ -15,7 +16,7 @@ after(() => {
 const review = { reviewer: 'r1', policy: 'read-only' };
 
 function world() {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-rc-')));
+  const base = fs.realpathSync(tempDir('ks-rc-'));
   dirs.push(base);
   const proj = path.join(base, 'proj');
   fs.mkdirSync(proj);

@@ -8,6 +8,7 @@ import { appendAudit } from '../src/audit.js';
 import { writeSession } from '../src/session.js';
 import { sampleInventory } from '../src/inventory.js';
 import { fakeProcess, fakeSsh, fakeKubectl, freePorts } from './start-helpers.js';
+import { tempDir } from './temp.js';
 
 const SAMPLE_INVENTORY = sampleInventory();
 
@@ -18,7 +19,7 @@ after(() => {
 });
 
 function world(inventory) {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-ci-')));
+  const base = fs.realpathSync(tempDir('ks-ci-'));
   dirs.push(base);
   const env = {
     ...process.env,
@@ -246,7 +247,7 @@ test('check needs a kind, a name and a command', async () => {
   for (const args of [['check'], ['check', 'ssh'], ['check', 'ssh', 'web1'], ['check', 'db', 'web1', 'ls']]) {
     const r = await cli(args, {});
     assert.equal(r.code, 2, args.join(' '));
-    assert.ok(r.stderr.startsWith('usage: ksproxy check <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka> <name> <command...>\nUsage:'));
+    assert.ok(r.stderr.startsWith('usage: ksproxy check [--project NAME] <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka> <name> <command...>\nUsage:'));
   }
 });
 
@@ -281,7 +282,7 @@ test('check reports an inventory problem, an unknown target, and a decision', as
 });
 
 test('an error that is not an inventory error is not hidden by check', async () => {
-  await assert.rejects(main(['check', 'ssh', 'web1', 'df'], null, { process: fakeProcess() }), TypeError);
+  await assert.rejects(main(['check', 'ssh', 'web1', 'df'], { [['KSPROXY', 'CONFIG', 'DIR'].join('_')]: 5 }, { process: fakeProcess() }), TypeError);
 });
 
 test('mcp serves the protocol on the given input and output', async () => {

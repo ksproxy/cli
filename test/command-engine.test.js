@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { minimalEnv, run } from '../src/exec.js';
 import { WORK_FOLDER, runClient, workRoot } from '../src/kinds/engines/command.js';
+import { tempDir } from './temp.js';
 
 const fake = fileURLToPath(new URL('./fixtures/fake-client.js', import.meta.url));
 const node = process.execPath;
@@ -16,7 +17,7 @@ after(() => {
 });
 
 function world() {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-cmd-')));
+  const base = fs.realpathSync(tempDir('ks-cmd-'));
   dirs.push(base);
   const home = path.join(base, 'home');
   fs.mkdirSync(home);

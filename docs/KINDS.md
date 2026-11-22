@@ -55,7 +55,7 @@ A kind is a plain object, the default export of `src/kinds/<name>/index.js`. The
 
 The core reads `KINDS` when a function is called, never when a module is loaded, so nothing is cached from it. A test can push a kind onto the array in its own process.
 
-The lookups return the kind or `undefined`: `kindByKey(key)`, `kindByFlag(flag)` and `kindByTool(name)`. `secretFilesOf(inventory)` collects the `secretFiles` of every kind over every inventory entry.
+The lookups return the kind or `undefined`: `kindByKey(key)`, `kindByFlag(flag)` and `kindByTool(name)`. `secretFilesOf(inventory)` collects the `secretFiles` of every kind over every inventory entry. `start` and `ksproxy check` add to them the `secretFiles` of every other inventory file (`everySecretFile` in `src/projects.js`), so a local target of one project never reaches a file that another project's file names.
 
 ## The interface
 
@@ -101,9 +101,11 @@ The six names `key`, `flag`, `label`, `word`, `noun` and `countNoun` are non-emp
 | Field | Required | Arguments | Returns |
 |---|---|---|---|
 | `sample` | yes | none (an array) | The entries of this kind that `ksproxy init` writes. |
+| `freeSample(taken)` | no | a `Set` of the ports that other inventory files and live sessions use | The entries that `ksproxy init` writes instead of `sample`: the sample with each of its ports moved up to the first one that `taken` does not hold. It must not change `taken`. |
+| `ports(entries)` | no | entries of this kind: validated targets, the entries of another inventory file read as JSON and not checked (objects only), or the targets of another live session | An array of the ports on this machine that the entries listen on. It must not throw on a missing or odd field; the core keeps only the integers. A target of this start whose port another inventory file or live session names is `SKIPPED` before `open` (see "A session"). |
 | `hint(target)` | yes | a validated target | The text beside the name in the menu. Without a description it must still be non-empty. |
 | `validate(entry, where, ctx)` | yes | the raw entry, the label used in messages (for example `echo "x"`), `ctx = { reviewers, seenPorts }` | The validated target, which carries `kind: <key>`. Throws `InventoryError` with a message that starts with `where`. The core checks `maxOutputKiB` before and takes it out of the entry, so `validate` never sees it; `start` adds it to the record of the target. |
-| `secretFiles(targets)` | no | every inventory entry of this kind | An array of files that hold credentials. The core gives the combined list of all kinds to `open`, `record` and `forCheck`, so a kind never reads another kind's entries. |
+| `secretFiles(targets)` | no | every inventory entry of this kind: the validated targets of this inventory, and the entries of every other inventory file read as JSON and not checked (objects only) | An array of files that hold credentials. It must not throw on a missing or odd field of an entry of another file; of those, the core keeps only the texts that are absolute paths once a leading `~` is expanded. The core gives the combined list of all kinds and all files to `open`, `record` and `forCheck`, so a kind never reads another kind's entries. |
 
 The core runs `checkCommon` first (the name, a duplicate name, the description), then `validate`. `ctx.seenPorts` is shared by all kinds, so a port is unique across the inventory. A kind that supports review calls `checkReview(entry, where, reviewers, allow, { programs })` from `src/checks.js`.
 
@@ -114,7 +116,7 @@ The core runs `checkCommon` first (the name, a duplicate name, the description),
 | `reapStale(ctx)` | no | `{ socketDir, env }` | A promise of an array of lines to print after the kind cleaned up what a killed run left. |
 | `prepare(targets, ctx)` | no | the selected targets of this kind, `{ env }` | A `Map` from target name to data that `open` gets as `ctx.prepared`. Throws an `Error` when a path is too long; the first error in list order stops the start. |
 | `openingMessage(target)` | yes | an inventory target | The text of the `OPENING` line. |
-| `open(target, ctx)` | yes | an inventory target, `{ env, sessionDir, secretFiles, prepared, secrets }` | `{ ok: true, extras, warn?, notes? }` or `{ ok: false, error }`, directly or as a promise. The core always waits for the result. `secrets` is `{}` for a kind without `secrets`; see "Brokered kinds". |
+| `open(target, ctx)` | yes | an inventory target, `{ env, sessionDir, secretFiles, secretFilesProblem, prepared, secrets }` | `{ ok: true, extras, warn?, notes? }` or `{ ok: false, error }`, directly or as a promise. The core always waits for the result. `secrets` is `{}` for a kind without `secrets`; see "Brokered kinds". `secretFilesProblem` is `null`, or the text `cannot read <file> to protect the files it names` when another inventory file could not be read: a kind that uses `secretFiles` must then refuse with that text, as the local kind does. |
 | `close(opened, ctx)` | no | the opened entry, `{ env }` | A promise. |
 | `closeLimit` | with `close` | string | The name under which a test may override the time limit for `close` through `host.limits` of `start`. Today `sshCloseMs` and `kubeCloseMs`. |
 | `closeMs` | with `close` | positive integer | The time limit for `close` in milliseconds: 15000 for ssh and 20000 for kubernetes. The core uses `limits[closeLimit] ?? closeMs`. A kind without `close` has none of `closeLimit`, `closeMs` and `onCloseTimeout`. |
@@ -134,6 +136,8 @@ Notes on these functions:
 
 The core keeps what is the same for every kind: the stop checks, the warning for an empty allow list, the order of the log lines (`target_warn`, `target_opening`, then `target_up`, `target_warn` or `target_skipped`, then the notes, then a `target_warn` for each secret shorter than 8 characters), the review service, `AGENT.md`, `mcp.json` and `session.json` (written last), the follower and the health loop.
 
+The core also keeps the ports apart. Before any target opens, `start` reads every other inventory file (the default `inventory.json` and each `projects/NAME.json`) as JSON and the session file of every other live session, and collects the `ports` of each kind that has them (`usedPorts` in `src/projects.js`). A target of a kind with `ports` is then `SKIPPED` after its `OPENING` line, and `open` is not called, when one of its ports is named there (`port N is also used by project ops; give each project its own port`, or `the default inventory` in place of `project ops`), or when another inventory file cannot be read or is not JSON (`cannot read <file> to check its ports`).
+
 ### A call
 
 | Field | Required | Arguments | Returns |
@@ -145,7 +149,7 @@ The core keeps what is the same for every kind: the stop checks, the warning for
 | `reviewServerCheck(entry, subject)` | no | the review entry, the request | `false` when the review service must refuse on its own knowledge. |
 | `scrubDirs(sessionTargets)` | no | the session targets of this kind | An array of `{ dir, label }`: folders to hide in output. |
 | `scrubText(text, sessionTargets)` | no | the output, the session targets of this kind | The output with this kind's rewrites applied. |
-| `forCheck(target, ctx)` | no | the inventory target, `{ env, secretFiles }` | `{ target }` (the target as `decide` needs it) or `{ refusal }` (a text that `ksproxy check` prints as `REFUSED: ...`). |
+| `forCheck(target, ctx)` | no | the inventory target, `{ env, secretFiles, secretFilesProblem }`, as for `open` | `{ target }` (the target as `decide` needs it) or `{ refusal }` (a text that `ksproxy check` prints as `REFUSED: ...`). |
 | `checkExtra(target, decision)` | no | the inventory target, an allowed decision | An array of extra lines for `ksproxy check`. |
 | `checkInput(words)` | no | the words after the name on `ksproxy check` | The call as the tool would get it. Without it the words are the call (an array) or joined by spaces (a string). `http` makes `METHOD PATH [+body]` into `{ method, path, body? }`. |
 | `ruleWarnings(target)` | no | the inventory target | An array of warning texts, each `allow[N]: ...`. `ksproxy start` and `ksproxy check` print these instead of `allowWarnings(target.allow)` (the warning for a `regex(...)` rule that can be very slow). The two SQL kinds use it to add the warning for a bare `*` and for a regex rule that can match more than one word. |
@@ -345,6 +349,7 @@ A kind does not read another kind's entries. When one kind needs something from 
 
 ## What a new kind must watch for
 
+- Paths under the state folder. A session can be a project, whose state folder is `<state>/p/NAME/`, so a kind uses the path functions of `src/paths.js` (`stateDir`, `sessionDir`, `socketDir`, `socketPath`, `logDir` and the others) for every path it needs, and never builds one under the state folder itself. The guards against ksproxy's own files use `rootStateDir` and `configDir`, which are the folders of every project, never `stateDir`; a kind that adds such a guard must use them too.
 - Files in the shared socket folder. After a killed run, every file there that is not a `*.pid` file, the review socket (`review-sock`) or the call socket (`call-sock`) is closed as an ssh connection, and every `*.pid` file is treated as a cluster proxy. A kind that keeps files there needs its own naming and its own `reapStale`, and the two existing reapers would have to learn to skip those files.
 - The message `folder contains a kubeconfig named in the inventory` is used for the `secretFiles` of every kind, whatever the kind.
 - The fixed sentences that name the kinds are not built from the list: the MCP server instructions and the `list_targets` description name the three original kinds and the service targets as one group (databases, queues and HTTP APIs); the intro and "Off limits" of the agent notes and the reviewer's instructions name the three original kinds. A new kind that fits none of these has to be added to each by hand.

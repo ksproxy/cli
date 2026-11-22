@@ -8,12 +8,13 @@ import {
   REJECT_PATHS, kubeconfigText, proxyArgs, kubectlArgs, hardRefusal, hardRefusalDetail,
   portListening, probeVersion, openCluster, closeCluster,
 } from '../src/kinds/kubernetes/cluster.js';
+import { tempDir } from './temp.js';
 
 const fakeKubectl = fileURLToPath(new URL('./fixtures/fake-kubectl.js', import.meta.url));
 const fakeSsh = fileURLToPath(new URL('./fixtures/fake-ssh.js', import.meta.url));
 
 function tmp() {
-  return fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-kube-')));
+  return fs.realpathSync(tempDir('ks-kube-'));
 }
 
 function freePort() {

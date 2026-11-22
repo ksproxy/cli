@@ -3,12 +3,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { minimalEnv, run } from '../src/exec.js';
+import { tempDir } from './temp.js';
 
 const node = process.execPath;
 const baseEnv = minimalEnv(process.env);
 
 function tmp() {
-  return fs.mkdtempSync(path.join('/tmp', 'ks-exx-'));
+  return tempDir('ks-exx-');
 }
 
 function killQuietly(pid) {

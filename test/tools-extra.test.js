@@ -11,6 +11,7 @@ import sshKind from '../src/kinds/ssh/index.js';
 import kubernetesKind from '../src/kinds/kubernetes/index.js';
 import { writeSession } from '../src/session.js';
 import { KINDS } from '../src/kinds/index.js';
+import { tempDir } from './temp.js';
 
 const decideSsh = sshKind.decide;
 const decideKube = kubernetesKind.decide;
@@ -24,7 +25,7 @@ let sessionDir;
 let env;
 
 before(() => {
-  base = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-tlx-')));
+  base = fs.realpathSync(tempDir('ks-tlx-'));
   sessionDir = path.join(base, 'session');
   fs.mkdirSync(path.join(base, 's'));
   fs.mkdirSync(path.join(base, 'logs'));
@@ -164,7 +165,7 @@ test('an internal failure is reported as an internal error', async () => {
 });
 
 test('a log that cannot be written is reported on stderr and the call still succeeds', async () => {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-tlx2-')));
+  const dir = fs.realpathSync(tempDir('ks-tlx2-'));
   try {
     const session = path.join(dir, 'session');
     fs.mkdirSync(session);
@@ -184,7 +185,7 @@ test('a log that cannot be written is reported on stderr and the call still succ
 });
 
 test('the MCP side never creates the logs folder: a missing one is reported and the call still succeeds', async () => {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-tlx3-')));
+  const dir = fs.realpathSync(tempDir('ks-tlx3-'));
   try {
     const session = path.join(dir, 'session');
     fs.mkdirSync(session);

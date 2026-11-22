@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { crossesPseudoFs, localFolderProblem, valueProblem } from '../src/kinds/local/folder.js';
+import { tempDir } from './temp.js';
 
 let base;
 let work;
@@ -11,7 +12,7 @@ let savedHome;
 
 before(() => {
   savedHome = process.env.HOME;
-  base = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-ps-')));
+  base = fs.realpathSync(tempDir('ks-ps-'));
   work = path.join(base, 'work');
   fs.mkdirSync(path.join(base, 'home'));
   fs.mkdirSync(path.join(base, 'st'));

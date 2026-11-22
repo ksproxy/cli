@@ -5,13 +5,14 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { answerCall } from '../src/tools.js';
+import { tempDir } from './temp.js';
 
 // The http kind with a bearer token, against a loopback stand-in that echoes the Authorization header the way a test
 // asks: cut by the call's time limit, by a broken stream, or by the read limit. No piece of the token may be shown.
 const TOKEN = 'tok-0123456789-abcdefghij-SECRET-TAIL';
 const VISIBLE = 262144;
 
-const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ks-cut-')));
+const root = fs.realpathSync(tempDir('ks-cut-', os.tmpdir()));
 fs.mkdirSync(path.join(root, 'st', 'logs'), { recursive: true, mode: 0o700 });
 fs.mkdirSync(path.join(root, 'cfg'), { recursive: true, mode: 0o700 });
 fs.mkdirSync(path.join(root, 'home'), { recursive: true, mode: 0o700 });

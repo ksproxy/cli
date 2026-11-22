@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { askReview, startReviewServer } from '../src/review.js';
+import { tempDir } from './temp.js';
 
 const reviewer = { name: 'r', baseUrl: 'https://api.example.com/v1/', model: 'm', keyEnv: null, timeoutSeconds: 1, maxCalls: 3 };
 const review = { reviewer: 'r', policy: 'read only', accept: ['sure'] };
@@ -12,7 +13,7 @@ const allow = '{"verdict":"allow","certainty":"sure","reason":"fine"}';
 const unavailable = { allowed: false, short: 'review not available' };
 
 function tmp() {
-  return fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-rev-')));
+  return fs.realpathSync(tempDir('ks-rev-'));
 }
 
 async function withServer(fetchImpl, body, options = {}) {

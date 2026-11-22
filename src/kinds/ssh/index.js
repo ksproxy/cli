@@ -6,7 +6,7 @@ import {
   InventoryError, checkAllow, checkHost, checkKeys, checkReview,
 } from '../../checks.js';
 import { minimalEnv } from '../../exec.js';
-import { socketPath, sshBin } from '../../paths.js';
+import { socketPath, sshBin, startCommand } from '../../paths.js';
 import {
   MAX_JUMPS, checkMaster, closeMaster, closeStaleSockets, execArgs, jumpPrefix, openMaster, parseJump, sshConfigText,
   zshEqualsWord,
@@ -15,13 +15,13 @@ import { REVIEWED } from '../shared.js';
 
 const SSH_KEYS = ['name', 'host', 'jumps', 'description', 'allow', 'review'];
 
-function decideSsh(target, input) {
+function decideSsh(target, input, env = process.env) {
   const jumped = target.jumps !== undefined;
   const prefix = jumpPrefix(target.jumps);
   if (prefix === null) {
     return {
       allowed: false,
-      reason: 'this target\'s jumps are not usable; ask the user to restart ksproxy start',
+      reason: `this target's jumps are not usable; ask the user to restart ${startCommand(env)}`,
       short: 'jumps not usable',
     };
   }

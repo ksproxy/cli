@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import commandKind, { hasLookaround, resolveProgram } from '../src/kinds/command/index.js';
 import { KINDS, kindByKey, kindByTool } from '../src/kinds/index.js';
 import { WORK_FOLDER } from '../src/kinds/engines/command.js';
+import { withProject } from '../src/paths.js';
 import { checkKind } from './kind-contract.js';
 import { InventoryError, validateInventory } from '../src/inventory.js';
 import { callTool, toolDefinitions } from '../src/tools.js';
@@ -16,6 +17,7 @@ import { main } from '../src/cli.js';
 import {
   alive, cleanupAll, fakeProcess, launch, makeWorld, ready, stopWith, waitFor,
 } from './start-helpers.js';
+import { tempDir } from './temp.js';
 
 const fake = fileURLToPath(new URL('./fixtures/fake-client.js', import.meta.url));
 const fixtures = path.dirname(fake);
@@ -165,7 +167,7 @@ test('a regex rule with a lookaround is an inventory error on a command target',
 });
 
 test('resolveProgram: an absolute path, a name on the PATH of start, and every reason a program is refused', () => {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-cmdp-')));
+  const base = fs.realpathSync(tempDir('ks-cmdp-'));
   try {
     const state = path.join(base, 'st');
     const config = path.join(base, 'cfg');
@@ -192,6 +194,30 @@ test('resolveProgram: an absolute path, a name on the PATH of start, and every r
     const link = path.join(base, 'link');
     fs.symlinkSync(path.join(state, 'tool'), link);
     assert.deepEqual(resolveProgram(link, env), { error: `program ${link} is inside ksproxy's own folders` });
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('resolveProgram of project shop refuses a program anywhere in the root state folder, every project included', () => {
+  const base = fs.realpathSync(tempDir('ks-cmdq-'));
+  try {
+    const state = path.join(base, 'st');
+    const config = path.join(base, 'cfg');
+    const viaLink = path.join(base, 'st-link');
+    fs.mkdirSync(config);
+    fs.mkdirSync(state);
+    fs.symlinkSync(state, viaLink);
+    const env = withProject({ PATH: '/usr/bin', KSPROXY_STATE_DIR: viaLink, KSPROXY_CONFIG_DIR: config }, 'shop');
+    for (const dir of [path.join(state, 'p', 'ops'), path.join(state, 'session'), path.join(state, 'p', 'shop', 'run'), path.join(config, 'projects')]) {
+      fs.mkdirSync(dir, { recursive: true });
+      const inside = path.join(dir, 'tool');
+      fs.copyFileSync(fake, inside);
+      fs.chmodSync(inside, 0o755);
+      assert.deepEqual(resolveProgram(inside, env), { error: `program ${inside} is inside ksproxy's own folders` }, dir);
+      assert.deepEqual(resolveProgram('tool', { ...env, PATH: dir }), { error: `program ${inside} is inside ksproxy's own folders` }, dir);
+    }
+    assert.deepEqual(resolveProgram(fake, env), { program: fake });
   } finally {
     fs.rmSync(base, { recursive: true, force: true });
   }
@@ -310,7 +336,7 @@ test('the target in the menu, the opening line, the secrets, open, the record, t
   assert.ok(plain.startsWith('### Command target `rep`\n'));
   assert.ok(!plain.includes('reviewed before'));
 
-  const base = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-cmdr-')));
+  const base = fs.realpathSync(tempDir('ks-cmdr-'));
   const left = path.join(base, 'st', WORK_FOLDER, 'cmd-abc');
   fs.mkdirSync(left, { recursive: true });
   fs.writeFileSync(path.join(left, 'f'), 'x');
@@ -321,7 +347,7 @@ test('the target in the menu, the opening line, the secrets, open, the record, t
 });
 
 test('perform runs the recorded program with the fixed arguments, the words and the secret under the child name', async () => {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-cmdq-')));
+  const base = fs.realpathSync(tempDir('ks-cmdq-'));
   try {
     const env = { PATH: process.env.PATH, KSPROXY_STATE_DIR: path.join(base, 'st'), [SECRET_VAR]: 'not-this-one' };
     const result = await commandKind.perform(

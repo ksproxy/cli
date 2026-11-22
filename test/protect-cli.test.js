@@ -5,10 +5,11 @@ import path from 'node:path';
 import { main } from '../src/cli.js';
 import { agentMdText } from '../src/agent-md.js';
 import { fakeProcess } from './start-helpers.js';
+import { tempDir } from './temp.js';
 
 const ENV_FILE = ['.', 'env'].join('');
 
-const base = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-pc-')));
+const base = fs.realpathSync(tempDir('ks-pc-'));
 after(() => fs.rmSync(base, { recursive: true, force: true }));
 
 const proj = path.join(base, 'proj');

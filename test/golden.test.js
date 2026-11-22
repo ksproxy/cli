@@ -18,6 +18,7 @@ import { main } from '../src/cli.js';
 import { buildRequest } from '../src/review.js';
 import { writeSession } from '../src/session.js';
 import { fakeProcess, fakeSsh, freePorts } from './start-helpers.js';
+import { tempDir } from './temp.js';
 
 const TOOLS = toolDefinitions();
 const decideSsh = sshKind.decide;
@@ -63,7 +64,7 @@ function shown(input) {
 }
 
 before(() => {
-  base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ks-golden-')));
+  base = fs.realpathSync(tempDir('ks-golden-', os.tmpdir()));
   work = path.join(base, 'work');
   fs.mkdirSync(path.join(work, 'sub'), { recursive: true });
   fs.mkdirSync(path.join(work, 'vault'));

@@ -7,6 +7,7 @@ import { InventoryError, loadInventory } from '../src/inventory.js';
 import {
   cleanupAll, fakeProcess, launch, makeWorld, ready, stopWith,
 } from './start-helpers.js';
+import { tempDir } from './temp.js';
 
 after(() => cleanupAll());
 
@@ -14,7 +15,7 @@ const SLOW = 'this pattern can be very slow on some inputs';
 const HINT = '; in the inventory file a backslash is written twice: \\\\*';
 
 function inventoryFile(text) {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-rc-')));
+  const dir = fs.realpathSync(tempDir('ks-rc-'));
   const file = path.join(dir, 'inventory.json');
   fs.writeFileSync(file, text);
   return { dir, file };
@@ -62,7 +63,7 @@ async function cli(args, env) {
 }
 
 function checkWorld(inventory) {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-rc-')));
+  const base = fs.realpathSync(tempDir('ks-rc-'));
   const env = { ...process.env, KSPROXY_CONFIG_DIR: path.join(base, 'cfg'), KSPROXY_STATE_DIR: path.join(base, 'st') };
   fs.mkdirSync(env.KSPROXY_CONFIG_DIR);
   fs.writeFileSync(path.join(env.KSPROXY_CONFIG_DIR, 'inventory.json'), JSON.stringify(inventory));

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { run } from '../src/exec.js';
+import { tempDir } from './temp.js';
 
 const node = process.execPath;
 
@@ -72,7 +73,7 @@ function stubbornGrandchildScript(pidFile, stayAlive) {
 }
 
 test('a grandchild that ignores SIGTERM is killed when the child exits 0', async () => {
-  const pidFile = path.join(fs.mkdtempSync(path.join('/tmp', 'ks-exec-')), 'g.pid');
+  const pidFile = path.join(tempDir('ks-exec-'), 'g.pid');
   let grandchild = null;
   try {
     const r = await run(node, ['-e', stubbornGrandchildScript(pidFile, false)], { timeoutMs: 10000 });
@@ -90,7 +91,7 @@ test('a grandchild that ignores SIGTERM is killed when the child exits 0', async
 });
 
 test('a grandchild that ignores SIGTERM is killed when the call times out', async () => {
-  const pidFile = path.join(fs.mkdtempSync(path.join('/tmp', 'ks-exec-')), 'g.pid');
+  const pidFile = path.join(tempDir('ks-exec-'), 'g.pid');
   let grandchild = null;
   try {
     const r = await run(node, ['-e', stubbornGrandchildScript(pidFile, true)], { timeoutMs: 6000 });
@@ -107,7 +108,7 @@ test('a grandchild that ignores SIGTERM is killed when the call times out', asyn
 });
 
 test('a timeout bounds the call even when a grandchild holds the output open', async () => {
-  const pidFile = path.join(fs.mkdtempSync(path.join('/tmp', 'ks-exec-')), 'grandchild.pid');
+  const pidFile = path.join(tempDir('ks-exec-'), 'grandchild.pid');
   const script = [
     "const { spawn } = require('node:child_process');",
     "const fs = require('node:fs');",

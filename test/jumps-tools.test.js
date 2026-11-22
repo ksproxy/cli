@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { callTool } from '../src/tools.js';
 import sshKind from '../src/kinds/ssh/index.js';
 import { writeSession } from '../src/session.js';
+import { tempDir } from './temp.js';
 
 const decideSsh = sshKind.decide;
 
@@ -35,7 +36,7 @@ function target(name, extra) {
 }
 
 before(() => {
-  base = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-jt-')));
+  base = fs.realpathSync(tempDir('ks-jt-'));
   const sessionDir = path.join(base, 'session');
   fs.mkdirSync(path.join(base, 's'));
   fs.mkdirSync(path.join(base, 'logs'));

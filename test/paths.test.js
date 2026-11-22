@@ -7,9 +7,10 @@ import {
   expandHome, configDir, inventoryPath, stateDir, sessionDir, logDir, auditLogPath, socketDir, socketPath,
   sshBin, kubectlBin, ensureDir, writeFileAtomic, reviewSocketPath, REVIEW_SOCKET_NAME,
 } from '../src/paths.js';
+import { tempDir } from './temp.js';
 
 function tmp() {
-  return fs.mkdtempSync(path.join('/tmp', 'ks-paths-'));
+  return tempDir('ks-paths-');
 }
 
 test('expandHome', () => {

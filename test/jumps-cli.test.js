@@ -4,8 +4,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { main } from '../src/cli.js';
 import { fakeProcess } from './start-helpers.js';
+import { tempDir } from './temp.js';
 
-const base = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-jc-')));
+const base = fs.realpathSync(tempDir('ks-jc-'));
 after(() => fs.rmSync(base, { recursive: true, force: true }));
 
 const env = {

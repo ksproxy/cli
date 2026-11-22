@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { callTool, scrubOutput, targetState, toolDefinitions } from '../src/tools.js';
 import { writeSession } from '../src/session.js';
+import { tempDir } from './temp.js';
 
 const TOOLS = toolDefinitions();
 
@@ -21,7 +22,7 @@ function script(file, lines) {
 }
 
 before(() => {
-  base = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-lt-')));
+  base = fs.realpathSync(tempDir('ks-lt-'));
   cwd = path.join(base, 'work');
   bin = path.join(base, 'bin');
   sessionDir = path.join(base, 'st', 'session');

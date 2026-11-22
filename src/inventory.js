@@ -7,8 +7,10 @@ import { KINDS } from './kinds/index.js';
 
 export { InventoryError };
 
-export function sampleInventory() {
-  return Object.fromEntries(KINDS.map((kind) => [kind.key, kind.sample]));
+// What ksproxy init writes: the sample of each kind in list order, from freeSample of the ports in taken for a kind
+// that has it.
+export function sampleInventory(taken = new Set()) {
+  return Object.fromEntries(KINDS.map((kind) => [kind.key, kind.freeSample === undefined ? kind.sample : kind.freeSample(taken)]));
 }
 
 const REVIEWER_KEYS = ['baseUrl', 'model', 'keyEnv', 'timeoutSeconds', 'maxCalls'];
@@ -67,13 +69,13 @@ export function validateInventory(raw) {
   return { ...validated, reviewers: ctx.reviewers };
 }
 
-export function loadInventory(file) {
+export function loadInventory(file, initHint = 'ksproxy init') {
   let text;
   try {
     text = fs.readFileSync(file, 'utf8');
   } catch (err) {
     if (err.code === 'ENOENT') {
-      throw new InventoryError(`inventory not found: ${file}; run: ksproxy init`);
+      throw new InventoryError(`inventory not found: ${file}; run: ${initHint}`);
     }
     throw new InventoryError(`cannot read inventory ${file}: ${err.message}`);
   }

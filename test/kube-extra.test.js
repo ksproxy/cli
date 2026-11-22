@@ -11,9 +11,10 @@ import {
   reapStaleProxies,
 } from '../src/kinds/kubernetes/cluster.js';
 import { processStartTime } from '../src/session.js';
+import { tempDir } from './temp.js';
 
 function tmp() {
-  return fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-kx-')));
+  return fs.realpathSync(tempDir('ks-kx-'));
 }
 
 function rm(dir) {

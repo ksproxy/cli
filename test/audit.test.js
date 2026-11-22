@@ -7,6 +7,7 @@ import {
   readAuditEntries, sanitizeForTerminal,
 } from '../src/audit.js';
 import { clip } from '../src/text.js';
+import { tempDir } from './temp.js';
 
 const TS = '2026-11-20T12:18:40.000Z';
 
@@ -40,7 +41,7 @@ test('sanitizeForTerminal escapes with lower-case four digit hex', () => {
 });
 
 test('appendAudit writes one JSON line per call with ts, mode 0600', () => {
-  const dir = fs.mkdtempSync(path.join('/tmp', 'ks-audit-'));
+  const dir = tempDir('ks-audit-');
   const file = path.join(dir, 'audit.log');
   appendAudit(file, { tool: 'ssh_exec', target: 'web1', command: 'uptime', decision: 'allowed' });
   appendAudit(file, { tool: 'kubectl', target: 'lab', args: ['get', 'pods'], decision: 'refused', reason: 'x' });
@@ -55,14 +56,14 @@ test('appendAudit writes one JSON line per call with ts, mode 0600', () => {
 });
 
 test('appendAudit keeps a supplied ts', () => {
-  const dir = fs.mkdtempSync(path.join('/tmp', 'ks-audit-'));
+  const dir = tempDir('ks-audit-');
   const file = path.join(dir, 'audit.log');
   appendAudit(file, { ts: '2026-01-01T00:00:00.000Z', tool: 'ssh_exec' });
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).ts, '2026-01-01T00:00:00.000Z');
 });
 
 test('appendAudit caps short and message at 120 characters and keeps the older caps', () => {
-  const dir = fs.mkdtempSync(path.join('/tmp', 'ks-audit-'));
+  const dir = tempDir('ks-audit-');
   const file = path.join(dir, 'audit.log');
   appendAudit(file, {
     event: 'call', target: 'x'.repeat(200), command: 'c'.repeat(5000), reason: 'r'.repeat(900),
@@ -77,7 +78,7 @@ test('appendAudit caps short and message at 120 characters and keeps the older c
 });
 
 test('readAuditEntries skips lines that are not JSON objects', () => {
-  const dir = fs.mkdtempSync(path.join('/tmp', 'ks-audit-'));
+  const dir = tempDir('ks-audit-');
   const file = path.join(dir, 'audit.log');
   fs.writeFileSync(file, '{"a":1}\nnot json\n\n[1]\n"x"\n{"b":2}\n');
   assert.deepEqual(readAuditEntries(file).map((e) => e.entry), [{ a: 1 }, { b: 2 }]);

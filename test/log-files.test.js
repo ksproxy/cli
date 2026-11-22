@@ -5,6 +5,7 @@ import path from 'node:path';
 import { main } from '../src/cli.js';
 import { writeSession } from '../src/session.js';
 import { fakeProcess } from './start-helpers.js';
+import { tempDir } from './temp.js';
 
 const dirs = [];
 
@@ -13,7 +14,7 @@ after(() => {
 });
 
 function world() {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-lf-')));
+  const base = fs.realpathSync(tempDir('ks-lf-'));
   dirs.push(base);
   const logs = path.join(base, 'st', 'logs');
   fs.mkdirSync(logs, { recursive: true });

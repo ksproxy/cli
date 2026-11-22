@@ -5,8 +5,10 @@ import { KINDS, kindByKey } from './kinds/index.js';
 // inspector of ksproxy mcp, not even in the first milliseconds, before the bin adds its listener.
 export const NODE_FLAGS = ['--disable-sigusr1'];
 
-export function mcpConfig(nodePath, binPath) {
-  return { mcpServers: { 'ksproxy': { command: nodePath, args: [...NODE_FLAGS, binPath, 'mcp'] } } };
+// The MCP server of a project is started with --project NAME, so that it reads that project's session only.
+export function mcpConfig(nodePath, binPath, project = null) {
+  const args = [...NODE_FLAGS, binPath, 'mcp', ...(project === null ? [] : ['--project', project])];
+  return { mcpServers: { 'ksproxy': { command: nodePath, args } } };
 }
 
 // One line under the section of a target whose output limit is not the default, else none.
@@ -18,7 +20,7 @@ function outputLine(target) {
 export function agentMdText(session) {
   const sections = session.targets.map((t) => `${kindByKey(t.kind).agentSection(t)}${outputLine(t)}`);
   return [
-    '# ksproxy session',
+    session.project === undefined ? '# ksproxy session' : `# ksproxy session: project ${session.project}`,
     '',
     'The user has opened the servers, clusters and folders below for you. You reach them only through the ksproxy MCP tools. Call `list_targets` first to see what is open right now.',
     '',

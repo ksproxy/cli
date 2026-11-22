@@ -5,13 +5,14 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { validateInventory } from '../src/inventory.js';
+import { tempDir } from './temp.js';
 
 const bin = fileURLToPath(new URL('../bin/ksproxy.js', import.meta.url));
 const fakeSsh = fileURLToPath(new URL('./fixtures/fake-ssh.js', import.meta.url));
 const fakeKubectl = fileURLToPath(new URL('./fixtures/fake-kubectl.js', import.meta.url));
 
 function tempEnv() {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-cli-')));
+  const base = fs.realpathSync(tempDir('ks-cli-'));
   const env = {
     ...process.env,
     KSPROXY_CONFIG_DIR: path.join(base, 'config'),
@@ -59,7 +60,7 @@ test('--version prints the version', async () => {
   const { env } = tempEnv();
   const r = await cli(['--version'], env);
   assert.equal(r.code, 0);
-  assert.equal(r.stdout.trim(), '0.3.0');
+  assert.equal(r.stdout.trim(), '0.4.0');
 });
 
 test('--help and no arguments print the usage', async () => {

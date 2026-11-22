@@ -9,6 +9,7 @@ import { answerCall } from '../src/tools.js';
 import { kindByKey } from '../src/kinds/index.js';
 import { escapeText } from '../src/kinds/engines/resp.js';
 import { respServer } from './fixtures/resp-server.js';
+import { tempDir } from './temp.js';
 
 // The forms of a secret that a kind sends or a service shows (the base64 credential of basic auth, the escaped redis
 // password, the decoded mongodb password) are hidden by the core before any cut, so a piece of one is never shown.
@@ -19,7 +20,7 @@ const STEP = 4;
 // How many bytes of a form come before the visible limit: with fewer than 10, [hidden] itself crosses the limit and is cut.
 const INTO = [1, 5, 10, 20, 30];
 
-const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ks-forms-')));
+const root = fs.realpathSync(tempDir('ks-forms-', os.tmpdir()));
 fs.mkdirSync(path.join(root, 'st', 'logs'), { recursive: true, mode: 0o700 });
 fs.mkdirSync(path.join(root, 'cfg'), { recursive: true, mode: 0o700 });
 fs.mkdirSync(path.join(root, 'home'), { recursive: true, mode: 0o700 });

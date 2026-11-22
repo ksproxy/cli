@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-22
+
+### Added
+
+- Projects: `--project NAME` on every command gives a set of targets of its own (`projects/NAME.json` in the config folder) and a state folder of its own (`p/NAME/` in the state folder), so sessions of different projects, and the default session, run at the same time. `ksproxy status` without `--project` lists every live session. The guards that keep ksproxy's own files out of reach cover the folders of every project, and a local target never reaches a kubeconfig or Kafka client file that any inventory file names. A Kubernetes port that another inventory file or another live session names is refused at `start`, and `ksproxy init` writes a sample with ports that no other file uses.
+
+### Changed
+
+- The socket path of an ssh connection (`s/ssh-NAME`) and of a cluster tunnel (`s/tun-NAME`) may be at most 83 bytes, not 100, because ssh first creates the socket under a name 17 bytes longer and then renames it. A target whose path is 84 to 100 bytes is now refused by `start` with `socket path too long` before anything opens; such a target never worked, because ssh could not create its socket.
+
 ## [0.3.0] - 2026-11-22
 
 ### Added
@@ -69,6 +79,7 @@ First release.
 - `ksproxy init`, `ksproxy status` and `ksproxy check <ssh|kube|local> <name> <command...>` to create an inventory, inspect the session, and test a rule without opening anything.
 - No npm dependencies. Requires Node.js 24 or later, on macOS or Linux.
 
+[0.4.0]: https://github.com/ksproxy/cli/releases/tag/v0.4.0
 [0.3.0]: https://github.com/ksproxy/cli/releases/tag/v0.3.0
 [0.2.0]: https://github.com/ksproxy/cli/releases/tag/v0.2.0
 [0.1.0]: https://github.com/ksproxy/cli/releases/tag/v0.1.0

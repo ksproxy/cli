@@ -10,6 +10,7 @@ import { MY_FIXED, PG_FIXED } from './sql-fixed.js';
 import {
   cleanupAll, fakeProcess, launch, makeWorld, ready, stopWith, trackDir, waitFor,
 } from './start-helpers.js';
+import { tempDir } from './temp.js';
 
 const fakePsql = fileURLToPath(new URL('./fixtures/fake-psql.js', import.meta.url));
 const fakeMysql = fileURLToPath(new URL('./fixtures/fake-mysql.js', import.meta.url));
@@ -64,7 +65,7 @@ const myTarget = (extra) => ({
 // A world whose PATH finds the fake mysql and mariadb, whose KSPROXY_PSQL names the fake psql, and whose HOME holds
 // the log of client starts.
 async function sqlWorld({ postgres, mysql, reviewer }) {
-  const home = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-sqlh-')));
+  const home = fs.realpathSync(tempDir('ks-sqlh-'));
   trackDir(home);
   const bin = path.join(home, 'bin');
   fs.mkdirSync(bin);

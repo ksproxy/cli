@@ -6,6 +6,7 @@ import { localScope, reviewProblem } from '../src/kinds/local/folder.js';
 import localKind from '../src/kinds/local/index.js';
 import { callTool } from '../src/tools.js';
 import { writeSession } from '../src/session.js';
+import { tempDir } from './temp.js';
 
 const decideLocal = localKind.decide;
 
@@ -30,7 +31,7 @@ const target = () => ({
 
 before(() => {
   savedHome = process.env.HOME;
-  base = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-rl-')));
+  base = fs.realpathSync(tempDir('ks-rl-'));
   dir = path.join(base, 'work');
   fs.mkdirSync(path.join(dir, 'sub'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n');

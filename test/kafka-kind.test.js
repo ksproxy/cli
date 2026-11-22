@@ -16,6 +16,7 @@ import { main } from '../src/cli.js';
 import {
   cleanupAll, fakeProcess, launch, makeWorld, ready, stopWith, waitFor,
 } from './start-helpers.js';
+import { tempDir } from './temp.js';
 
 const fake = fileURLToPath(new URL('./fixtures/fake-kafka.js', import.meta.url));
 const CONFIG_LINE = 'sasl.jaas.config=KAFKA-CLIENT-S3CR3T-4d1f0c-unmistakable';
@@ -59,7 +60,7 @@ after(async () => {
 });
 
 function scratch() {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-kfk-')));
+  const dir = fs.realpathSync(tempDir('ks-kfk-'));
   dirs.push(dir);
   return dir;
 }

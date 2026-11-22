@@ -4,12 +4,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { closeMaster, openMaster } from '../src/kinds/ssh/master.js';
+import { tempDir } from './temp.js';
 
 const fakeSsh = fileURLToPath(new URL('./fixtures/fake-ssh.js', import.meta.url));
 const nostay = fileURLToPath(new URL('./fixtures/fake-ssh-nostay.js', import.meta.url));
 
 function tmp() {
-  return fs.mkdtempSync(path.join('/tmp', 'ks-ssx-'));
+  return tempDir('ks-ssx-');
 }
 
 function envWith(extra) {

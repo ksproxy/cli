@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { callTool } from '../src/tools.js';
 import { portListening, reapStaleProxies } from '../src/kinds/kubernetes/cluster.js';
 import { processStartTime } from '../src/session.js';
+import { tempDir } from './temp.js';
 
 const bin = fileURLToPath(new URL('../bin/ksproxy.js', import.meta.url));
 const fakeSsh = fileURLToPath(new URL('./fixtures/fake-ssh.js', import.meta.url));
@@ -82,7 +83,7 @@ async function waitFor(predicate, timeoutMs, what) {
 }
 
 async function setup(extraEnv = {}) {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-st-')));
+  const base = fs.realpathSync(tempDir('ks-st-'));
   const [proxyPort, localPort] = await freePorts(2);
   const kubeconfig = path.join(base, 'kube.yaml');
   fs.writeFileSync(kubeconfig, 'apiVersion: v1\n');
@@ -695,7 +696,7 @@ test('a log larger than 5 MiB is rotated to a stamped file when start begins, an
 });
 
 test('the health check never runs two checks at once and does not delay shutdown', async () => {
-  const trace = path.join(fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-tr-'))), 'trace');
+  const trace = path.join(fs.realpathSync(tempDir('ks-tr-')), 'trace');
   const s = await setup({
     KSPROXY_HEALTH_MS: '200',
     KSPROXY_FAKE_SSH_CHECK_MS: '500',
@@ -735,7 +736,7 @@ function writePidFile(dir, name, text) {
 }
 
 test('reapStaleProxies only kills a live, matching proxy process', async () => {
-  const dir = path.join(fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-reap-'))), 's');
+  const dir = path.join(fs.realpathSync(tempDir('ks-reap-')), 's');
 
   const deadFile = writePidFile(dir, 'kube-a.pid', JSON.stringify({ pid: 2 ** 22 + 54321, startedAt: Date.now() }));
   assert.equal(await reapStaleProxies(dir), 0);

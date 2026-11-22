@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { InventoryError, sampleInventory, validateInventory } from '../src/inventory.js';
 import localKind from '../src/kinds/local/index.js';
+import { tempDir } from './temp.js';
 
 const SAMPLE_INVENTORY = sampleInventory();
 const decideLocal = localKind.decide;
@@ -18,7 +19,7 @@ function rejects(raw, pattern) {
 }
 
 test('the sample local rules are useful under the flag-free wildcard rule', () => {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-li-')));
+  const base = fs.realpathSync(tempDir('ks-li-'));
   try {
     fs.mkdirSync(path.join(base, 'proj', 'sub'), { recursive: true });
     const env = { KSPROXY_STATE_DIR: path.join(base, 'st'), KSPROXY_CONFIG_DIR: path.join(base, 'cfg') };

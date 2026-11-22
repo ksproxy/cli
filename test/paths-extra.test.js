@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { writeFileAtomic } from '../src/paths.js';
+import { tempDir } from './temp.js';
 
 test('writeFileAtomic reports the error and leaves no temporary file behind', () => {
-  const dir = fs.mkdtempSync(path.join('/tmp', 'ks-px-'));
+  const dir = tempDir('ks-px-');
   try {
     const target = path.join(dir, 'missing', 'file.txt');
     assert.throws(() => writeFileAtomic(target, 'x'), { code: 'ENOENT' });

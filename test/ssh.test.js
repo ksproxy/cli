@@ -6,11 +6,12 @@ import { fileURLToPath } from 'node:url';
 import {
   masterArgs, controlArgs, sshConfigText, execArgs, openMaster, checkMaster, closeMaster,
 } from '../src/kinds/ssh/master.js';
+import { tempDir } from './temp.js';
 
 const fakeSsh = fileURLToPath(new URL('./fixtures/fake-ssh.js', import.meta.url));
 
 function tmp() {
-  return fs.mkdtempSync(path.join('/tmp', 'ks-ssh-'));
+  return tempDir('ks-ssh-');
 }
 
 test('masterArgs', () => {

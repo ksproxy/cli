@@ -5,9 +5,10 @@ import path from 'node:path';
 import {
   adoptOldLogs, MAX_LOG_BYTES, moveToRotated, pruneRotated, ROTATED_KEEP, rotatedLogs, rotateAudit,
 } from '../src/audit.js';
+import { tempDir } from './temp.js';
 
 function tmp() {
-  return fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-rot-')));
+  return fs.realpathSync(tempDir('ks-rot-'));
 }
 
 const NOON = new Date('2026-11-21T12:34:56.789Z');

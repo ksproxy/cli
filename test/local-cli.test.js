@@ -6,6 +6,7 @@ import { main } from '../src/cli.js';
 import { appendAudit } from '../src/audit.js';
 import { writeSession } from '../src/session.js';
 import { fakeProcess } from './start-helpers.js';
+import { tempDir } from './temp.js';
 
 const dirs = [];
 
@@ -14,7 +15,7 @@ after(() => {
 });
 
 function world(local = [{ name: 'infra', allow: ['cat *', 'ls ...'] }]) {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-lc-')));
+  const base = fs.realpathSync(tempDir('ks-lc-'));
   dirs.push(base);
   const proj = path.join(base, 'proj');
   fs.mkdirSync(proj);
@@ -39,7 +40,7 @@ async function cli(args, env) {
 test('help lists --local and the flag of every kind for check', async () => {
   const r = await cli(['--help'], {});
   assert.ok(r.stdout.includes('start [--ssh a,b] [--kube x,y] [--local a,b] [--all] [-v|--verbose]'), r.stdout);
-  assert.ok(r.stdout.includes('  check <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>\n        <name> <command...>\n'), r.stdout);
+  assert.ok(r.stdout.includes('  check [--project NAME]\n        <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>\n        <name> <command...>\n'), r.stdout);
 });
 
 test('start --local needs a list, and the list is handed to start and checked against the inventory', async () => {
@@ -173,7 +174,7 @@ test('check local reports an unknown target, and an inventory that has no local 
   assert.equal(r.stderr, 'unknown local target "x"; known: none\n');
   r = await cli(['check', 'local', 'infra'], env);
   assert.equal(r.code, 2);
-  assert.ok(r.stderr.startsWith('usage: ksproxy check <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka> <name> <command...>\nUsage:'), r.stderr);
+  assert.ok(r.stderr.startsWith('usage: ksproxy check [--project NAME] <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka> <name> <command...>\nUsage:'), r.stderr);
 });
 
 test('an inventory with "any" on a local target is an error for check and for start', async () => {

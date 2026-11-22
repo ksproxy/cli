@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { appendAudit, formatLogLine } from '../src/audit.js';
+import { tempDir } from './temp.js';
 
 const TS = '2026-11-20T10:11:12.000Z';
 
@@ -11,7 +12,7 @@ function body(line) {
 }
 
 test('appendAudit clips long strings in args and keeps non-string arguments as they are', () => {
-  const dir = fs.mkdtempSync(path.join('/tmp', 'ks-aux-'));
+  const dir = tempDir('ks-aux-');
   try {
     const file = path.join(dir, 'audit.log');
     appendAudit(file, { event: 'call', args: [1, null, 'x'.repeat(600)] });

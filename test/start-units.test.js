@@ -8,9 +8,10 @@ import {
 } from '../src/start.js';
 import { closeStaleSockets } from '../src/kinds/ssh/master.js';
 import { fakeSsh, waitFor } from './start-helpers.js';
+import { tempDir } from './temp.js';
 
 function tmp() {
-  return fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-su-')));
+  return fs.realpathSync(tempDir('ks-su-'));
 }
 
 function rm(dir) {

@@ -10,6 +10,8 @@ import {
 import sshKind from '../src/kinds/ssh/index.js';
 import kubernetesKind from '../src/kinds/kubernetes/index.js';
 import { writeSession } from '../src/session.js';
+import { withProject } from '../src/paths.js';
+import { tempDir } from './temp.js';
 
 const TOOLS = toolDefinitions();
 const decideSsh = sshKind.decide;
@@ -25,7 +27,7 @@ let server;
 let session;
 
 before(async () => {
-  base = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-tools-')));
+  base = fs.realpathSync(tempDir('ks-tools-'));
   sessionDir = path.join(base, 'session');
   fs.mkdirSync(path.join(base, 's'));
   fs.mkdirSync(path.join(base, 'logs'));
@@ -316,7 +318,7 @@ test('a 1 MB command and a 1 MB cluster name stay small in the audit log and the
 });
 
 test('no session gives the NO_SESSION answer', async () => {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-nosess-')));
+  const dir = fs.realpathSync(tempDir('ks-nosess-'));
   const e = { ...env, KSPROXY_STATE_DIR: dir };
   for (const [name, args] of [
     ['ssh_exec', { server: 'web1', command: 'uptime' }],
@@ -333,7 +335,7 @@ test('no session gives the NO_SESSION answer', async () => {
 });
 
 test('a session with a dead pid is no session', async () => {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-dead-')));
+  const dir = fs.realpathSync(tempDir('ks-dead-'));
   const { spawnSync } = await import('node:child_process');
   const pid = Number(spawnSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))']).stdout.toString());
   writeSession(path.join(dir, 'session'), { ...session, pid });
@@ -429,10 +431,28 @@ test('scrubOutput hides the state dir and every proxy port', () => {
 });
 
 test('scrubOutput also hides the realpath form of the state dir', () => {
-  const dir = fs.mkdtempSync(path.join('/tmp', 'ks-scrub-'));
+  const dir = tempDir('ks-scrub-');
   const real = fs.realpathSync(dir);
   const text = `a ${real}/session/x and ${dir}/session/y`;
   assert.equal(scrubOutput(text, { targets: [] }, { KSPROXY_STATE_DIR: dir }), 'a <ksproxy>/session/x and <ksproxy>/session/y');
+});
+
+test('scrubOutput of a project hides the root state folder, every project included, also by its real path', () => {
+  const dir = fs.realpathSync(tempDir('ks-scrubp-'));
+  try {
+    const root = path.join(dir, 'st');
+    const viaLink = path.join(dir, 'st-link');
+    fs.mkdirSync(root);
+    fs.symlinkSync(root, viaLink);
+    const shop = withProject({ KSPROXY_STATE_DIR: viaLink }, 'shop');
+    const text = `a ${root}/p/ops/session/x, b ${viaLink}/p/ops/y, c ${root}/session/z, d ${viaLink}/p/shop/run/w`;
+    assert.equal(
+      scrubOutput(text, { targets: [] }, shop),
+      'a <ksproxy>/p/ops/session/x, b <ksproxy>/p/ops/y, c <ksproxy>/session/z, d <ksproxy>/p/shop/run/w',
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('ssh_exec output is scrubbed of the state dir', async () => {
@@ -529,7 +549,7 @@ test('list_targets with a live session appends a list entry', async () => {
 });
 
 test('list_targets without a session writes nothing', async () => {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-nolist-')));
+  const dir = fs.realpathSync(tempDir('ks-nolist-'));
   await callTool('list_targets', {}, { ...env, KSPROXY_STATE_DIR: dir });
   assert.ok(!fs.existsSync(path.join(dir, 'logs')));
 });

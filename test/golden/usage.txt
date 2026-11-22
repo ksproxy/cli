@@ -4,21 +4,24 @@ code: 0
 Usage: ksproxy <command>
 
 Commands:
-  init                                      write a sample inventory (never overwrites)
+  init [--project NAME]                     write a sample inventory (never overwrites)
   start [--ssh a,b] [--kube x,y] [--local a,b] [--all] [-v|--verbose]
         [--http x,y] [--command a,b] [--es x,y] [--mq a,b] [--redis x,y]
-        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y]
+        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y] [--project NAME]
                                             pick targets, open them, stay in the foreground
-  status                                    show the live session and each target's state
-  log [-n N] [--denied] [--json]            show the last N log entries (default 50)
-  check <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
+  status [--project NAME]                   show every live session and each target's state
+  log [-n N] [--denied] [--json] [--project NAME]
+                                            show the last N log entries (default 50)
+  check [--project NAME]
+        <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
         <name> <command...>
                                             say whether a command would be allowed
-  mcp                                       run the MCP server on stdio (started by the agent)
+  mcp [--project NAME]                      run the MCP server on stdio (started by the agent)
 
 Options:
   -h, --help                                show this help
   --version                                 show the version
+  --project NAME                            use the project NAME (projects/NAME.json)
 --- stderr
 
 ### help is not a command
@@ -29,21 +32,24 @@ unknown command: help
 Usage: ksproxy <command>
 
 Commands:
-  init                                      write a sample inventory (never overwrites)
+  init [--project NAME]                     write a sample inventory (never overwrites)
   start [--ssh a,b] [--kube x,y] [--local a,b] [--all] [-v|--verbose]
         [--http x,y] [--command a,b] [--es x,y] [--mq a,b] [--redis x,y]
-        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y]
+        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y] [--project NAME]
                                             pick targets, open them, stay in the foreground
-  status                                    show the live session and each target's state
-  log [-n N] [--denied] [--json]            show the last N log entries (default 50)
-  check <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
+  status [--project NAME]                   show every live session and each target's state
+  log [-n N] [--denied] [--json] [--project NAME]
+                                            show the last N log entries (default 50)
+  check [--project NAME]
+        <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
         <name> <command...>
                                             say whether a command would be allowed
-  mcp                                       run the MCP server on stdio (started by the agent)
+  mcp [--project NAME]                      run the MCP server on stdio (started by the agent)
 
 Options:
   -h, --help                                show this help
   --version                                 show the version
+  --project NAME                            use the project NAME (projects/NAME.json)
 
 ### start --bogus
 code: 2
@@ -53,21 +59,24 @@ unknown option for start: --bogus
 Usage: ksproxy <command>
 
 Commands:
-  init                                      write a sample inventory (never overwrites)
+  init [--project NAME]                     write a sample inventory (never overwrites)
   start [--ssh a,b] [--kube x,y] [--local a,b] [--all] [-v|--verbose]
         [--http x,y] [--command a,b] [--es x,y] [--mq a,b] [--redis x,y]
-        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y]
+        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y] [--project NAME]
                                             pick targets, open them, stay in the foreground
-  status                                    show the live session and each target's state
-  log [-n N] [--denied] [--json]            show the last N log entries (default 50)
-  check <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
+  status [--project NAME]                   show every live session and each target's state
+  log [-n N] [--denied] [--json] [--project NAME]
+                                            show the last N log entries (default 50)
+  check [--project NAME]
+        <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
         <name> <command...>
                                             say whether a command would be allowed
-  mcp                                       run the MCP server on stdio (started by the agent)
+  mcp [--project NAME]                      run the MCP server on stdio (started by the agent)
 
 Options:
   -h, --help                                show this help
   --version                                 show the version
+  --project NAME                            use the project NAME (projects/NAME.json)
 
 ### start --ssh without a list
 code: 2
@@ -77,21 +86,24 @@ code: 2
 Usage: ksproxy <command>
 
 Commands:
-  init                                      write a sample inventory (never overwrites)
+  init [--project NAME]                     write a sample inventory (never overwrites)
   start [--ssh a,b] [--kube x,y] [--local a,b] [--all] [-v|--verbose]
         [--http x,y] [--command a,b] [--es x,y] [--mq a,b] [--redis x,y]
-        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y]
+        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y] [--project NAME]
                                             pick targets, open them, stay in the foreground
-  status                                    show the live session and each target's state
-  log [-n N] [--denied] [--json]            show the last N log entries (default 50)
-  check <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
+  status [--project NAME]                   show every live session and each target's state
+  log [-n N] [--denied] [--json] [--project NAME]
+                                            show the last N log entries (default 50)
+  check [--project NAME]
+        <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
         <name> <command...>
                                             say whether a command would be allowed
-  mcp                                       run the MCP server on stdio (started by the agent)
+  mcp [--project NAME]                      run the MCP server on stdio (started by the agent)
 
 Options:
   -h, --help                                show this help
   --version                                 show the version
+  --project NAME                            use the project NAME (projects/NAME.json)
 
 ### start --kube without a list
 code: 2
@@ -101,21 +113,24 @@ code: 2
 Usage: ksproxy <command>
 
 Commands:
-  init                                      write a sample inventory (never overwrites)
+  init [--project NAME]                     write a sample inventory (never overwrites)
   start [--ssh a,b] [--kube x,y] [--local a,b] [--all] [-v|--verbose]
         [--http x,y] [--command a,b] [--es x,y] [--mq a,b] [--redis x,y]
-        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y]
+        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y] [--project NAME]
                                             pick targets, open them, stay in the foreground
-  status                                    show the live session and each target's state
-  log [-n N] [--denied] [--json]            show the last N log entries (default 50)
-  check <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
+  status [--project NAME]                   show every live session and each target's state
+  log [-n N] [--denied] [--json] [--project NAME]
+                                            show the last N log entries (default 50)
+  check [--project NAME]
+        <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
         <name> <command...>
                                             say whether a command would be allowed
-  mcp                                       run the MCP server on stdio (started by the agent)
+  mcp [--project NAME]                      run the MCP server on stdio (started by the agent)
 
 Options:
   -h, --help                                show this help
   --version                                 show the version
+  --project NAME                            use the project NAME (projects/NAME.json)
 
 ### start --local without a list
 code: 2
@@ -125,21 +140,24 @@ code: 2
 Usage: ksproxy <command>
 
 Commands:
-  init                                      write a sample inventory (never overwrites)
+  init [--project NAME]                     write a sample inventory (never overwrites)
   start [--ssh a,b] [--kube x,y] [--local a,b] [--all] [-v|--verbose]
         [--http x,y] [--command a,b] [--es x,y] [--mq a,b] [--redis x,y]
-        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y]
+        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y] [--project NAME]
                                             pick targets, open them, stay in the foreground
-  status                                    show the live session and each target's state
-  log [-n N] [--denied] [--json]            show the last N log entries (default 50)
-  check <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
+  status [--project NAME]                   show every live session and each target's state
+  log [-n N] [--denied] [--json] [--project NAME]
+                                            show the last N log entries (default 50)
+  check [--project NAME]
+        <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
         <name> <command...>
                                             say whether a command would be allowed
-  mcp                                       run the MCP server on stdio (started by the agent)
+  mcp [--project NAME]                      run the MCP server on stdio (started by the agent)
 
 Options:
   -h, --help                                show this help
   --version                                 show the version
+  --project NAME                            use the project NAME (projects/NAME.json)
 
 ### log -n 0
 code: 2
@@ -149,21 +167,24 @@ code: 2
 Usage: ksproxy <command>
 
 Commands:
-  init                                      write a sample inventory (never overwrites)
+  init [--project NAME]                     write a sample inventory (never overwrites)
   start [--ssh a,b] [--kube x,y] [--local a,b] [--all] [-v|--verbose]
         [--http x,y] [--command a,b] [--es x,y] [--mq a,b] [--redis x,y]
-        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y]
+        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y] [--project NAME]
                                             pick targets, open them, stay in the foreground
-  status                                    show the live session and each target's state
-  log [-n N] [--denied] [--json]            show the last N log entries (default 50)
-  check <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
+  status [--project NAME]                   show every live session and each target's state
+  log [-n N] [--denied] [--json] [--project NAME]
+                                            show the last N log entries (default 50)
+  check [--project NAME]
+        <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
         <name> <command...>
                                             say whether a command would be allowed
-  mcp                                       run the MCP server on stdio (started by the agent)
+  mcp [--project NAME]                      run the MCP server on stdio (started by the agent)
 
 Options:
   -h, --help                                show this help
   --version                                 show the version
+  --project NAME                            use the project NAME (projects/NAME.json)
 
 ### check ssh web1 uptime
 code: 0
@@ -356,73 +377,82 @@ unknown local target "nope"; known: infra, bad, broad, plainl
 code: 2
 --- stdout
 --- stderr
-usage: ksproxy check <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka> <name> <command...>
+usage: ksproxy check [--project NAME] <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka> <name> <command...>
 Usage: ksproxy <command>
 
 Commands:
-  init                                      write a sample inventory (never overwrites)
+  init [--project NAME]                     write a sample inventory (never overwrites)
   start [--ssh a,b] [--kube x,y] [--local a,b] [--all] [-v|--verbose]
         [--http x,y] [--command a,b] [--es x,y] [--mq a,b] [--redis x,y]
-        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y]
+        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y] [--project NAME]
                                             pick targets, open them, stay in the foreground
-  status                                    show the live session and each target's state
-  log [-n N] [--denied] [--json]            show the last N log entries (default 50)
-  check <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
+  status [--project NAME]                   show every live session and each target's state
+  log [-n N] [--denied] [--json] [--project NAME]
+                                            show the last N log entries (default 50)
+  check [--project NAME]
+        <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
         <name> <command...>
                                             say whether a command would be allowed
-  mcp                                       run the MCP server on stdio (started by the agent)
+  mcp [--project NAME]                      run the MCP server on stdio (started by the agent)
 
 Options:
   -h, --help                                show this help
   --version                                 show the version
+  --project NAME                            use the project NAME (projects/NAME.json)
 
 ### check with an unknown kind
 code: 2
 --- stdout
 --- stderr
-usage: ksproxy check <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka> <name> <command...>
+usage: ksproxy check [--project NAME] <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka> <name> <command...>
 Usage: ksproxy <command>
 
 Commands:
-  init                                      write a sample inventory (never overwrites)
+  init [--project NAME]                     write a sample inventory (never overwrites)
   start [--ssh a,b] [--kube x,y] [--local a,b] [--all] [-v|--verbose]
         [--http x,y] [--command a,b] [--es x,y] [--mq a,b] [--redis x,y]
-        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y]
+        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y] [--project NAME]
                                             pick targets, open them, stay in the foreground
-  status                                    show the live session and each target's state
-  log [-n N] [--denied] [--json]            show the last N log entries (default 50)
-  check <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
+  status [--project NAME]                   show every live session and each target's state
+  log [-n N] [--denied] [--json] [--project NAME]
+                                            show the last N log entries (default 50)
+  check [--project NAME]
+        <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
         <name> <command...>
                                             say whether a command would be allowed
-  mcp                                       run the MCP server on stdio (started by the agent)
+  mcp [--project NAME]                      run the MCP server on stdio (started by the agent)
 
 Options:
   -h, --help                                show this help
   --version                                 show the version
+  --project NAME                            use the project NAME (projects/NAME.json)
 
 ### check without a command
 code: 2
 --- stdout
 --- stderr
-usage: ksproxy check <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka> <name> <command...>
+usage: ksproxy check [--project NAME] <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka> <name> <command...>
 Usage: ksproxy <command>
 
 Commands:
-  init                                      write a sample inventory (never overwrites)
+  init [--project NAME]                     write a sample inventory (never overwrites)
   start [--ssh a,b] [--kube x,y] [--local a,b] [--all] [-v|--verbose]
         [--http x,y] [--command a,b] [--es x,y] [--mq a,b] [--redis x,y]
-        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y]
+        [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y] [--project NAME]
                                             pick targets, open them, stay in the foreground
-  status                                    show the live session and each target's state
-  log [-n N] [--denied] [--json]            show the last N log entries (default 50)
-  check <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
+  status [--project NAME]                   show every live session and each target's state
+  log [-n N] [--denied] [--json] [--project NAME]
+                                            show the last N log entries (default 50)
+  check [--project NAME]
+        <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
         <name> <command...>
                                             say whether a command would be allowed
-  mcp                                       run the MCP server on stdio (started by the agent)
+  mcp [--project NAME]                      run the MCP server on stdio (started by the agent)
 
 Options:
   -h, --help                                show this help
   --version                                 show the version
+  --project NAME                            use the project NAME (projects/NAME.json)
 
 ### status without a session
 code: 1

@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { minimalEnv, run } from '../src/exec.js';
+import { tempDir } from './temp.js';
 
 test('run starts the program in the cwd option, and keeps the current folder when there is none', async () => {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'ks-lx-')));
+  const dir = fs.realpathSync(tempDir('ks-lx-'));
   try {
     const env = minimalEnv(process.env);
     const inDir = await run(process.execPath, ['-e', 'process.stdout.write(process.cwd())'], { cwd: dir, env });
