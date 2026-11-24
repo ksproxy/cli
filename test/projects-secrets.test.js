@@ -143,3 +143,15 @@ test('otherSecretFiles keeps what secretFiles of each kind gives for the other f
     files: ['/k/own.yaml'], problem: 'cannot read /cfg/x.json to protect the files it names',
   });
 });
+
+test('a secret file named only in projects/default.json is in everySecretFile, for the default and for a project', async () => {
+  const w = await world();
+  writeInventory(w, null, { ssh: [web1] });
+  writeInventory(w, 'default', { kubernetes: [{ name: 'old', kubeconfig: '/k/old-default.yaml', proxyPort: 8021, allow: ['get ...'] }] });
+  writeInventory(w, 'shop', { ssh: [web1] });
+  const own = {};
+  for (const kind of ['ssh', 'kubernetes', 'kafka', 'local', 'http', 'command', 'elasticsearch', 'rabbitmq', 'redis', 'postgres', 'mysql', 'mongodb']) own[kind] = [];
+  for (const env of [w.env, withProject(w.env, 'shop'), withProject(w.env, 'default')]) {
+    assert.deepEqual(everySecretFile(own, otherInventories(env)), { files: ['/k/old-default.yaml'], problem: null });
+  }
+});

@@ -227,6 +227,8 @@ function lifecycleKind(entry) {
   return KINDS.find((kind) => namesKind(entry, kind))?.label ?? '--';
 }
 
+const MAX_FROM = 64;
+
 export function formatLogLine(entry, { width = DEFAULT_WIDTH, color = false, verbose = false } = {}) {
   const event = entry.event ?? 'call';
   let kind;
@@ -257,6 +259,11 @@ export function formatLogLine(entry, { width = DEFAULT_WIDTH, color = false, ver
     detail = sanitizeForTerminal(entry.message ?? '');
   } else {
     return null;
+  }
+
+  if (typeof entry.from === 'string') {
+    const from = `from ${clip(sanitizeForTerminal(entry.from), MAX_FROM)}`;
+    detail = detail === '' ? from : `${from}  ${detail}`;
   }
 
   const plain = [

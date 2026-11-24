@@ -9,19 +9,24 @@ Commands:
         [--http x,y] [--command a,b] [--es x,y] [--mq a,b] [--redis x,y]
         [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y] [--project NAME]
                                             pick targets, open them, stay in the foreground
+  start ... --project a,b                   run several projects in one start
+  start ... --listen HOST:PORT [--new-token] [--tls-cert FILE --tls-key FILE]
+                                            serve its projects over HTTP on the local network
   status [--project NAME]                   show every live session and each target's state
-  log [-n N] [--denied] [--json] [--project NAME]
+  log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]
                                             show the last N log entries (default 50)
   check [--project NAME]
         <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
         <name> <command...>
                                             say whether a command would be allowed
   mcp [--project NAME]                      run the MCP server on stdio (started by the agent)
+  token                                     show when the network token was made, expires and was last used
+  token revoke                              revoke the network token at once
 
 Options:
   -h, --help                                show this help
   --version                                 show the version
-  --project NAME                            use the project NAME (projects/NAME.json)
+  --project NAME                            use the project NAME (projects/NAME.json), or default (inventory.json)
 --- stderr
 
 ### help is not a command
@@ -37,19 +42,24 @@ Commands:
         [--http x,y] [--command a,b] [--es x,y] [--mq a,b] [--redis x,y]
         [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y] [--project NAME]
                                             pick targets, open them, stay in the foreground
+  start ... --project a,b                   run several projects in one start
+  start ... --listen HOST:PORT [--new-token] [--tls-cert FILE --tls-key FILE]
+                                            serve its projects over HTTP on the local network
   status [--project NAME]                   show every live session and each target's state
-  log [-n N] [--denied] [--json] [--project NAME]
+  log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]
                                             show the last N log entries (default 50)
   check [--project NAME]
         <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
         <name> <command...>
                                             say whether a command would be allowed
   mcp [--project NAME]                      run the MCP server on stdio (started by the agent)
+  token                                     show when the network token was made, expires and was last used
+  token revoke                              revoke the network token at once
 
 Options:
   -h, --help                                show this help
   --version                                 show the version
-  --project NAME                            use the project NAME (projects/NAME.json)
+  --project NAME                            use the project NAME (projects/NAME.json), or default (inventory.json)
 
 ### start --bogus
 code: 2
@@ -64,19 +74,24 @@ Commands:
         [--http x,y] [--command a,b] [--es x,y] [--mq a,b] [--redis x,y]
         [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y] [--project NAME]
                                             pick targets, open them, stay in the foreground
+  start ... --project a,b                   run several projects in one start
+  start ... --listen HOST:PORT [--new-token] [--tls-cert FILE --tls-key FILE]
+                                            serve its projects over HTTP on the local network
   status [--project NAME]                   show every live session and each target's state
-  log [-n N] [--denied] [--json] [--project NAME]
+  log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]
                                             show the last N log entries (default 50)
   check [--project NAME]
         <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
         <name> <command...>
                                             say whether a command would be allowed
   mcp [--project NAME]                      run the MCP server on stdio (started by the agent)
+  token                                     show when the network token was made, expires and was last used
+  token revoke                              revoke the network token at once
 
 Options:
   -h, --help                                show this help
   --version                                 show the version
-  --project NAME                            use the project NAME (projects/NAME.json)
+  --project NAME                            use the project NAME (projects/NAME.json), or default (inventory.json)
 
 ### start --ssh without a list
 code: 2
@@ -91,19 +106,24 @@ Commands:
         [--http x,y] [--command a,b] [--es x,y] [--mq a,b] [--redis x,y]
         [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y] [--project NAME]
                                             pick targets, open them, stay in the foreground
+  start ... --project a,b                   run several projects in one start
+  start ... --listen HOST:PORT [--new-token] [--tls-cert FILE --tls-key FILE]
+                                            serve its projects over HTTP on the local network
   status [--project NAME]                   show every live session and each target's state
-  log [-n N] [--denied] [--json] [--project NAME]
+  log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]
                                             show the last N log entries (default 50)
   check [--project NAME]
         <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
         <name> <command...>
                                             say whether a command would be allowed
   mcp [--project NAME]                      run the MCP server on stdio (started by the agent)
+  token                                     show when the network token was made, expires and was last used
+  token revoke                              revoke the network token at once
 
 Options:
   -h, --help                                show this help
   --version                                 show the version
-  --project NAME                            use the project NAME (projects/NAME.json)
+  --project NAME                            use the project NAME (projects/NAME.json), or default (inventory.json)
 
 ### start --kube without a list
 code: 2
@@ -118,19 +138,24 @@ Commands:
         [--http x,y] [--command a,b] [--es x,y] [--mq a,b] [--redis x,y]
         [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y] [--project NAME]
                                             pick targets, open them, stay in the foreground
+  start ... --project a,b                   run several projects in one start
+  start ... --listen HOST:PORT [--new-token] [--tls-cert FILE --tls-key FILE]
+                                            serve its projects over HTTP on the local network
   status [--project NAME]                   show every live session and each target's state
-  log [-n N] [--denied] [--json] [--project NAME]
+  log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]
                                             show the last N log entries (default 50)
   check [--project NAME]
         <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
         <name> <command...>
                                             say whether a command would be allowed
   mcp [--project NAME]                      run the MCP server on stdio (started by the agent)
+  token                                     show when the network token was made, expires and was last used
+  token revoke                              revoke the network token at once
 
 Options:
   -h, --help                                show this help
   --version                                 show the version
-  --project NAME                            use the project NAME (projects/NAME.json)
+  --project NAME                            use the project NAME (projects/NAME.json), or default (inventory.json)
 
 ### start --local without a list
 code: 2
@@ -145,19 +170,24 @@ Commands:
         [--http x,y] [--command a,b] [--es x,y] [--mq a,b] [--redis x,y]
         [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y] [--project NAME]
                                             pick targets, open them, stay in the foreground
+  start ... --project a,b                   run several projects in one start
+  start ... --listen HOST:PORT [--new-token] [--tls-cert FILE --tls-key FILE]
+                                            serve its projects over HTTP on the local network
   status [--project NAME]                   show every live session and each target's state
-  log [-n N] [--denied] [--json] [--project NAME]
+  log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]
                                             show the last N log entries (default 50)
   check [--project NAME]
         <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
         <name> <command...>
                                             say whether a command would be allowed
   mcp [--project NAME]                      run the MCP server on stdio (started by the agent)
+  token                                     show when the network token was made, expires and was last used
+  token revoke                              revoke the network token at once
 
 Options:
   -h, --help                                show this help
   --version                                 show the version
-  --project NAME                            use the project NAME (projects/NAME.json)
+  --project NAME                            use the project NAME (projects/NAME.json), or default (inventory.json)
 
 ### log -n 0
 code: 2
@@ -172,19 +202,24 @@ Commands:
         [--http x,y] [--command a,b] [--es x,y] [--mq a,b] [--redis x,y]
         [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y] [--project NAME]
                                             pick targets, open them, stay in the foreground
+  start ... --project a,b                   run several projects in one start
+  start ... --listen HOST:PORT [--new-token] [--tls-cert FILE --tls-key FILE]
+                                            serve its projects over HTTP on the local network
   status [--project NAME]                   show every live session and each target's state
-  log [-n N] [--denied] [--json] [--project NAME]
+  log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]
                                             show the last N log entries (default 50)
   check [--project NAME]
         <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
         <name> <command...>
                                             say whether a command would be allowed
   mcp [--project NAME]                      run the MCP server on stdio (started by the agent)
+  token                                     show when the network token was made, expires and was last used
+  token revoke                              revoke the network token at once
 
 Options:
   -h, --help                                show this help
   --version                                 show the version
-  --project NAME                            use the project NAME (projects/NAME.json)
+  --project NAME                            use the project NAME (projects/NAME.json), or default (inventory.json)
 
 ### check ssh web1 uptime
 code: 0
@@ -386,19 +421,24 @@ Commands:
         [--http x,y] [--command a,b] [--es x,y] [--mq a,b] [--redis x,y]
         [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y] [--project NAME]
                                             pick targets, open them, stay in the foreground
+  start ... --project a,b                   run several projects in one start
+  start ... --listen HOST:PORT [--new-token] [--tls-cert FILE --tls-key FILE]
+                                            serve its projects over HTTP on the local network
   status [--project NAME]                   show every live session and each target's state
-  log [-n N] [--denied] [--json] [--project NAME]
+  log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]
                                             show the last N log entries (default 50)
   check [--project NAME]
         <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
         <name> <command...>
                                             say whether a command would be allowed
   mcp [--project NAME]                      run the MCP server on stdio (started by the agent)
+  token                                     show when the network token was made, expires and was last used
+  token revoke                              revoke the network token at once
 
 Options:
   -h, --help                                show this help
   --version                                 show the version
-  --project NAME                            use the project NAME (projects/NAME.json)
+  --project NAME                            use the project NAME (projects/NAME.json), or default (inventory.json)
 
 ### check with an unknown kind
 code: 2
@@ -413,19 +453,24 @@ Commands:
         [--http x,y] [--command a,b] [--es x,y] [--mq a,b] [--redis x,y]
         [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y] [--project NAME]
                                             pick targets, open them, stay in the foreground
+  start ... --project a,b                   run several projects in one start
+  start ... --listen HOST:PORT [--new-token] [--tls-cert FILE --tls-key FILE]
+                                            serve its projects over HTTP on the local network
   status [--project NAME]                   show every live session and each target's state
-  log [-n N] [--denied] [--json] [--project NAME]
+  log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]
                                             show the last N log entries (default 50)
   check [--project NAME]
         <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
         <name> <command...>
                                             say whether a command would be allowed
   mcp [--project NAME]                      run the MCP server on stdio (started by the agent)
+  token                                     show when the network token was made, expires and was last used
+  token revoke                              revoke the network token at once
 
 Options:
   -h, --help                                show this help
   --version                                 show the version
-  --project NAME                            use the project NAME (projects/NAME.json)
+  --project NAME                            use the project NAME (projects/NAME.json), or default (inventory.json)
 
 ### check without a command
 code: 2
@@ -440,19 +485,24 @@ Commands:
         [--http x,y] [--command a,b] [--es x,y] [--mq a,b] [--redis x,y]
         [--pg a,b] [--mysql x,y] [--mongo a,b] [--kafka x,y] [--project NAME]
                                             pick targets, open them, stay in the foreground
+  start ... --project a,b                   run several projects in one start
+  start ... --listen HOST:PORT [--new-token] [--tls-cert FILE --tls-key FILE]
+                                            serve its projects over HTTP on the local network
   status [--project NAME]                   show every live session and each target's state
-  log [-n N] [--denied] [--json] [--project NAME]
+  log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]
                                             show the last N log entries (default 50)
   check [--project NAME]
         <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
         <name> <command...>
                                             say whether a command would be allowed
   mcp [--project NAME]                      run the MCP server on stdio (started by the agent)
+  token                                     show when the network token was made, expires and was last used
+  token revoke                              revoke the network token at once
 
 Options:
   -h, --help                                show this help
   --version                                 show the version
-  --project NAME                            use the project NAME (projects/NAME.json)
+  --project NAME                            use the project NAME (projects/NAME.json), or default (inventory.json)
 
 ### status without a session
 code: 1

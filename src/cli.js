@@ -6,21 +6,29 @@ import {
 import { allowWarnings } from './allowlist.js';
 import { InventoryError, loadInventory, sampleInventory } from './inventory.js';
 import { KINDS, kindByFlag, kindByKey } from './kinds/index.js';
+import { listenerLines } from './listen-status.js';
 import { serve, SERVER_INFO } from './mcp.js';
 import {
-  PROJECT_RE, PROJECT_RULE, auditLogPath, ensureDir, initCommand, inventoryPath, logDir, projectOf, startCommand,
-  withProject, writeFileAtomic,
+  PROJECT_DEFAULT, PROJECT_RE, PROJECT_RULE, auditLogPath, ensureDir, initCommand, inventoryPath, logDir, projectOf,
+  projectsDir, rootStateDir, startCommand, withProject, writeFileAtomic,
 } from './paths.js';
 import {
   everySecretFile, liveSessions, otherInventories, usedPorts,
 } from './projects.js';
 import { start } from './start.js';
+import { startMany } from './start-many.js';
+import {
+  revokeToken, tokenLines, tokenPath, tokenState,
+} from './token.js';
 import { reviewRoute, targetState } from './tools.js';
 
 const START_INDENT = '        ';
 const USAGE_WIDTH = 78;
 const PROJECT_USAGE = '[--project NAME]';
 const DESCRIPTION_INDENT = ' '.repeat(44);
+// The two lines of the usage that name what start can do beyond one project: several projects, and the listener.
+const START_MANY_USAGE = `${'  start ... --project a,b'.padEnd(DESCRIPTION_INDENT.length)}run several projects in one start`;
+const START_LISTEN_USAGE = '  start ... --listen HOST:PORT [--new-token] [--tls-cert FILE --tls-key FILE]';
 
 // The start line of the usage, from the list of kinds: the flag of each kind that is not brokered, then --all and
 // --verbose, then the flags of the brokered kinds and --project on lines of their own, wrapped at USAGE_WIDTH.
@@ -52,17 +60,22 @@ Commands:
   init ${PROJECT_USAGE}                     write a sample inventory (never overwrites)
 ${startUsage()}
 ${DESCRIPTION_INDENT}pick targets, open them, stay in the foreground
+${START_MANY_USAGE}
+${START_LISTEN_USAGE}
+${DESCRIPTION_INDENT}serve its projects over HTTP on the local network
   status ${PROJECT_USAGE}                   show every live session and each target's state
-  log [-n N] [--denied] [--json] ${PROJECT_USAGE}
+  log [-n N] [--denied] [--json] [--from ADDRESS] ${PROJECT_USAGE}
 ${DESCRIPTION_INDENT}show the last N log entries (default 50)
 ${checkUsage()}
 ${DESCRIPTION_INDENT}say whether a command would be allowed
   mcp ${PROJECT_USAGE}                      run the MCP server on stdio (started by the agent)
+  token                                     show when the network token was made, expires and was last used
+  token revoke                              revoke the network token at once
 
 Options:
   -h, --help                                show this help
   --version                                 show the version
-  --project NAME                            use the project NAME (projects/NAME.json)
+  --project NAME                            use the project NAME (projects/NAME.json), or default (inventory.json)
 `;
 
 function makeContext(proc) {
@@ -79,10 +92,20 @@ function usageError(ctx, message) {
   return 2;
 }
 
+// The first of projects/default.json in the config folder and p/default in the root state folder that exists, or null.
+function oldDefaultProject(env) {
+  return [path.join(projectsDir(env), `${PROJECT_DEFAULT}.json`), path.join(rootStateDir(env), 'p', PROJECT_DEFAULT)]
+    .find((file) => fs.existsSync(file)) ?? null;
+}
+
 // --project NAME or --project=NAME, once. With beforeKind (check) only the words before the first word that does not
-// start with a dash are looked at: the words after the kind are the command being checked.
-export function takeProject(args, { beforeKind = false } = {}) {
-  let project = null;
+// start with a dash are looked at: the words after the kind are the command being checked. The name default is the
+// default inventory, as no flag is, for every command, unless an old project of that name is still there: with env,
+// a given default is then refused. With list (start) the value may be a comma-separated list of names, none twice, and
+// projects gives them in order; any other command refuses a list.
+export function takeProject(args, { beforeKind = false, list = false, env = null } = {}) {
+  let projects = [null];
+  let given = false;
   const rest = [];
   let open = true;
   for (let i = 0; i < args.length; i += 1) {
@@ -92,20 +115,35 @@ export function takeProject(args, { beforeKind = false } = {}) {
       rest.push(arg);
       continue;
     }
-    if (project !== null) return { error: '--project given twice' };
+    if (given) return { error: '--project given twice' };
     const value = arg === '--project' ? args[i + 1] : arg.slice('--project='.length);
     if (arg === '--project') i += 1;
     if (value === undefined || value === '') return { error: '--project needs a project name' };
-    if (!PROJECT_RE.test(value)) return { error: PROJECT_RULE };
-    project = value;
+    const names = value.split(',');
+    if (names.length > 1 && !list) return { error: 'a list of projects works only with start' };
+    if (!names.every((name) => PROJECT_RE.test(name))) return { error: PROJECT_RULE };
+    const twice = names.find((name, at) => names.indexOf(name) !== at);
+    if (twice !== undefined) return { error: `--project names ${twice} twice` };
+    const old = names.includes(PROJECT_DEFAULT) && env !== null ? oldDefaultProject(env) : null;
+    if (old !== null) return { error: `--project default now means inventory.json, but an old project named default is still here (${old}); rename it, for example to default-old, and update its agent configs` };
+    given = true;
+    projects = names.map((name) => (name === PROJECT_DEFAULT ? null : name));
   }
-  return { project, rest };
+  return list ? { project: projects[0], projects, rest } : { project: projects[0], rest };
 }
 
-function parseStartArgs(args) {
+// The start options that take a value: --listen, given once per address, and the two TLS files, given once each.
+const VALUE_FLAG = /^(--listen|--tls-cert|--tls-key)(?:=(.*))?$/;
+
+// The arguments of start: options, the object start takes as before, and for the listener the --listen values, whether
+// --new-token was given, and the TLS files or null. count is the number of projects: a kind flag names targets of one.
+function parseStartArgs(args, count) {
   const options = {
     ...Object.fromEntries(KINDS.map((kind) => [kind.flag, null])), all: false, verbose: false,
   };
+  const listen = [];
+  const files = { '--tls-cert': null, '--tls-key': null };
+  let newToken = false;
   const flagPattern = new RegExp(`^(--(?:${KINDS.map((kind) => kind.flag).join('|')}))(?:=(.*))?$`);
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
@@ -115,6 +153,28 @@ function parseStartArgs(args) {
     }
     if (arg === '-v' || arg === '--verbose') {
       options.verbose = true;
+      continue;
+    }
+    if (arg === '--new-token') {
+      newToken = true;
+      continue;
+    }
+    const valued = VALUE_FLAG.exec(arg);
+    if (valued) {
+      const [, flag] = valued;
+      let value = valued[2];
+      if (value === undefined) {
+        i += 1;
+        value = args[i];
+      }
+      if (value === undefined || value === '') return { error: `${flag} needs ${flag === '--listen' ? 'HOST:PORT' : 'a file'}` };
+      if (flag === '--listen') {
+        listen.push(value);
+      } else if (files[flag] !== null) {
+        return { error: `${flag} given twice` };
+      } else {
+        files[flag] = value;
+      }
       continue;
     }
     const match = flagPattern.exec(arg);
@@ -129,7 +189,16 @@ function parseStartArgs(args) {
     const key = match[1].slice(2);
     options[key] = [...(options[key] ?? []), ...names];
   }
-  return { options };
+  const { '--tls-cert': cert, '--tls-key': key } = files;
+  if (listen.length === 0 && (newToken || cert !== null || key !== null)) {
+    return { error: '--new-token, --tls-cert and --tls-key work only with --listen' };
+  }
+  if ((cert === null) !== (key === null)) return { error: '--tls-cert and --tls-key go together' };
+  const named = count > 1 ? KINDS.find((kind) => options[kind.flag] !== null) : undefined;
+  if (named !== undefined) return { error: `--${named.flag} names targets of one project; use it with a single --project` };
+  return {
+    options, listen, newToken, tls: cert === null ? null : { cert, key },
+  };
 }
 
 function parseLogArgs(args) {
@@ -140,6 +209,10 @@ function parseLogArgs(args) {
       options.denied = true;
     } else if (arg === '--json') {
       options.json = true;
+    } else if (arg === '--from') {
+      i += 1;
+      if (args[i] === undefined) return { error: '--from needs an address' };
+      options.from = args[i];
     } else if (arg === '-n') {
       i += 1;
       const value = args[i];
@@ -161,6 +234,7 @@ function isCall(entry) {
 function logLines(file, options, format) {
   let rows = readAuditEntries(file);
   if (options.denied) rows = rows.filter(({ entry }) => isCall(entry) && entry.decision === 'refused');
+  if (options.from !== undefined) rows = rows.filter(({ entry }) => entry.from === options.from);
   const lines = [];
   for (const { entry, raw } of rows) {
     try {
@@ -262,6 +336,7 @@ async function status(env, { out }) {
   for (const { lines } of shown) {
     for (const line of lines) out(line);
   }
+  for (const line of listenerLines(env)) out(line);
   return shown.every((block) => block.up) ? 0 : 1;
 }
 
@@ -322,6 +397,37 @@ function check(args, env, ctx) {
   return 1;
 }
 
+const NEW_TOKEN_HINT = 'make a new one with new-token in the start terminal, or start with --new-token';
+
+// What ksproxy token revoke prints for each result of revokeToken but unreadable.
+const REVOKE_TEXTS = {
+  none: 'there is no token',
+  revoked: `the token is revoked; ${NEW_TOKEN_HINT}`,
+  already: `the token was already revoked; ${NEW_TOKEN_HINT}`,
+};
+
+// ksproxy token and ksproxy token revoke. The token is the same for every project, so neither takes --project, and any
+// other word is a usage error. The token itself is never printed: the file holds only its digest.
+function token(args, env, ctx) {
+  const revoke = args.length === 1 && args[0] === 'revoke';
+  if (args.length > 0 && !revoke) {
+    return usageError(ctx, 'usage: ksproxy token [revoke]; the token serves every project, so it takes no --project');
+  }
+  const { state, record } = revoke ? { state: revokeToken(env), record: null } : tokenState(env);
+  if (state === 'unreadable') {
+    ctx.err(`cannot read ${tokenPath(env)}: no request is let in while it cannot be read; start with --new-token to replace it`);
+    return 1;
+  }
+  if (revoke) {
+    ctx.out(REVOKE_TEXTS[state]);
+  } else if (state === 'none') {
+    ctx.out('no token yet: start with --listen to make one');
+  } else {
+    for (const line of tokenLines(record)) ctx.out(line);
+  }
+  return 0;
+}
+
 export async function main(argv, env = process.env, host = {}) {
   const { process: proc = process } = host;
   const ctx = makeContext(proc);
@@ -334,16 +440,19 @@ export async function main(argv, env = process.env, host = {}) {
     ctx.out(SERVER_INFO.version);
     return 0;
   }
-  const taken = takeProject(args, { beforeKind: command === 'check' });
+  if (command === 'token') return token(args, withProject(env, null), ctx);
+  const taken = takeProject(args, { beforeKind: command === 'check', list: command === 'start', env });
   if (taken.error) return usageError(ctx, taken.error);
   const projectEnv = withProject(env, taken.project);
   switch (command) {
     case 'init':
       return init(projectEnv, ctx);
     case 'start': {
-      const parsed = parseStartArgs(taken.rest);
+      const parsed = parseStartArgs(taken.rest, taken.projects.length);
       if (parsed.error) return usageError(ctx, parsed.error);
-      return start(parsed.options, projectEnv, host);
+      // One project without --listen runs exactly as before; anything more runs through startMany.
+      if (taken.projects.length === 1 && parsed.listen.length === 0) return start(parsed.options, projectEnv, host);
+      return startMany({ projects: taken.projects, ...parsed }, withProject(env, null), { ...host, process: proc });
     }
     case 'status':
       return status(projectEnv, ctx);

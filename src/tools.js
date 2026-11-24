@@ -232,6 +232,22 @@ function formatResult(result, timeoutSeconds, limit) {
   return parts.join('\n');
 }
 
+// The fields that an origin adds to an audit entry: none for a local call.
+function originFields(origin) {
+  return origin === undefined ? {} : { from: origin.from, client: origin.client };
+}
+
+const ORIGIN_TEXT = /^[\x20-\x7e]{1,64}$/;
+
+// The origin that a call socket request carried, as audit fields: from and client when each is a string of 1 to 64
+// printable ASCII characters, else none. It never refuses the call.
+function checkedOriginFields(origin) {
+  if (!isPlainObject(origin)) return {};
+  const { from, client } = origin;
+  const fine = (text) => typeof text === 'string' && ORIGIN_TEXT.test(text);
+  return fine(from) && fine(client) ? { from, client } : {};
+}
+
 function audit(env, entry, stderr) {
   try {
     appendAudit(auditLogPath(env), entry);
@@ -245,8 +261,8 @@ function listOpen(session, kind) {
   return names.length > 0 ? names.join(', ') : 'none';
 }
 
-async function listTargets(session, dir, env, stderr) {
-  audit(env, { event: 'list' }, stderr);
+async function listTargets(session, dir, env, stderr, origin) {
+  audit(env, { event: 'list', ...originFields(origin) }, stderr);
   const targets = await Promise.all(session.targets.map(async (t) => ({
     kind: t.kind,
     name: t.name,
@@ -321,7 +337,9 @@ function detailProblem(tool, detail) {
   return null;
 }
 
-async function execTool(tool, args, session, dir, env, stderr, review) {
+// signal: undefined, or the AbortSignal of the network listener: an abort kills the program of the call at once. A
+// brokered call does not take it: its session ends it when it stops.
+async function execTool(tool, args, session, dir, env, stderr, review, origin, signal) {
   const kindObject = kindByTool(tool);
   const {
     key: kind, word, label: logKind, noun: label,
@@ -347,7 +365,7 @@ async function execTool(tool, args, session, dir, env, stderr, review) {
     detailFailed = true;
   }
   const entry = {
-    event: 'call', tool, kind: logKind, target: auditedTarget, [detailKey]: auditedDetail,
+    event: 'call', tool, kind: logKind, target: auditedTarget, [detailKey]: auditedDetail, ...originFields(origin),
   };
   // Every refusal made on this side is audited here, for every kind. A brokered call that is forwarded is audited
   // by start, which decides it, and not here.
@@ -375,7 +393,7 @@ async function execTool(tool, args, session, dir, env, stderr, review) {
     const socket = callSocketOrNull(env);
     if (socket === null) return refuse(callRefusal(CALL_FAILED.noAnswer, word, name).text, 'session did not answer', CALL_FAILED.noAnswer);
     return askCall(socket, {
-      kind, name, input: detail, timeoutSeconds,
+      kind, name, input: detail, timeoutSeconds, ...(origin === undefined ? {} : { origin: originFields(origin) }),
     }, timeoutSeconds * 1000 + CALL_MARGIN_MS, word);
   }
 
@@ -395,7 +413,7 @@ async function execTool(tool, args, session, dir, env, stderr, review) {
   const spec = kindObject.command(target, decision, {
     dir, env, session, input: detail,
   });
-  const result = await run(spec.program, spec.args, { ...limits, ...spec.options });
+  const result = await run(spec.program, spec.args, { ...limits, ...spec.options, signal });
   audit(env, {
     ...entry,
     decision: 'allowed',
@@ -489,7 +507,7 @@ export async function answerCall(request, {
     detailFailed = true;
   }
   const entry = {
-    event: 'call', tool: tool.name, kind: logKind, target: clip(name, 64), [tool.detailKey]: detail,
+    event: 'call', tool: tool.name, kind: logKind, target: clip(name, 64), [tool.detailKey]: detail, ...checkedOriginFields(request.origin),
   };
   const refuse = (text, short, reason = text) => {
     audit(env, {
@@ -578,7 +596,9 @@ export async function answerCall(request, {
   return answer;
 }
 
-export async function callTool(name, args, env = process.env, { stderr = process.stderr, review = askReview } = {}) {
+export async function callTool(name, args, env = process.env, {
+  stderr = process.stderr, review = askReview, origin, signal,
+} = {}) {
   try {
     if (name !== LIST_TARGETS.name && kindByTool(name) === undefined) return { text: `unknown tool: ${name}`, isError: true };
     const dir = sessionDirOf(env);
@@ -586,9 +606,9 @@ export async function callTool(name, args, env = process.env, { stderr = process
     if (session === null || !Array.isArray(session.targets)) {
       return { text: noSessionText(env), isError: name !== 'list_targets' };
     }
-    if (name === 'list_targets') return await listTargets(session, dir, env, stderr);
+    if (name === 'list_targets') return await listTargets(session, dir, env, stderr, origin);
     if (!isPlainObject(args)) return { text: 'invalid arguments: expected an object', isError: true };
-    return await execTool(name, args, session, dir, env, stderr, review);
+    return await execTool(name, args, session, dir, env, stderr, review, origin, signal);
   } catch (err) {
     return { text: `internal error: ${err?.message ?? err}`, isError: true };
   }

@@ -371,3 +371,41 @@ test('the flag chooses the project even when the caller already has a different 
   const r = await cli(['check', '--project', 'shop', 'ssh', 'web1', 'uptime'], env);
   assert.equal(r.stdout, 'ALLOWED by rule: uptime\n');
 });
+
+test('an old project named default makes --project default a usage error, whichever file or folder it is', async () => {
+  for (const [where, make] of [
+    ['cfg', (w) => writeInventory(path.join(w.cfg, 'projects', 'default.json'), inventoryOf('old'))],
+    ['st', (w) => fs.mkdirSync(path.join(w.st, 'p', 'default'), { recursive: true })],
+  ]) {
+    const w = world();
+    make(w);
+    const path1 = where === 'cfg' ? path.join(w.cfg, 'projects', 'default.json') : path.join(w.st, 'p', 'default');
+    const message = `--project default now means inventory.json, but an old project named default is still here (${path1}); rename it, for example to default-old, and update its agent configs`;
+    for (const args of [['status', '--project', 'default'], ['start', '--project=default,shop'], ['mcp', '--project', 'default'], ['check', '--project', 'default', 'ssh', 'web1', 'uptime']]) {
+      const result = await cli(args, w.env);
+      assert.equal(result.code, 2, args.join(' '));
+      assert.ok(result.stderr.startsWith(`${message}\n`), result.stderr);
+    }
+    // Without the flag, or with another name, nothing changes.
+    assert.notEqual((await cli(['status'], w.env)).code, 2);
+    assert.deepEqual(takeProject(['--project', 'shop'], { env: w.env }), { project: 'shop', rest: [] });
+  }
+});
+
+test('the message names the file first when both an old file and an old folder exist', () => {
+  const w = world();
+  writeInventory(path.join(w.cfg, 'projects', 'default.json'), inventoryOf('old'));
+  fs.mkdirSync(path.join(w.st, 'p', 'default'), { recursive: true });
+  const { error } = takeProject(['--project', 'default'], { env: w.env });
+  assert.ok(error.includes(`(${path.join(w.cfg, 'projects', 'default.json')})`), error);
+});
+
+test('--project default still works without an old project of that name', async () => {
+  const w = world();
+  assert.deepEqual(takeProject(['--project', 'default'], { env: w.env }), { project: null, rest: [] });
+  assert.deepEqual(takeProject(['--project', 'default,shop'], { list: true, env: w.env }), {
+    project: null, projects: [null, 'shop'], rest: [],
+  });
+  const result = await cli(['status', '--project', 'default'], w.env);
+  assert.notEqual(result.code, 2);
+});

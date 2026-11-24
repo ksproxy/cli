@@ -69,7 +69,11 @@ async function settle(handle, line, signal) {
   if (!validCall(request)) return callRefusal(CALL_FAILED.badRequest);
   try {
     return await handle({
-      kind: request.kind, name: request.name, input: request.input, timeoutSeconds: request.timeoutSeconds,
+      kind: request.kind,
+      name: request.name,
+      input: request.input,
+      timeoutSeconds: request.timeoutSeconds,
+      ...(Object.hasOwn(request, 'origin') ? { origin: request.origin } : {}),
     }, signal);
   } catch {
     return null;

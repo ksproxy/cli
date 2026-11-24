@@ -57,7 +57,7 @@ Homepage: https://ksproxy.github.io/cli/ · Source: https://github.com/ksproxy/c
    The config is the same on every run, so you do this once.
 5. Press Ctrl-C when you are done. Every ssh connection and tunnel is closed, every proxy is stopped, `session.json` and the socket folder are removed, and the audit log in `logs/` is kept. The other session files (`ssh_config`, `kubeconfig`, `AGENT.md`, `mcp.json` and the proxy logs) stay until the next `start`.
 
-Other commands: `ksproxy status [--project NAME]` (every live session and each target's state, then the time of the last call and the number of calls this session; exit 0 only when everything is up), `ksproxy log [-n N] [--denied] [--json] [--project NAME]` (the history, see "The log"), `ksproxy check [--project NAME] <flag of the kind> <name> <command...>`, for example `ksproxy check ssh web1 uptime` (see below), `ksproxy mcp [--project NAME]` (the MCP server; your agent starts it, you do not), `ksproxy --help`, `ksproxy --version`. `ksproxy init` and `ksproxy start` take `--project NAME` too.
+Other commands: `ksproxy status [--project NAME]` (every live session and each target's state, then the time of the last call and the number of calls this session; exit 0 only when everything is up), `ksproxy log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]` (the history, see "The log"), `ksproxy token` and `ksproxy token revoke` (the network token, see "Network access"), `ksproxy check [--project NAME] <flag of the kind> <name> <command...>`, for example `ksproxy check ssh web1 uptime` (see below), `ksproxy mcp [--project NAME]` (the MCP server; your agent starts it, you do not), `ksproxy --help`, `ksproxy --version`. `ksproxy init` and `ksproxy start` take `--project NAME` too. `ksproxy start` also takes `--project a,b` (several projects, see "Projects") and `--listen HOST:PORT`, `--new-token`, `--tls-cert FILE` and `--tls-key FILE` (see "Network access").
 
 Only one session runs at a time for each project, and for the default (no project). `start` refuses while a live session of the same project exists and cleans up a stale one. See "Projects" below.
 
@@ -75,13 +75,44 @@ A project is a set of targets for one agent, kept in its own inventory file. Use
 
    `ksproxy mcp --project shop` reads only the session of `shop`. With no live session every tool answers `No active session. Ask the user to run` and the command `ksproxy start --project shop`.
 
+`ksproxy start --project shop,ops --all` runs several projects in one process and one terminal. `--project` takes a comma-separated list only for `start`. Each project runs as a separate `start` would: its own inventory file, state folder, session, log and health checks. Before anything opens, `start` checks every project, and if one check fails, nothing opens and `start` exits 1 with the message of the first failure. With several projects, every output line starts with `[NAME] `, such as `[shop] `. The kind flags, such as `--ssh a,b`, need a single project. Without `--all`, the picker runs once per project in a terminal; outside a terminal, several projects need `--all`. When one project stops, all of them stop, and `start` exits 1.
+
+The name `default` means the default inventory (`inventory.json`) wherever `--project` is accepted: `--project default,shop` runs the default inventory and `shop`, and `--project default` is the same as no `--project`. So `default` is not the name of a project, and `ksproxy init --project default` writes `inventory.json`. No command uses `projects/default.json` as a project, but ksproxy still reads it, so that the files it protects stay protected and its ports stay taken. While a project named `default` still exists (a file `projects/default.json` in the config folder, or a folder `p/default` in the state folder), every command given `--project default` is refused with `--project default now means inventory.json, but an old project named default is still here (PATH); rename it, for example to default-old, and update its agent configs`, where PATH is the file or the folder.
+
 A project name is 1 to 24 characters: lower-case letters, digits, `-` and `_`, starting with a letter or a digit. It is short because it is part of every socket path. Any other name is a usage error (exit 2). Only the flag chooses a project; an environment variable of your shell never does.
 
 Sessions of different projects, and the default session, run at the same time. Each has its own ssh connections, proxies, sockets, working folders and log. `ksproxy status` without `--project` lists every live session, the default first, then each project by name, under `session pid N, started T` or `project shop: session pid N, started T`. It exits 0 when at least one session is live and every target is up. With `--project shop` it shows that session only, and with none live it says `no session — run: ksproxy start --project shop`. `ksproxy log --project shop` shows the log of that project; without `--project` it shows the default log. `ksproxy check --project shop ssh web1 uptime` reads the file of that project, and there `--project` must come before the kind.
 
 Nothing is shared between two project files. A target written in two files is opened twice, once for each running project. A Kubernetes port, `proxyPort` or `tunnel.localPort`, may be named in one inventory file only, because the port is what ties a cluster to its proxy. When another inventory file, or a live session of another project or of the default, names the same port, `start` skips that cluster with `port 8001 is also used by project ops; give each project its own port`, so a call through one project never reaches the cluster of another. When another inventory file cannot be read or is not valid JSON, `start` skips every cluster with `cannot read <file> to check its ports`. `ksproxy init`, with or without `--project`, writes a sample whose ports no other inventory file and no live session uses. A project is not a wall between your own agents: see [SECURITY.md](SECURITY.md).
 
-An agent on another machine can use a project of this machine over ssh only with a key that is limited to that one command. Put the options `restrict,command="<node path> --disable-sigusr1 <path to bin/ksproxy.js> mcp --project shop"` before that key in `~/.ssh/authorized_keys` of this machine; then the MCP command of the other machine is `ssh <this machine>`, and the key can run nothing else. Without those options the other machine gets a full shell of this user, which reaches the credentials and sockets of every project. ksproxy opens no network port for this.
+An agent on another machine can use a project of this machine over ssh only with a key that is limited to that one command. Put the options `restrict,command="<node path> --disable-sigusr1 <path to bin/ksproxy.js> mcp --project shop"` before that key in `~/.ssh/authorized_keys` of this machine; then the MCP command of the other machine is `ssh <this machine>`, and the key can run nothing else. Without those options the other machine gets a full shell of this user, which reaches the credentials and sockets of every project. This ssh way needs no network port of ksproxy. The other way, with a port and a token, is described in "Network access" below.
+
+## Network access
+
+By default ksproxy opens no network port. With `--listen`, `ksproxy start` also serves its projects over HTTP, so that an agent on another device of your local network, or on this machine, can use them. Everything runs in one terminal:
+
+```
+ksproxy start --project shop,ops --all --listen 192.168.1.20:7443 --listen 127.0.0.1:7443
+```
+
+- **Addresses.** `--listen` may be given several times. The host must be an IP address (IPv6 in brackets, such as `[fd00::5]:7443`), never a name, and it must be a loopback or private address of this machine. `0.0.0.0`, `::` and every other address are refused before anything opens. Only one `start` with `--listen` runs at a time.
+- **URLs.** `POST http://192.168.1.20:7443/p/shop/mcp` reaches the project `shop`; `/mcp` reaches the default project. A project that this `start` does not run answers `404`. Only Claude Code and other MCP clients that can send a token in a header are served, not the Claude app.
+- **The client line.** When `start` makes a token, it prints it once, with one line per project:
+
+  ```
+  claude mcp add --transport http ksproxy-shop http://192.168.1.20:7443/p/shop/mcp --header "Authorization: Bearer ksp_…"
+  ```
+
+  The default project is `ksproxy-default`, with the URL `http://HOST:PORT/mcp`. Run the line on the machine of the agent. Any listen address works in it.
+- **The token.** There is one token for every project of that `start`. It is valid for one year, or until it is revoked or replaced. Only its SHA-256 is kept, in `listen/token.json` in the state folder. `ksproxy token` shows when it was made, when it expires, whether it is revoked and when and from where it was last used, never the token. `ksproxy token revoke` revokes it at once from any terminal. A new token is made, and shown, only when the output of `start` is a terminal: type `new-token` and Enter, or start with `--new-token`. If the output is a file or a pipe and a new token would be needed, `start` refuses before anything opens with `a new token is shown only on a terminal: run this start once with its output on a terminal`, and a typed `new-token` then prints `[listen] a new token is shown only on a terminal`. The old token stops at once. A later `start` prints only `token from 2026-11-22, expires 2027-11-22`. In the last 30 days `start` warns that the token expires.
+- **Plain HTTP is the default.** Anyone who can record the traffic of that network can read the token and every answer. On a shared network use TLS with your own certificate: `--tls-cert FILE --tls-key FILE` (both or neither, only with `--listen`). A pair that does not belong together is refused before anything opens with `--tls-cert and --tls-key cannot be used together: MESSAGE`. The URLs then start with `https`. The key file is read once, and a local target can never reach it. `ksproxy check` cannot know about this file.
+- **Whoever holds the token can use every project of that `start`**, with the rules of each target, until you revoke or replace it. Keep it as you keep a password.
+- **What the listener refuses.** A request with an `Origin` header; a `Host` header that does not name the listen address; a missing, wrong, revoked or expired token (`401`); an address with 10 wrong tokens in a minute is blocked for a minute (`429`); a body over 256 KiB; more than 64 open connections, or more than 16 from one address; a new call while 16 calls are running (`503`, try again soon). A request must arrive within 10 seconds, and a connection that is idle is closed after 60 seconds. Every rule, refusal, review and limit of `ksproxy mcp` applies to these calls unchanged.
+- **Seeing who is connected.** The `start` terminal prints `[listen] 192.168.1.31 claude-code 2.1 connected` when an address first sends a valid request, and `[listen] refused 3 wrong tokens from 192.168.1.50` after wrong tokens. The terminal shows at most 10 such lines a minute; further addresses are summed up in one line, `[listen] refused 12 wrong tokens from 4 other addresses`. The lines `[listen] cannot listen: …` and `[listen] cannot make a new token: …` go to stderr. `ksproxy status` shows the listen addresses, the token and each client with its last call and number of calls. Every logged call from the network carries the address, shown as `from ADDRESS`; `ksproxy log --from 192.168.1.31` shows only those entries. The address and the client name are information, not proof (see [SECURITY.md](SECURITY.md)).
+- **Stopping.** Ctrl-C, or closing the terminal, ends every running call, including calls that came over the network: the listener stops their programs and waits at most 5 seconds for them.
+- **Run it in the foreground.** `start --listen` must run in the foreground of a terminal. As a background job (`&`) it is stopped by the system when it reads the terminal for `new-token`. To run it without a terminal, give it none on stdin (`ksproxy start --listen … < /dev/null`), and make the token first, in a terminal.
+- **Private is about addresses, not about who is near.** A private address on a VPN or overlay interface reaches every peer of that network. A link-local address on an interface such as `awdl0` or `llw0` on macOS can reach nearby Apple devices that are not on your network. Choose the addresses with care, and keep the token secret in every case.
+- **If the token file cannot be read,** `start --listen` stops with `cannot read FILE: start with --new-token to replace it`.
 
 ## Inventory reference
 
@@ -417,7 +448,7 @@ Each call of a target tool appends an audit entry with the time, tool, target, t
 
 ## The log
 
-`start` prints every call and every event in one format, and `ksproxy log` shows the same lines afterwards:
+`start` prints every call and every event in one format (with several projects each line starts with `[NAME] `), and `ksproxy log` shows the same lines afterwards:
 
 ```
 12:18:40 ssh  web1       OPENING         web1
@@ -460,7 +491,7 @@ Every 30 seconds `start` checks each open target (override in milliseconds with 
 
 | `event` | Other fields |
 |---|---|
-| `call` | `tool`, `kind`, `target`, the call as `command`, `args`, `query` or `request` (the field named by the tool of the kind; `request` is an object, see docs/KINDS.md), `decision`; when refused `reason` and `short`; when run `rule` (`review` when a model approved it, with `review.certainty` and `review.reason`), `exitCode`, `timedOut`, `spawnError`, `durationMs`, `stdoutBytes`, `stderrBytes` |
+| `call` | `tool`, `kind`, `target`, the call as `command`, `args`, `query` or `request` (the field named by the tool of the kind; `request` is an object, see docs/KINDS.md), `decision`; when refused `reason` and `short`; when run `rule` (`review` when a model approved it, with `review.certainty` and `review.reason`), `exitCode`, `timedOut`, `spawnError`, `durationMs`, `stdoutBytes`, `stderrBytes`; for a call that came over the network `from` (the address) and `client` (the client name) |
 | `list` | none |
 | `target_opening`, `target_up`, `target_skipped`, `target_warn`, `target_review`, `target_down`, `target_recovered` | `kind`, `target`, `message` |
 | `session_start` | `project` (for a project only), `pid`, `targets` (`kind`, `name`, `state`), `message` |
@@ -469,7 +500,7 @@ Every 30 seconds `start` checks each open target (override in milliseconds with 
 
 An entry without `event` (from an older version) is read as a call. `ksproxy start` renames `audit.log` to `audit-YYYYMMDD-HHMMSS.log` when it is larger than 5 MiB, at the start of a session and during one. The 5 newest old files are kept and older ones are deleted, so the log folder holds about 30 MiB at most. The files of version 0.1.0 (`audit.log` and `audit.log.1` in the session folder) are moved into the logs folder at the next `start`.
 
-`ksproxy log` prints the last 50 entries; `-n N` (1 to 5000) changes the count, `--denied` keeps only refused calls, and `--json` prints the raw lines (with control and bidirectional characters escaped, so each line is still valid JSON). It reads on into the old files, newest first, when the current file has fewer entries than `-n`. It always includes the verbose detail. With no log it prints `no log yet`.
+`ksproxy log` prints the last 50 entries; `-n N` (1 to 5000) changes the count, `--denied` keeps only refused calls, `--from ADDRESS` keeps only the calls that came over the network from that address (their line shows `from ADDRESS` before the detail), and `--json` prints the raw lines (with control and bidirectional characters escaped, so each line is still valid JSON). It reads on into the old files, newest first, when the current file has fewer entries than `-n`. It always includes the verbose detail. With no log it prints `no log yet`.
 
 ## Security model and limits
 

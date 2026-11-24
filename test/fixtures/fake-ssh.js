@@ -52,6 +52,8 @@ if (argv.includes('-M')) {
     process.exit(0);
   }
   if (command === 'slow') {
+    // A test that ends the call can find this process by its pid.
+    if (process.env.KSPROXY_FAKE_SSH_PID_LOG) fs.appendFileSync(process.env.KSPROXY_FAKE_SSH_PID_LOG, `${process.pid}\n`);
     setTimeout(() => process.exit(0), 10000);
   } else {
     process.stdout.write(`ran ${name} ${command}\n`);

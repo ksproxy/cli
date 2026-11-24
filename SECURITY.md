@@ -19,6 +19,7 @@ Only the latest 0.x release is supported. Fixes are released as a new 0.x versio
 - A command or kubectl argument that the allowlist should refuse but runs.
 - Shell syntax, option injection or a path check bypass that gets through the ssh tokeniser or the kubectl gate.
 - A way for the agent, using only the MCP tools, to obtain a credential or to reach a target that was not selected.
+- A request that reaches a project without a valid token, or before the `Origin`, `Host` and block checks of the network listener, or a way to read the token from ksproxy's files, output or log.
 - Session files, sockets or the audit log created with wrong permissions, or connections and proxies left running after a clean shutdown.
 - Log or output handling that lets target-supplied text forge or hide log lines.
 
@@ -30,6 +31,19 @@ The service kinds (databases, queues and HTTP APIs, see [docs/SERVICES.md](docs/
 - `ksproxy mcp` only checks the shape of a call and forwards it to `ksproxy start` over a private Unix socket (`call-sock`, mode 0600) in the socket folder of the state folder. `ksproxy start` decides the call from its own list of open targets, never from `session.json`, so a rule added to the session file changes nothing.
 - The Kafka client configuration file is read by the Kafka client program, not by ksproxy. Its contents are not hidden from output; ksproxy only keeps the agent from naming it and keeps local targets from reading it.
 - Every failure on that path is a refusal with a fixed text: no socket, a time limit, a reply that is too large or malformed, a stopped session. No error text reaches the agent.
+
+## What the network listener changes
+
+`ksproxy start --listen` serves the projects of that start over HTTP on loopback or private addresses of this machine (see "Network access" in the README):
+
+- The listener runs as the user, like `ksproxy mcp`. It gives each call an environment without the credential variables of every project of this start, and brokered calls go to the call socket of each session as before. The separation is by environment, not by process: the listener runs inside the `start` process, which holds every credential in memory. Every rule, refusal, review and limit applies unchanged.
+- One global token opens every project of that `start`. Only its SHA-256 is kept, in `listen/token.json` in the state folder (mode 0600, folder mode 0700), with the dates it was made, expires (one year later) and was revoked, and the time and address of its last use. The token is shown once, when it is made, and only on a terminal; ksproxy never writes it to a file, the log or an error text. It is compared as a digest in constant time, and the file is read on every request, so a revoke or a new token counts at once. A file that cannot be read refuses every request.
+- Whoever holds the token can use every project of that `start`, with the rules of each target, until it is revoked or replaced. It is not one token per device or per project, and one device cannot be revoked alone.
+- A request passes the address block, the `Origin` and `Host` checks and the token before its body is read. 10 wrong tokens in a minute block the address for a minute. Bodies over 256 KiB, more than 64 connections (or 16 from one address), a new call while 16 calls are running, a request that does not arrive within 10 seconds, and a connection that is idle for 60 seconds are refused or closed. A call goes on when its client leaves, and it counts toward the 16 until it ends.
+- Plain HTTP is the default. Anyone who can record the traffic of that network can read the token and every answer, and can use the token. With `--tls-cert` and `--tls-key` (your own certificate) the traffic is encrypted, and an address that records traffic can no longer read it. TLS does not say who holds the token: the token still opens every project, and a certificate that the client does not check does not protect against a false server. Use TLS on a shared network. The TLS key file is added to the files that the local targets of this start can never reach; local targets of another `ksproxy start` do not know about it, and `ksproxy check` cannot know about it.
+- A process of the same user can revoke the token, which only takes access away, and can read `token.json`, which holds a hash and no token. It can also replace `token.json` with the digest of a token it chose, as it can do anything the user can do; ksproxy itself offers no command that makes a token outside the `start` terminal. As before, a process of the same user can do what the user can do, such as stop `ksproxy start` or read the files it keeps.
+- Private is about addresses, not about who is near. A private address on a VPN or overlay interface reaches every peer of that network, and a link-local address on an interface such as `awdl0` or `llw0` on macOS can reach nearby Apple devices that are not on your network. Each of them can try the token, so keep it secret and choose the listen addresses with care.
+- `from` (the address) and `client` (the client name) in the log are information, not proof. The client name is what the client says in its own request. A local process that talks to the call socket itself could write other values.
 
 ## What is not in scope
 

@@ -3,25 +3,31 @@ import path from 'node:path';
 import { isObject } from './checks.js';
 import { KINDS, secretFilesOf } from './kinds/index.js';
 import {
-  PROJECT_RE, expandHome, inventoryPath, projectOf, projectsDir, rootStateDir, sessionDir as sessionDirOf, withProject,
+  PROJECT_DEFAULT, PROJECT_RE, expandHome, inventoryPath, projectOf, projectsDir, rootStateDir, sessionDir as sessionDirOf,
+  withProject,
 } from './paths.js';
 import { liveSession } from './session.js';
 
-// Where a port comes from, in a message: a project, or the default.
-const whereOf = (project) => (project === null ? 'the default inventory' : `project ${project}`);
+// Where a port comes from, in a message: a project, the default, or projects/default.json, which no command uses as a
+// project.
+function whereOf(project) {
+  if (project === null) return 'the default inventory';
+  return project === PROJECT_DEFAULT ? 'projects/default.json' : `project ${project}`;
+}
 
 // The errors of a projects folder that hold no project file: it is missing, or it is a file.
 const NO_FOLDER = ['ENOENT', 'ENOTDIR'];
 
 // Every live session: the default first, then each project in name order, each with the env of its own project. A
 // project is an entry of root/p that is a folder itself, by the type readdir gives as lstat would (a link is never
-// followed), and whose name passes the project rule.
+// followed), and whose name passes the project rule and is not default, which is never a project.
 export function liveSessions(env) {
   const out = [];
   let names = [];
   try {
     names = fs.readdirSync(path.join(rootStateDir(env), 'p'), { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && PROJECT_RE.test(entry.name)).map((entry) => entry.name).sort();
+      .filter((entry) => entry.isDirectory() && PROJECT_RE.test(entry.name) && entry.name !== PROJECT_DEFAULT)
+      .map((entry) => entry.name).sort();
   } catch {
     names = [];
   }
@@ -34,8 +40,10 @@ export function liveSessions(env) {
 }
 
 // Every inventory file but the one of this command, read as JSON and not checked: the default inventory.json, then each
-// projects/NAME.json whose NAME passes the project rule, in name order. A missing file is left out. unreadable is the
-// first file, or the projects folder, that exists but cannot be read or is not JSON; the files after it are not read.
+// projects/NAME.json whose NAME passes the project rule, in name order. A missing file is left out.
+// projects/default.json is one of them: no command uses it as a project, since the name default means inventory.json,
+// but the secret files and the ports it names are still kept from every command. unreadable is the first file, or the
+// projects folder, that exists but cannot be read or is not JSON; the files after it are not read.
 export function otherInventories(env) {
   const own = projectOf(env);
   const folder = projectsDir(env);
@@ -49,7 +57,7 @@ export function otherInventories(env) {
   const others = [];
   for (const project of [null, ...names]) {
     if (project === own) continue;
-    const file = inventoryPath(withProject(env, project));
+    const file = project === null ? inventoryPath(withProject(env, null)) : path.join(folder, `${project}.json`);
     let raw;
     try {
       raw = JSON.parse(fs.readFileSync(file, 'utf8'));

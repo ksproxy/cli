@@ -81,7 +81,7 @@ function pickByName(label, names, list) {
 // The selection has one list per kind, under the kind's key, in list order.
 const NOTHING = () => ({ selection: Object.fromEntries(KINDS.map((kind) => [kind.key, []])) });
 
-async function chooseTargets(inventory, options, proc, pick) {
+export async function chooseTargets(inventory, options, proc, pick) {
   if (options.all) {
     return { selection: Object.fromEntries(KINDS.map((kind) => [kind.key, inventory[kind.key]])) };
   }
@@ -250,7 +250,7 @@ export function startFollower(auditFile, onEntry, fromOffset, intervalMs = FOLLO
 
 // Every variable that holds a credential: the key of each reviewer that names one, then the variables that a kind
 // with secrets names for each of its inventory entries, selected or not.
-function credentialVariables(inventory) {
+export function credentialVariables(inventory) {
   const names = Object.values(inventory.reviewers).map((r) => r.keyEnv).filter((name) => name !== null);
   for (const kind of KINDS) {
     if (kind.secrets === undefined) continue;
@@ -259,7 +259,7 @@ function credentialVariables(inventory) {
   return names;
 }
 
-function withoutVariables(env, names) {
+export function withoutVariables(env, names) {
   if (names.length === 0) return env;
   const out = { ...env };
   for (const name of names) delete out[name];
@@ -355,6 +355,8 @@ export async function start(options, startEnv = process.env, host = {}) {
     stopping = true;
     wake();
   };
+  // startMany stops a session with a close reason of its own, such as another project stopped.
+  if (host.stop !== undefined) host.stop.then(requestStop);
   const write = (name, text) => {
     if (!alive[name]) return;
     try {
@@ -624,7 +626,9 @@ export async function start(options, startEnv = process.env, host = {}) {
     // Every other inventory file is read once, before any target opens: for the files that hold credentials in each of
     // them, and with every other live session for the ports.
     const inventories = otherInventories(env);
-    const { files: secretFiles, problem: secretFilesProblem } = everySecretFile(inventory, inventories);
+    const { files, problem: secretFilesProblem } = everySecretFile(inventory, inventories);
+    // startMany adds the TLS key file of its listener: no local target may reach it either.
+    const secretFiles = [...files, ...(host.secretFiles ?? [])];
     const ports = usedPorts(env, inventories);
     if (KINDS.every((kind) => selection[kind.key].length === 0)) {
       say('nothing selected');
@@ -863,6 +867,8 @@ export async function start(options, startEnv = process.env, host = {}) {
       show(ready, 'stdout');
       follower = follow(auditFile, onEntry, followFrom, limits.followMs, limits.logBytes);
       startHealth(sessionTargets);
+      // startMany starts its listener once every session it runs has come this far.
+      if (host.ready !== undefined) host.ready();
       await stopRequested;
       announceClosing();
       await cleanup();

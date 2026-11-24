@@ -56,6 +56,23 @@ test('withProject removes an inherited value, so only the flag chooses a project
   assert.deepEqual(withProject(base, null), base);
 });
 
+test('the name default is no project: withProject and projectOf never give it, so no path uses projects/default.json or p/default', () => {
+  const inherited = { ...base, [PROJECT_KEY]: 'ops' };
+  const env = withProject(inherited, 'default');
+  assert.deepEqual(env, withProject(inherited, null));
+  assert.equal(Object.hasOwn(env, PROJECT_KEY), false);
+  assert.equal(projectOf(env), null);
+  const named = { ...base, [PROJECT_KEY]: 'default' };
+  assert.equal(projectOf(named), null);
+  assert.equal(inventoryPath(named), '/cfg/inventory.json');
+  assert.equal(stateDir(named), '/st');
+  assert.equal(sessionDir(named), '/st/session');
+  assert.equal(callSocketPath(named), '/st/s/call-sock');
+  assert.equal(startCommand(named), 'ksproxy start');
+  assert.equal(projectOf({ ...base, [PROJECT_KEY]: 'defaults' }), 'defaults');
+  assert.equal(stateDir(withProject(base, 'defaults')), '/st/p/defaults');
+});
+
 test('a present but invalid project value throws, it never falls back to the default', () => {
   for (const bad of ['', 'Shop', '-a', '_a', 'a'.repeat(25), 'a/b', '..', 'a b', 'a.b', 7, null]) {
     const env = { ...base, [PROJECT_KEY]: bad };

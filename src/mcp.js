@@ -43,7 +43,10 @@ function validId(id) {
   return typeof id === 'string' || (typeof id === 'number' && Number.isFinite(id));
 }
 
-export async function handleMessage(message, env = process.env) {
+// origin is { from, client } for a message that came over the network, and is passed on to callTool for its audit
+// entries; signal is the AbortSignal of the network listener, which ends a program that a call runs here. ksproxy mcp
+// gives neither.
+export async function handleMessage(message, env = process.env, { origin, signal } = {}) {
   const isObject = message !== null && typeof message === 'object' && !Array.isArray(message);
   if (isObject && message.method === undefined && (Object.hasOwn(message, 'result') || Object.hasOwn(message, 'error'))) {
     return null;
@@ -74,7 +77,7 @@ export async function handleMessage(message, env = process.env) {
         const okParams = params !== null && typeof params === 'object' && typeof params.name === 'string'
           && (args === undefined || (args !== null && typeof args === 'object' && !Array.isArray(args)));
         if (!okParams) return failure(id, -32602, 'Invalid params');
-        const { text, isError } = await callTool(params.name, args ?? {}, env);
+        const { text, isError } = await callTool(params.name, args ?? {}, env, { origin, signal });
         return success(id, { content: [{ type: 'text', text }], isError });
       }
       default:

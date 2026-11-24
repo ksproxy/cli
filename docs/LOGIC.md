@@ -132,7 +132,7 @@ This diagram shows the first steps of start, up to the check for a live session.
 
 ```mermaid
 flowchart TD
-    A1["main: takeProject and withProject, then parseStartArgs of the arguments left, then start with the options and the project environment"] --> A2["register handlers for SIGINT, SIGTERM, SIGHUP,<br/>uncaughtException, unhandledRejection and stream errors"]
+    A1["main: takeProject and withProject, then parseStartArgs of the arguments left, then start with the options and the project environment.<br/>A list of projects, or --listen, runs startMany instead, which runs this start once per project, see src/start-many.js"] --> A2["register handlers for SIGINT, SIGTERM, SIGHUP,<br/>uncaughtException, unhandledRejection and stream errors"]
     A2 --> A3["projectOf of env, a value that breaks the rule rejects here, see The project of a run in src/start.js, then loadInventory of inventoryPath with initCommand as the hint"]
     A3 --> A4{"thrown?"}
     A4 -->|"InventoryError"| A5["print its message, exit 1, nothing to clean"]
@@ -169,7 +169,7 @@ flowchart TD
     Y2["comes from: 2a.2, the state is clear"] --> A16["chooseTargets: flags, or the picker, see start.js"]
     A16 --> A17{"error?"}
     A17 -->|"yes"| A18["print the error, exit 1"]
-    A17 -->|"no"| A16p["otherInventories, read once, then everySecretFile of the inventory and of them, and usedPorts: the ports of every other inventory file and live session, see src/projects.js"]
+    A17 -->|"no"| A16p["otherInventories, read once, then everySecretFile of the inventory and of them, then host.secretFiles when startMany gives it,<br/>and usedPorts: the ports of every other inventory file and live session, see src/projects.js"]
     A16p --> A19{"no target selected in any kind?"}
     A19 -->|"yes"| A20["print nothing selected, exit 1"]
     A19 -->|"no"| A21["ensureStateDir, then ensureDir of the socket, session and logs folders, each mode 0700:<br/>for a project the root and root/p are made private too, see start.js"]
@@ -339,7 +339,8 @@ flowchart TD
     W14 --> W15["READY line on stdout"]
     W15 --> W16["start the audit follower: new call and list lines print live"]
     W16 --> W17["startHealth, diagram 5"]
-    W17 --> W18["wait until a stop is requested, diagram 3"]
+    W17 --> WR["host.ready, when startMany gave it: called once, the session is ready"]
+    WR --> W18["wait until a stop is requested, diagram 3"]
 ```
 
 ## 3. Shutdown and clean-up
@@ -644,7 +645,7 @@ sequenceDiagram
     Mcp->>Mcp: a refusal of the arguments or an unknown target is answered and audited by mcp, as for every kind
     Mcp->>Mcp: callSocketOrNull, a socket path that cannot be used answers the session did not answer, audited by mcp
     Note over Mcp: a call that is sent on is audited by start only, never by mcp, so no call is audited twice
-    Mcp->>Start: askCall over call-sock, one JSON line with kind, name, input and timeoutSeconds, at most 256 KiB
+    Mcp->>Start: askCall over call-sock, one JSON line with kind, name, input and timeoutSeconds, and origin with from and client only when the call came over the network, at most 256 KiB
     Note over Start: continues in 8.2, the handler inside start
     Start-->>Mcp: one JSON line with text and isError, at most 4 times the visible limit of the target, 1 MiB by default, then the connection ends
     Note over Mcp: askCall reads at most MAX_ANSWER_BYTES, 16 MiB, the line of the largest limit, counting the bytes of each chunk once
@@ -1154,7 +1155,10 @@ This diagram shows how the columns are padded, the line is clipped and the statu
 
 ```mermaid
 flowchart TD
-    X0["comes from: formatLogLine, a call, list or lifecycle entry"] --> J1["clock of ts, then pad fills each column with spaces: kind to 4, target sanitized and clipped to 10 and padded to 10,<br/>status to 8, duration to 6, then the detail, one space apart"]
+    X0["comes from: formatLogLine, a call, list or lifecycle entry"] --> J0{"the entry has a from that is a string?"}
+    J0 -->|"yes"| J0a["detail is from, a space, the address sanitized and clipped to 64 characters, then two spaces and the detail when it is not empty"]
+    J0 -->|"no"| J1
+    J0a --> J1["clock of ts, then pad fills each column with spaces: kind to 4, target sanitized and clipped to 10 and padded to 10,<br/>status to 8, duration to 6, then the detail, one space apart"]
     J1 --> J2{"width an integer of at least 2?"}
     J2 -->|"yes"| J3["trim the end, clip to width"]
     J2 -->|"no"| J4["trim the end, clip to 240"]
@@ -1286,9 +1290,9 @@ flowchart TD
     Q1 -->|"no"| Q3{"a newline yet?"}
     Q3 -->|"no, and requestTimeoutMs since the connection opened, however many bytes came"| Q2
     Q3 -->|"yes"| Q4["settle: ignore later bytes, clear the deadline timer, connection errors ignored. A close clears it too"]
-    Q4 --> Q5{"JSON, and validCall: an object, not an array, with a string kind and name, an input, timeoutSeconds an integer from 1 to 600?"}
+    Q4 --> Q5{"JSON, and validCall: an object, not an array, with a string kind and name, an input, timeoutSeconds an integer from 1 to 600? An origin field is neither required nor checked here"}
     Q5 -->|"no"| Q6["REFUSED: the call could not be read"]
-    Q5 -->|"yes"| Q7["handle with kind, name, input and timeoutSeconds only, and the signal of the server"]
+    Q5 -->|"yes"| Q7["handle with kind, name, input and timeoutSeconds, and origin as it came when the request has the field, whatever it holds, nothing else of the request, and the signal of the server"]
     Q7 -->|"throws or rejects"| Q8["null"]
     Q7 --> Q9["answerLine of the answer"]
     Q8 --> Q9
@@ -1470,7 +1474,7 @@ flowchart TD
 
 ## src/cli.js
 
-Parses the command line and runs one command (`main`), and turns its result into the process exit code (`runCli`).
+Parses the command line and runs one command (`main`), and turns its result into the process exit code (`runCli`). `token` runs `ksproxy token` and `ksproxy token revoke`, with the texts of `REVOKE_TEXTS` and `NEW_TOKEN_HINT`. `start` with one project and no `--listen` runs `start` of `src/start.js` exactly as before; a list of projects, or `--listen`, runs `startMany` of `src/start-many.js`.
 
 ### main and runCli
 
@@ -1480,16 +1484,15 @@ flowchart TD
     M2 -->|"yes"| M3["OK: print usage, 0"]
     M2 -->|"no"| M4{"--version?"}
     M4 -->|"yes"| M5["OK: print the package version, 0"]
-    M4 -->|"no"| P1["takeProject of the arguments, for check only before the kind"]
+    M4 -->|"no"| MT{"token? It takes no --project, so it comes before takeProject"}
+    MT -->|"yes"| MU["token with the words after it and withProject of the environment and null, see token"]
+    MT -->|"no"| P1["takeProject of the arguments and the environment, for check only before the kind, for start with a list"]
     P1 --> P2{"error?"}
     P2 -->|"yes"| U1["usageError: message and usage on stderr, 2"]
     P2 -->|"no"| P3["withProject of the environment and the project: a copy without any inherited project, then the flag value when given"]
     P3 --> M6{"command?"}
     M6 -->|"init"| M7["init with the project environment"]
-    M6 -->|"start"| M8["parseStartArgs of the arguments left"]
-    M8 --> M9{"error?"}
-    M9 -->|"yes"| U1
-    M9 -->|"no"| M10["start with the options and the project environment, its result is the exit code"]
+    M6 -->|"start"| M8["continues in: main, start"]
     M6 -->|"status"| M11["status with the project environment"]
     M6 -->|"log"| M12["parseLogArgs of the arguments left"]
     M12 --> M13{"error?"}
@@ -1500,6 +1503,17 @@ flowchart TD
     M6 -->|"anything else"| U2["usage error: unknown command: NAME, 2"]
 ```
 
+### main, start
+
+```mermaid
+flowchart TD
+    M8["parseStartArgs of the arguments left and the number of projects"] --> M9{"error?"}
+    M9 -->|"yes"| U1["usageError: message and usage on stderr, 2"]
+    M9 -->|"no"| MS{"one project and no --listen value?"}
+    MS -->|"yes"| M10["start with the options and the project environment, exactly as before, its result is the exit code"]
+    MS -->|"no"| MM["startMany with the projects, the options, the listen values, newToken and tls,<br/>withProject of the environment and null, and host with the process, its result is the exit code, see src/start-many.js"]
+```
+
 ```mermaid
 flowchart TD
     R1["runCli of argv, proc"] --> R2["main with proc.env and the process"]
@@ -1508,35 +1522,41 @@ flowchart TD
     R3 -->|"rejected"| R5["print ksproxy: MESSAGE on stderr, exitCode 1"]
 ```
 
-Help, the version and the empty command line are answered before any path is built. After that no path is read before the project environment exists, so an inherited project variable of the caller never chooses a project: only the flag does. Every command gets the project environment, never the caller's own.
+Help, the version and the empty command line are answered before any path is built. After that no path is read before the project environment exists, so an inherited project variable of the caller never chooses a project: only the flag does. Every command gets the project environment, never the caller's own; `token` gets the environment without any project, since the token is the same for every project.
 
 ### takeProject
 
 ```mermaid
 flowchart TD
-    T1["takeProject of args and beforeKind"] --> T2["next argument"]
+    T1["takeProject of args, beforeKind, list and env: main gives its environment, so every command refuses an old default"] --> T2["next argument"]
     T2 --> T3{"beforeKind and the argument does not start with a dash?"}
     T3 -->|"yes"| T4["the kind is reached: later words are the checked command"]
     T3 -->|"no"| T5{"the kind reached, or the argument is neither --project nor starts with --project=?"}
     T4 --> T5
     T5 -->|"yes"| T6["keep the word in rest"]
-    T5 -->|"no"| T7{"a project already taken?"}
+    T5 -->|"no"| T7{"the flag already given?"}
     T7 -->|"yes"| E1["ERROR: --project given twice"]
     T7 -->|"no"| T8["the value: after the equals sign, or the next argument which is consumed"]
     T8 --> T9{"no value or an empty one?"}
     T9 -->|"yes"| E2["ERROR: --project needs a project name"]
-    T9 -->|"no"| T10{"the value matches PROJECT_RE?"}
-    T10 -->|"no"| E3["ERROR: the PROJECT_RULE text"]
-    T10 -->|"yes"| T11["the project is the value"]
+    T9 -->|"no"| TL{"the value split on commas gives more than one name, and list is false: not start?"}
+    TL -->|"yes"| E4["ERROR: a list of projects works only with start"]
+    TL -->|"no"| T10{"every name matches PROJECT_RE?"}
+    T10 -->|"no"| E3["ERROR: the PROJECT_RULE text, also for an empty name"]
+    T10 -->|"yes"| TW{"a name twice?"}
+    TW -->|"yes"| E5["ERROR: --project names NAME twice"]
+    TW -->|"no"| TD{"env given, and a name is default, and oldDefaultProject finds projects/default.json in the config folder or p/default in the root state folder, the first that exists?"}
+    TD -->|"yes"| E6["ERROR: --project default now means inventory.json, but an old project named default is still here (PATH); rename it, for example to default-old, and update its agent configs"]
+    TD -->|"no"| T11["given: the projects are the names in order, default, PROJECT_DEFAULT, as null:<br/>the default inventory, projects/default.json is not used as a project"]
     T6 --> T12{"more arguments?"}
     T11 --> T12
     T12 -->|"yes"| T2
-    T12 -->|"no"| T13["OK: the project or null, and rest"]
+    T12 -->|"no"| T13["OK: project, the first of the projects, null when none was given, and rest.<br/>With list also projects, every name in order"]
 ```
 
 ### startUsage
 
-This diagram shows how the start line and the check lines of the usage text are built from the list of kinds each time the usage is printed. The rest of the usage text is fixed: it shows `[--project NAME]` after init, status, log and mcp, says that status shows every live session and each target's state, and has the option line `--project NAME` with the text `use the project NAME (projects/NAME.json)` after `--version`.
+This diagram shows how the start line and the check lines of the usage text are built from the list of kinds each time the usage is printed. The rest of the usage text is fixed: it shows `[--project NAME]` after init, status, log and mcp, says that status shows every live session and each target's state, has the lines `token` and `token revoke` after mcp, and has the option line `--project NAME` with the text `use the project NAME (projects/NAME.json), or default (inventory.json)` after `--version`. After the start lines and their text come two more start lines, `START_MANY_USAGE` and `START_LISTEN_USAGE`: `start ... --project a,b` with the text `run several projects in one start`, and `start ... --listen HOST:PORT [--new-token] [--tls-cert FILE --tls-key FILE]` with the text `serve its projects over HTTP on the local network` on the next line.
 
 ```mermaid
 flowchart TD
@@ -1560,13 +1580,28 @@ flowchart TD
 
 ### parseStartArgs
 
+`parseStartArgs` takes the arguments left and the number of projects. The options it gives are the object `start` takes, as before; the listen values, `newToken` and `tls` come apart from them, so a start with one project and no `--listen` gets exactly the options it got before. `VALUE_FLAG` matches the three options that take one value.
+
+#### parseStartArgs, one argument
+
 ```mermaid
 flowchart TD
     P1["next argument"] --> P2{"--all?"}
     P2 -->|"yes"| P3["all"]
     P2 -->|"no"| P4{"-v or --verbose?"}
     P4 -->|"yes"| P5["verbose"]
-    P4 -->|"no"| P6{"the flag of a kind in the list, any of the twelve kinds, alone or with an equals sign and value?"}
+    P4 -->|"no"| PN{"--new-token?"}
+    PN -->|"yes"| PT["newToken"]
+    PN -->|"no"| V1{"--listen, --tls-cert or --tls-key, VALUE_FLAG, alone or with an equals sign and value?"}
+    V1 -->|"yes"| V2["the value: after the equals sign, else the next argument, which is consumed"]
+    V2 --> V3{"no value, or an empty one?"}
+    V3 -->|"yes"| E3["ERROR: --listen needs HOST:PORT, or --tls-cert needs a file, or --tls-key needs a file"]
+    V3 -->|"no"| V4{"--listen?"}
+    V4 -->|"yes"| V5["append it to the listen values: --listen may be given many times"]
+    V4 -->|"no"| V6{"that TLS file given already?"}
+    V6 -->|"yes"| E4["ERROR: --tls-cert given twice, or --tls-key given twice"]
+    V6 -->|"no"| V7["keep the file name"]
+    V1 -->|"no"| P6{"the flag of a kind in the list, any of the twelve kinds, alone or with an equals sign and value?"}
     P6 -->|"no"| E1["ERROR: unknown option for start: ARG"]
     P6 -->|"yes"| P7{"value after an equals sign?"}
     P7 -->|"yes"| P9["split the value on commas, trim, drop empty names"]
@@ -1574,12 +1609,24 @@ flowchart TD
     P8 -->|"no"| E2["ERROR: FLAG needs a comma-separated list of names"]
     P8 -->|"yes, consumed"| P9
     P9 --> P10["append to that kind's list, which now counts as given even when empty"]
-    P3 --> P11{"more arguments?"}
-    P5 --> P11
-    P10 --> P11
-    P11 -->|"yes"| P1
-    P11 -->|"no"| P12["OK: options, one list per kind flag that was given and null for the others, all, verbose"]
 ```
+
+#### parseStartArgs, the end
+
+```mermaid
+flowchart TD
+    Y1["after each argument that gave no error: all, verbose, newToken, a listen value, a TLS file or a kind list"] --> P11{"more arguments?"}
+    P11 -->|"yes"| Y2["the next one, see parseStartArgs, one argument"]
+    P11 -->|"no"| C1{"no listen value, but --new-token, --tls-cert or --tls-key?"}
+    C1 -->|"yes"| E5["ERROR: --new-token, --tls-cert and --tls-key work only with --listen"]
+    C1 -->|"no"| C2{"only one of --tls-cert and --tls-key?"}
+    C2 -->|"yes"| E6["ERROR: --tls-cert and --tls-key go together"]
+    C2 -->|"no"| C3{"more than one project, and the flag of a kind given, the first in list order?"}
+    C3 -->|"yes"| E7["ERROR: --FLAG names targets of one project, use it with a single --project"]
+    C3 -->|"no"| P12["OK: options, one list per kind flag that was given and null for the others, all, verbose.<br/>Apart from them: the listen values, newToken, and tls, null or the cert and key file names"]
+```
+
+The exact text behind the last error: `--ssh names targets of one project; use it with a single --project`, with the flag that was given. Every error here is a usage error: the message, then the usage on stderr, exit 2.
 
 ### parseLogArgs and showLog
 
@@ -1592,13 +1639,17 @@ flowchart TD
     A1["parseLogArgs: next argument"] --> A2{"which?"}
     A2 -->|"--denied"| A3["denied"]
     A2 -->|"--json"| A4["json"]
+    A2 -->|"--from"| A8{"a next argument?"}
+    A8 -->|"no"| E3["ERROR: --from needs an address"]
+    A8 -->|"yes"| A9["from is that argument, as it is"]
     A2 -->|"-n"| A5{"next argument is digits only, from 1 to 5000?"}
     A5 -->|"no"| E1["ERROR: -n needs a number from 1 to 5000"]
     A5 -->|"yes"| A6["count"]
     A2 -->|"anything else"| E2["ERROR: unknown option for log: ARG"]
-    A3 --> A7["defaults: count 50, not denied, not json"]
+    A3 --> A7["defaults: count 50, not denied, not json, no from"]
     A4 --> A7
     A6 --> A7
+    A9 --> A7
 ```
 
 #### showLog
@@ -1612,8 +1663,11 @@ flowchart TD
     L2 -->|"yes"| L4["logLines of logs/audit.log: readAuditEntries"]
     L4 --> L5{"--denied?"}
     L5 -->|"yes"| L6["isCall keeps only calls, event missing or call, that were refused"]
-    L5 -->|"no"| L7["each row"]
-    L6 --> L7
+    L5 -->|"no"| L5b{"--from ADDRESS?"}
+    L6 --> L5b
+    L5b -->|"yes"| L5c["keep only the rows whose entry.from is exactly ADDRESS"]
+    L5b -->|"no"| L7["each row"]
+    L5c --> L7
     L7 --> L8{"--json?"}
     L8 -->|"yes"| L9["the raw line, sanitized"]
     L8 -->|"no"| L10["formatLogLine, always verbose"]
@@ -1627,6 +1681,27 @@ flowchart TD
     L16 --> L15
     L15 -->|"no"| L14["OK: print the last count lines, oldest first, 0"]
 ```
+
+### token
+
+```mermaid
+flowchart TD
+    K1["token of the words after token and the environment without any project"] --> K2{"no word, or the one word revoke?"}
+    K2 -->|"no: any other word, more words, or --project"| K3["usage error, 2: usage: ksproxy token [revoke], the token serves every project, so it takes no --project"]
+    K2 -->|"revoke"| K4["revokeToken, in src/token.js"]
+    K2 -->|"no word"| K5["tokenState, in src/token.js"]
+    K4 --> K6{"unreadable?"}
+    K5 --> K6
+    K6 -->|"yes"| K7["print on stderr: cannot read FILE: no request is let in while it cannot be read, start with --new-token to replace it, 1"]
+    K6 -->|"no"| K8{"which?"}
+    K8 -->|"revoked"| K9["OK: print the token is revoked and NEW_TOKEN_HINT, 0"]
+    K8 -->|"already"| K10["OK: print the token was already revoked and NEW_TOKEN_HINT, 0, the first date stays"]
+    K8 -->|"none, from revokeToken"| K11["OK: print there is no token, 0, nothing is made"]
+    K8 -->|"none, from tokenState"| K12["OK: print no token yet: start with --listen to make one, 0, nothing is made"]
+    K8 -->|"ok, revoked or expired"| K13["OK: print the lines of tokenLines, 0, never the token"]
+```
+
+In the real texts a semicolon stands where the diagram has a comma before a new part: `usage: ksproxy token [revoke]; the token serves every project, so it takes no --project`, `cannot read FILE: no request is let in while it cannot be read; start with --new-token to replace it`, and `the token is revoked; ` followed by `NEW_TOKEN_HINT`, which reads `make a new one with new-token in the start terminal, or start with --new-token`. Any process of the user can revoke the token, from any terminal; only `start` can make a new one.
 
 ### status
 
@@ -1647,7 +1722,8 @@ flowchart TD
     S12 -->|"no"| S6{"none kept?"}
     S6 -->|"yes"| S7["print on stdout: no session, a dash, run: and startCommand, which names the project when there is one, 1"]
     S6 -->|"no"| S13["print the lines of each kept session, in order"]
-    S13 --> S15{"every target of every kept session up?"}
+    S13 --> S14["then print listenerLines, in src/listen-status.js: nothing when no live listener is recorded"]
+    S14 --> S15{"every target of every kept session up?"}
     S15 -->|"yes"| S16["OK: 0"]
     S15 -->|"no"| S17["1"]
 ```
@@ -3265,9 +3341,459 @@ flowchart TD
     Q1["QUERY_NOTE"] --> Q2["the agent note, shared with httpServiceKind: the four method override names are refused in any letter case, and a reviewer and the log see the query"]
 ```
 
+## src/listen-status.js
+
+What `ksproxy status` shows of the network listener. `readListener` reads `listen.json` in `listenDir` and gives its record, or null. `listenerLines` gives the lines to print. The helpers: `isCount`, `isText`, `isTimeOrNull` and `isTexts` check a field, `isClient` checks one client record, `clean` is `sanitizeForTerminal`, `stamp` writes a time in local time, `dayOf` gives the day of a time in UTC, `tokenLine` gives the token line and `clientLine` the line of one client. The file can be written by any process of the user, so its shape is checked and every text taken from it is cleaned before it is printed. The listener never changes the exit code of `status`.
+
+### readListener
+
+```mermaid
+flowchart TD
+    R1["readListener of env: read listen.json in listenDir"] --> R2{"read and JSON?"}
+    R2 -->|"no, missing, unreadable or not JSON"| R3["null"]
+    R2 -->|"yes"| R4{"an object, version 1, addresses a list of texts that is not empty, tls true or false, clients a list?"}
+    R4 -->|"no"| R3
+    R4 -->|"yes"| R5{"every client isClient: an object, from and client texts, firstSeen and lastCall null or a time,<br/>calls open and wrong whole numbers of 0 or more, projects a list of texts?"}
+    R5 -->|"no"| R3
+    R5 -->|"yes"| R6{"isLive of the pid and processStartedAt, in src/session.js:<br/>a pid that is gone, or a start time more than 5 seconds from that process's own, is not live"}
+    R6 -->|"no"| R3
+    R6 -->|"yes"| R7["OK: the record"]
+```
+
+### listenerLines
+
+```mermaid
+flowchart TD
+    L1["listenerLines of env and now"] --> L2{"readListener gives null?"}
+    L2 -->|"yes"| L3["OK: no lines"]
+    L2 -->|"no"| L4["line: listening on the addresses, cleaned and joined with a comma and a space, then http or https in brackets by tls"]
+    L4 --> L5["line of tokenLine, see below"]
+    L5 --> L6["one clientLine for each client, in file order"]
+    L6 --> L7["then for each client whose wrong is more than 0: two spaces, refused N wrong tokens from, the cleaned address"]
+    L7 --> L8["OK: the lines"]
+```
+
+### tokenLine and clientLine
+
+```mermaid
+flowchart TD
+    T1["tokenLine: tokenState of env and now"] --> T2{"state?"}
+    T2 -->|"ok"| T3["token from the day created, expires the day expires, both in UTC"]
+    T2 -->|"none"| T4["no token"]
+    T2 -->|"unreadable"| T5["token file cannot be read"]
+    T2 -->|"revoked or expired"| T6["token and that state"]
+    C1["clientLine: two spaces and the cleaned address"] --> C2["the cleaned client name"]
+    C2 --> C3{"open more than 0?"}
+    C3 -->|"yes"| C4["connected"]
+    C3 -->|"no"| C5["not connected"]
+    C4 --> C6{"lastCall null?"}
+    C5 --> C6
+    C6 -->|"yes"| C7["last call never"]
+    C6 -->|"no"| C8["last call and stamp: YYYY-MM-DD HH:MM:SS in local time"]
+    C7 --> C9["N calls"]
+    C8 --> C9
+    C9 --> C10{"projects not empty?"}
+    C10 -->|"yes"| C11["projects, each cleaned, joined with a comma and a space"]
+    C10 -->|"no"| C12["left out"]
+    C11 --> C13["OK: the parts joined with two spaces"]
+    C12 --> C13
+```
+
+## src/listen.js
+
+The network listener of `ksproxy start`: MCP over HTTP on loopback or private addresses of this machine, behind the global token of `src/token.js`. `parseListen` checks one `--listen` value, `startListener` starts the servers and gives `close`, `clients` and `bound`, `listenPath` is `listen.json` in `listenDir`, `allowedHosts` gives the Host header values of one address, `clientName` reads the client name of an `initialize`, and `clientBook` keeps the client records, the wrong tokens, the block and the events. `LISTEN_LIMITS` holds the limits below.
+
+The helpers: `blockList` builds a `net.BlockList` of address ranges, for the lists `LOOPBACK` (127.0.0.0/8 and ::1), `PRIVATE` and `LINK_LOCAL6` (fe80::/10); `typeOf` gives ipv4 or ipv6 for a family; `normalAddress` writes an IPv6 address in one form, so `::1` and `0:0:0:0:0:0:0:1` are the same; `hostText` puts an IPv6 address in brackets; `withoutZone` drops the `%ZONE` of an address; `ownAddress` looks the address up in the interfaces; `hostKey` reads a Host header; `livePid` reads `listen.json`; `listenText` gives its text; `createListen` makes it with an exclusive create, `claimListen` claims it before anything listens, `refuseLive` refuses a file that names a live listener with the text of `listeningText`, `moveAside` moves a file in the way aside, and `cannotWrite` gives the error of a claim that fails; `writeListen` writes it later, `removeListen` removes a file, and `releaseListen` removes it at the close while it names this process; `reportRefused` runs one tick of the refused events; `servedProject` reads the path; `bearerOf` reads the Authorization header; `mediaType` reads the Content-Type header; `refuse` and `answer` write an answer; `readBody` reads the body; `serve` handles one request; `makeServer` makes one server; `listenOn` starts it; `callsEnded` waits at the close for the messages being handled; `shutDown` stops every server.
+
+| `LISTEN_LIMITS` | Default | What it limits |
+|---|---|---|
+| `maxConnections` | 64 | open connections, of every address together |
+| `maxPerAddress` | 16 | open connections of one address |
+| `maxCalls` | 16 | messages being handled at once, from the moment one is handed to `handleMessage` until that settles |
+| `requestMs` | 10000 | the time to send the headers and the body of a request, and the TLS handshake |
+| `idleMs` | 60000 | the time a connection waits for its next request |
+| `maxBody` | 262144 | the bytes of a body |
+| `wrongMax`, `wrongWindowMs` | 10, 60000 | wrong tokens of one address in that time that start a block; `wrongWindowMs` is also the time between two reports of the refused events |
+| `blockMs` | 60000 | the time of a block |
+| `listenWriteMs` | 2000 | the time between two writes of `listen.json` |
+| `maxClients` | 1000 | client records kept in memory; `droppedAt` chooses the one to drop |
+| `closeWaitMs` | 5000 | the time `close` waits for the messages being handled to settle, once their signal is aborted |
+
+`REFUSED_PER_TICK` (10) is the most addresses that one report names, and also the most first wrong tokens reported at once between two reports; `CLIENT_MAX` (64) is the longest client name. `BUSY_TEXT` and `BUSY_HEADERS` are the text and the `Retry-After` header of the answer 503.
+
+The checks of a request, in order, and their answers. Every refusal is plain text and closes the connection, so a body that was not read is never read for a request; every 401 has `WWW-Authenticate: Bearer`. A request with `Expect: 100-continue` gets `100 Continue` only once every check before the body has passed, just before its body is read.
+
+| Check | Answer |
+|---|---|
+| the path, and a project this start runs | 404 `not served here` |
+| the method | 405 `only POST is served here`, with `Allow: POST` |
+| an `Origin` header | 403 `a request with an Origin header is refused` |
+| the `Host` header | 421 `the Host header does not name this listener` |
+| a blocked address | 429 `too many wrong tokens from this address; try again later`, with `Retry-After` |
+| no token, or a header that is not `Bearer TOKEN` | 401 `the request has no token` |
+| a wrong token | 401 `the token is wrong`, and it counts toward the block |
+| a revoked or expired token | 401 `the token was revoked` or `the token expired` |
+| no token file, or one that cannot be read | 401 `the token file cannot be read` |
+| `maxCalls` messages being handled | 503 `too many calls at once; try again soon`, with `Retry-After: 1`, before the body is read |
+| the content type | 415 `the body must be application/json` |
+| the size of the body | 413 `the body is over 262144 bytes`, with the limit in use |
+| a body that is not JSON | 400 with the JSON-RPC error -32700 `Parse error`, id null |
+| `maxCalls` messages being handled once the body is read, as calls started while it came | 503, the same answer |
+| not one valid JSON-RPC message | 400 with the error of `handleMessage`, id null |
+| a notification, or a response from the client | 202 with no body |
+| a request | 200 `application/json`, the answer of `handleMessage` |
+
+The messages of `parseListen`, each an `Error`:
+
+- `--listen: write HOST:PORT, such as 192.168.1.20:7443, or [fd00::5]:7443 for IPv6`
+- `--listen: PORT must be a number from 1 to 65535`
+- `--listen: HOST must be an IP address, IPv6 in brackets; a name is not accepted`
+- `--listen: only a link-local IPv6 address takes an interface after %, such as [fe80::1%en0]:7443`
+- `--listen: a link-local IPv6 address needs its interface after %, such as [fe80::1%en0]:7443`
+- `--listen: HOST is not a loopback or private address of this machine`, with HOST as it was written
+
+### parseListen
+
+```mermaid
+flowchart TD
+    P1["parseListen of a text and interfaces, os.networkInterfaces when not given"] --> P2{"LISTEN_RE: HOST:PORT, HOST without a colon or bracket, or [ADDRESS]:PORT?"}
+    P2 -->|"no, or not a text"| E1["ERROR: write HOST:PORT"]
+    P2 -->|"yes"| P3{"PORT 1 to 65535, without a leading zero?"}
+    P3 -->|"no"| E2["ERROR: PORT must be a number from 1 to 65535"]
+    P3 -->|"yes"| P4["ZONE_RE: a zone after % is split from the address"]
+    P4 --> P5{"net.isIPv4 of a plain host, or net.isIPv6 of an address in brackets?"}
+    P5 -->|"no, such as a name"| E3["ERROR: HOST must be an IP address"]
+    P5 -->|"yes"| P6["normalAddress"]
+    P6 --> P7{"a zone, on an address that is not link-local?"}
+    P7 -->|"yes"| E4["ERROR: only a link-local IPv6 address takes an interface"]
+    P7 -->|"no"| P8{"a link-local IPv6 address without a zone?"}
+    P8 -->|"yes"| E5["ERROR: a link-local IPv6 address needs its interface"]
+    P8 -->|"no"| P9{"in PRIVATE: 127/8, 10/8, 172.16/12, 192.168/16, 169.254/16, ::1, fc00::/7 or fe80::/10?"}
+    P9 -->|"no, such as 0.0.0.0, :: or a public address"| E6["ERROR: HOST is not a loopback or private address of this machine"]
+    P9 -->|"yes"| P10{"ownAddress: an interface of that family has the address,<br/>and with a zone, the interface of that name?"}
+    P10 -->|"no"| E6
+    P10 -->|"yes"| P11["OK: host, the address with %ZONE when given, port and family 4 or 6"]
+```
+
+`os.networkInterfaces` names each interface and lists its addresses, so a zone is checked: `[fe80::1%en0]:7443` passes only when the interface `en0` has `fe80::1`. A link-local IPv6 address cannot be listened on without its interface, so it needs one.
+
+### allowedHosts and hostKey
+
+```mermaid
+flowchart TD
+    A1["allowedHosts of an address and the port it listens on"] --> A2["normalAddress of the host withoutZone"]
+    A2 --> A3["HOST:PORT, hostText: IPv6 in brackets"]
+    A3 --> A4{"in LOOPBACK: 127/8 or ::1?"}
+    A4 -->|"yes"| A5["and localhost:PORT"]
+    A4 -->|"no"| A6["only HOST:PORT"]
+    K1["hostKey of a Host header and the port of the scheme: 443 with TLS, else 80"] --> K2["HOST_RE on the value in lower case:<br/>a host without a colon or bracket, or [ADDRESS], then :PORT or nothing"]
+    K2 --> K3{"matches?"}
+    K3 -->|"no"| K4["null: never allowed"]
+    K3 -->|"yes"| K5{"in brackets?"}
+    K5 -->|"no"| K6["HOST:PORT, the port of the scheme when none is given"]
+    K5 -->|"yes"| K7{"net.isIPv6 of the address withoutZone?"}
+    K7 -->|"no"| K4
+    K7 -->|"yes"| K8["[ADDRESS]:PORT, the address as normalAddress writes it"]
+```
+
+A request is let through only when `hostKey` of its Host header is one of the `allowedHosts` of every address the listener listens on, with the port it really got. A request with no Host header reads as the name `undefined`, which is never allowed.
+
+### startListener, the start
+
+```mermaid
+flowchart TD
+    S1["startListener of addresses, tls, projects, env, onEvent, now, limits"] --> S2["limit: LISTEN_LIMITS with the limits given over them,<br/>and an AbortController, whose signal every message gets and close aborts"]
+    S2 --> S3["processStartTime of this pid, before anything else"]
+    S3 --> S4["clientBook, then claimListen of listenPath, listen.json in listenDir, the root state folder,<br/>with listenText of the record: the addresses still empty, and before anything listens"]
+    S4 --> S5{"claimed?"}
+    S5 -->|"no"| E1["ERROR: the error of claimListen, and nothing listens"]
+    S5 -->|"yes"| S6["makeServer for each address, with the connection listener, then listenOn each address in turn"]
+    S6 --> S8{"every server made, and each one listens?"}
+    S8 -->|"no: TLS material that cannot make a server, or an error such as EADDRINUSE"| S9["shutDown of every server made, releaseListen, then ERROR: that error"]
+    S8 -->|"yes"| S10["bound: HOST:PORT with the port it got,<br/>and its allowedHosts into the hosts of the Host check"]
+    S10 --> S11["write: listen.json with the addresses, through writeListen, best effort"]
+    S11 --> S13["the report timer: reportRefused every wrongWindowMs, on a timer that does not keep the process running"]
+    S13 --> S12["OK: close, clients from the book, and bound"]
+```
+
+Every failure after the claim, a server that cannot be made included, releases `listen.json` before the error is thrown, so a start that fails leaves no claim behind.
+
+### claimListen, createListen and livePid
+
+```mermaid
+flowchart TD
+    C1["claimListen of the file and the text"] --> C2["createListen: ensureDir of its folder, then an exclusive create, wx, mode 0600"]
+    C2 --> C3{"made?"}
+    C3 -->|"yes"| C4["OK: this process holds listen.json"]
+    C3 -->|"no, EEXIST: a file is there, or a file in the place of the folder"| C6{"refuseLive: livePid of the file, a live pid?"}
+    C3 -->|"no, any other error"| E2["ERROR: cannot write FILE: MESSAGE, the text of cannotWrite"]
+    C6 -->|"yes"| E1["ERROR: another ksproxy start is listening (pid N), the text of listeningText"]
+    C6 -->|"no"| C7["moveAside of the file, in the next diagram, then createListen once more"]
+    C7 --> C8{"made?"}
+    C8 -->|"yes"| C4
+    C8 -->|"no, EEXIST: another start made its claim first"| C9{"refuseLive: livePid of the file, a live pid?"}
+    C9 -->|"yes"| E1
+    C9 -->|"no"| E2
+    C8 -->|"no, any other error"| E2
+    L1["livePid of the file"] --> L2{"reads and parses as an object?"}
+    L2 -->|"no"| L3["null: the file is replaced"]
+    L2 -->|"yes"| L4{"isLive of its pid and processStartedAt, in the src/session.js section?"}
+    L4 -->|"no: a dead pid, or a pid that is now another program"| L3
+    L4 -->|"yes"| L5["that pid"]
+```
+
+```mermaid
+flowchart TD
+    M1["moveAside of the file"] --> M2["old: the name of the file, then the pid of this process, 12 random hex characters and .old"]
+    M2 --> M3{"rename of the file to old?"}
+    M3 -->|"done"| M4{"livePid of old: what was moved names a live listener?"}
+    M3 -->|"fails with ENOENT: another start moved it first"| M5["OK: nothing is left to move, the claim is made again"]
+    M3 -->|"fails with another error, such as ENOTDIR for a file in the place of the folder"| E1["ERROR: cannot write FILE: MESSAGE"]
+    M4 -->|"yes: another start made its claim between the check and the rename"| M6["rename old back to the file, then ERROR: another ksproxy start is listening (pid N)"]
+    M4 -->|"no"| M7["removeListen of old: removed, an error ignored,<br/>so a folder that was in the place of the file stays under that name"]
+    M7 --> M5
+```
+
+Only one process can make the file with an exclusive create, so of two starts at the same moment one listens and the other is refused. A file of a dead listener is moved aside by the start that finds it, under a name of that start alone, and removed. Of two starts that find the same dead file at the same moment, only one can rename it: the other finds nothing to rename and goes on to its own create, only one create works, and the start whose create fails finds a live claim and is refused. A start that judged the file dead just before the other start claimed the place, and renames after that claim, has moved a live claim: it sees this, puts the claim back and is refused. Only three starts or more at the same moment could still both listen; that case is left as it is.
+
+### makeServer, listenOn and the connections
+
+```mermaid
+flowchart TD
+    M1["makeServer of tls, limit, the request handler and the continue handler"] --> M2{"tls given?"}
+    M2 -->|"yes"| M3["https.createServer with cert and key, handshakeTimeout requestMs"]
+    M2 -->|"no"| M4["http.createServer"]
+    M3 --> M5["requestTimeout and headersTimeout requestMs, checked every requestMs or every second,<br/>keepAliveTimeout idleMs, and a request without Host reaches serve"]
+    M4 --> M5
+    M5 --> M6["server.maxConnections: maxConnections, Node closes a connection over it at once"]
+    M6 --> M7["checkContinue: a request with Expect 100-continue goes to serve with continued,<br/>and Node does not send 100 Continue itself"]
+    H1["each request"] --> H2["serve, continued only for checkContinue"]
+    H2 -->|"throws: a cut body, or an onEvent that throws"| H3["destroy its socket"]
+    C1["a connection to any of the servers"] --> C2{"no remoteAddress: the peer has already reset it?"}
+    C2 -->|"yes"| C3["destroy it, before it is counted"]
+    C2 -->|"no"| C6{"maxConnections open of every server together,<br/>or maxPerAddress open of its address, openOf in the book?"}
+    C6 -->|"yes"| C3
+    C6 -->|"no"| C4["keep the socket, opened of its address in the book"]
+    C4 --> C5["when it closes: closed of its address"]
+    N1["listenOn of a server and an address"] --> N2["listen on host and port, with an error listener that stays"]
+    N2 --> N3{"an error before it listens?"}
+    N3 -->|"yes"| N4["reject"]
+    N3 -->|"no"| N5["resolve: a later error, such as a failed accept, is ignored and it keeps listening"]
+```
+
+What a client sees at a limit: a connection over `maxConnections`, or over `maxPerAddress` of its address, is accepted by the system and closed at once, before a byte is read, so the client gets a reset and no answer. A request whose headers or body are not complete within `requestMs` gets `408 Request Timeout` from Node, and its connection is closed. A connection that waits `idleMs` after an answer is closed. A request while `maxCalls` messages are being handled gets 503 with `Retry-After: 1`. A running call has no time limit here: its own `timeout_seconds` bounds it. When its client goes away, nothing cancels the call: it goes on in its session and keeps its place among the `maxCalls` until it ends, so `maxCalls` bounds how many such calls run at once. The close of the listener ends such calls: see listen.json and close.
+
+### serve: the path, the method, the Origin and the Host
+
+```mermaid
+flowchart TD
+    R1["serve of one request: from, the address of its socket"] --> R2["servedProject of the path, the query left out"]
+    R2 --> R3{"PATH_RE: /mcp or /p/NAME/mcp, and this start runs that project?"}
+    R3 -->|"no"| X1["404 not served here"]
+    R3 -->|"yes"| R4{"the method POST?"}
+    R4 -->|"no"| X2["405 only POST is served here, with Allow POST"]
+    R4 -->|"yes"| R5{"an Origin header, of any value?"}
+    R5 -->|"yes"| X3["403 a request with an Origin header is refused"]
+    R5 -->|"no"| R6{"hostKey of the Host header is one of the hosts?"}
+    R6 -->|"no"| X4["421 the Host header does not name this listener"]
+    R6 -->|"yes"| R7["the block and the token, in the next diagram"]
+    S1["servedProject"] --> S2{"no NAME, or the NAME default, PROJECT_DEFAULT?"}
+    S2 -->|"yes"| S3["the default: the key null of projects, shown as default"]
+    S2 -->|"no"| S4["the project NAME"]
+```
+
+### serve: the block and the token
+
+```mermaid
+flowchart TD
+    B1["at: now, once for the request"] --> B2{"blockedMs of the address in the book, more than 0?"}
+    B2 -->|"yes"| X1["429 too many wrong tokens, with Retry-After the seconds left: the token is not read"]
+    B2 -->|"no"| B3["bearerOf the Authorization header: the text after Bearer and spaces, in any letter case, else empty"]
+    B3 --> B4["checkToken of the root env, the text and at, in the src/token.js section: the file is read now"]
+    B4 --> B5{"the verdict?"}
+    B5 -->|"missing"| X2["401 the request has no token"]
+    B5 -->|"wrong"| B6["wrong of the address in the book: it counts toward the block"]
+    B6 --> X3["401 the token is wrong"]
+    B5 -->|"revoked"| X4["401 the token was revoked"]
+    B5 -->|"expired"| X5["401 the token expired"]
+    B5 -->|"unreadable"| X6["401 the token file cannot be read"]
+    B5 -->|"ok"| B7["noteUse of the root env, the address and at, in the src/token.js section"]
+    B7 --> B9{"maxCalls messages being handled now, the running count?"}
+    B9 -->|"yes"| X7["503 too many calls at once, try again soon, with Retry-After 1: the body is not read"]
+    B9 -->|"no"| B8["the body, in the next diagram"]
+```
+
+### serve: the body and the message
+
+```mermaid
+flowchart TD
+    D1["mediaType of Content-Type: before any semicolon, trimmed, in lower case"] --> D2{"application/json?"}
+    D2 -->|"no"| X1["415 the body must be application/json"]
+    D2 -->|"yes"| D3{"a Content-Length over maxBody?"}
+    D3 -->|"yes"| X2["413 the body is over MAX bytes, before it is read"]
+    D3 -->|"no"| D11{"continued: the request asked for 100 Continue?"}
+    D11 -->|"yes"| D12["writeContinue: 100 Continue, now that every check before the body passed"]
+    D11 -->|"no"| D4
+    D12 --> D4{"readBody: over maxBody while it is read?"}
+    D4 -->|"yes"| X2
+    D4 -->|"no"| D5{"JSON.parse of the body works?"}
+    D5 -->|"no"| X3["400 PARSE_ERROR: the error -32700 Parse error, id null"]
+    D5 -->|"yes"| D13{"maxCalls running now? Other calls may have started while the body came"}
+    D13 -->|"yes"| X4["503 too many calls at once, try again soon, with Retry-After 1"]
+    D13 -->|"no"| D6{"an object with the method initialize?"}
+    D6 -->|"yes"| D7["named: clientName of params.clientInfo, before the message is handled"]
+    D6 -->|"no"| D8["called of the address and the project: the client name"]
+    D7 --> D8
+    D8 --> D9["running plus one, then handleMessage of the message, the env of the project, origin from and client, and the signal of the listener,<br/>in the src/mcp.js section, then running less one once it settles, whether or not the client is still there, and idle of the close at 0"]
+    D9 --> D10{"the answer?"}
+    D10 -->|"null: a notification, or a response from the client"| A1["202, no body"]
+    D10 -->|"an error with id null: not one valid message"| A2["400 with that error"]
+    D10 -->|"anything else"| A3["200 application/json, the answer"]
+```
+
+The running count is checked twice: before the body, so a busy listener reads no body, and as the message is handed on, so no more than `maxCalls` messages are ever handled at once. A message that gets 503 is not counted as a call of its address.
+
+### readBody, refuse and answer
+
+```mermaid
+flowchart TD
+    Y1["readBody of the request and maxBody"] --> Y2{"the next event?"}
+    Y2 -->|"a chunk"| Y3{"the size so far over maxBody?"}
+    Y3 -->|"yes"| Y4["null: the data listener is removed and the request paused, nothing more is read"]
+    Y3 -->|"no"| Y5["keep the chunk"]
+    Y5 --> Y2
+    Y2 -->|"the end"| Y6["the body: the chunks joined"]
+    Y2 -->|"an error: the client cut it, or requestMs passed"| Y7["reject"]
+    F1["refuse of the answer, a status, a text and headers"] --> F2["the headers, text/plain, the length and Connection close: the connection closes after it"]
+    W1["answer of the answer, a status and a value"] --> W2{"null?"}
+    W2 -->|"yes"| W3["202, Content-Length 0"]
+    W2 -->|"no"| W4["application/json, the length and the JSON text"]
+```
+
+### clientBook: the records, the connections and the record to drop
+
+```mermaid
+flowchart TD
+    O1["opened of an address"] --> O2["one more open connection of it, then changed"]
+    O3["closed of an address"] --> O4["one less, none kept at 0, then changed"]
+    O5["openOf of an address"] --> O6["its open connections now, 0 when none"]
+    R1["recordOf an address and a time"] --> R2{"a record of it?"}
+    R2 -->|"yes"| R3["that record"]
+    R2 -->|"no"| R4{"maxClients records already?"}
+    R4 -->|"yes"| R5["droppedAt the time: that record is dropped"]
+    R4 -->|"no"| R6["a new record: client unknown, firstSeen the time, no call,<br/>no wrong token, and nothing waiting to report"]
+    R5 --> R6
+    P1["droppedAt of a time"] --> P2{"a record with no open connection, and no block at that time?"}
+    P2 -->|"yes"| P3["the one of them seen first"]
+    P2 -->|"no"| P4{"a record with no open connection?"}
+    P4 -->|"yes"| P5["the one of them seen first: a block is dropped only when every record is blocked or connected"]
+    P4 -->|"no"| P6["the record seen first: every record is connected,<br/>which cannot happen with 64 connections and 1000 records"]
+    K1["blockedMs of an address and at"] --> K2["0 without a record, else the time left of its block, at least 0"]
+```
+
+So new addresses, even very many of them, never drop the block of an address that is idle: only the records of addresses that are neither blocked nor connected make room first.
+
+### clientBook: the wrong tokens, the block and the refused events
+
+```mermaid
+flowchart TD
+    W1["wrong of an address and at"] --> W2["recordOf, wrong plus one, and the wrong times kept: those of the last wrongWindowMs, and at"]
+    W2 --> W3{"wrongMax of them?"}
+    W3 -->|"yes"| W4["blocked until at plus blockMs, and the times start again"]
+    W3 -->|"no"| W5{"nothing waits to report for the address, and fewer than REFUSED_PER_TICK, 10, were reported at once since the last tick?"}
+    W4 --> W5
+    W5 -->|"yes"| W6["onEvent at once: type refused, from, count 1, one more reported at once, and the address now waits with 0"]
+    W5 -->|"no"| W7["one more waiting for the report timer, 1 when nothing waited"]
+    W6 --> W8["changed"]
+    W7 --> W8
+    T1["report: one tick of the report timer, which starts a new window: none reported at once yet"] --> T2["the next record, in the order first seen"]
+    T2 --> T3{"what waits for it?"}
+    T3 -->|"nothing"| T2
+    T3 -->|"0: nothing new since the last tick"| T4["nothing waits any more: its next wrong token is reported at once"]
+    T3 -->|"N, more than 0"| T5["due: type refused, from, count N, and it waits again with 0"]
+    T4 --> T2
+    T5 --> T2
+    T2 -->|"no record left"| T6{"more than REFUSED_PER_TICK, 10, due?"}
+    T6 -->|"no"| T8["onEvent of each due event, in order"]
+    T6 -->|"yes"| T7["the first 10 kept, then one more event: from N other addresses,<br/>or 1 other address, and count the sum of the others"]
+    T7 --> T8
+```
+
+So a single wrong token is shown at once, a burst shows its first wrong token at once and the others at the next tick, and an address that keeps sending wrong tokens gets one event a tick. However many addresses send wrong tokens, a window between two ticks shows at most 10 events at once and 11 at its tick: 500 new addresses give 10 events at once, then at the next tick 10 more by name and one event for the 480 others. The start terminal prints each event the same way: `[listen] refused 3 wrong tokens from 192.168.1.50`, or `[listen] refused 40 wrong tokens from 5 other addresses`.
+
+### clientBook: the names, the calls and the list; clientName
+
+```mermaid
+flowchart TD
+    N1["named of an address, a client name and at"] --> N2["recordOf, its client is the name, then changed"]
+    C1["called of an address, a project name and at"] --> C2["recordOf, calls plus one, lastCall at, the project added once"]
+    C2 --> C3{"its first call in this run?"}
+    C3 -->|"yes"| C4["onEvent: type connected, from, client and project"]
+    C3 -->|"no"| C5["changed"]
+    C4 --> C5
+    C5 --> C6["its client name, for the origin of the call"]
+    L1["list"] --> L2["a copy of each record: from, client, firstSeen, lastCall, calls, projects,<br/>open, the connections open now, and wrong"]
+    M1["clientName of clientInfo"] --> M2{"an object?"}
+    M2 -->|"no"| M5["unknown"]
+    M2 -->|"yes"| M3["name and version, those that are texts, joined by a space"]
+    M3 --> M4["only printable ASCII kept, clipped to CLIENT_MAX, 64, then trimmed"]
+    M4 --> M6{"empty?"}
+    M6 -->|"yes"| M5
+    M6 -->|"no"| M7["that text"]
+```
+
+A client record, in memory and in `listen.json`: `{ from, client, firstSeen, lastCall, calls, projects, open, wrong }`. An address gets a record at its first wrong token or its first message; open connections alone make none. The connected event comes once per address in a run, after its first message that passed the token and parsed, so an `initialize` gives it the client name.
+
+### listen.json and close
+
+```mermaid
+flowchart TD
+    G1["changed, after every change of the book"] --> G2{"closed, or a write already waiting?"}
+    G2 -->|"yes"| G3["nothing"]
+    G2 -->|"no"| G4["a write in listenWriteMs, on a timer that does not keep the process running"]
+    G4 --> W1["write: the waiting timer is forgotten, so the next change sets a new one, then writeListen of version 1, pid, processStartedAt when processStartTime gave it,<br/>addresses, the bound list, tls, and clients from the book"]
+    W1 --> W2["ensureDir of the listen folder, then writeFileAtomic of listenText: mode 0600"]
+    W2 --> W3{"written?"}
+    W3 -->|"no, such as a file in the place of the folder"| W4["nothing: the listener runs on, the next change tries again"]
+    W3 -->|"yes"| W5["OK"]
+    T1["reportRefused, every wrongWindowMs"] --> T2{"report of the book throws, such as an onEvent of a terminal that is gone?"}
+    T2 -->|"yes"| T3["ignored: the events of this tick are lost, the listener runs on"]
+    T2 -->|"no"| T4["OK"]
+```
+
+```mermaid
+flowchart TD
+    Z1["close, from any caller"] --> Z2{"a close was started already?"}
+    Z2 -->|"yes"| Z3["the same close: every caller waits for it to end"]
+    Z2 -->|"no"| Z4["closeOnce: closed, the waiting write is cancelled, and the report timer is stopped"]
+    Z4 --> Z10["abort of the AbortController: run kills the program of every call at once, in the src/exec.js section"]
+    Z10 --> Z11{"callsEnded: a message still being handled?"}
+    Z11 -->|"no"| Z5["shutDown: every server closes and every connection is destroyed,<br/>a call still running included: its answer is never sent"]
+    Z11 -->|"yes"| Z12{"what comes first?"}
+    Z12 -->|"idle: the running count comes to 0, a killed call was audited"| Z5
+    Z12 -->|"closeWaitMs passed, such as for a brokered call: it ends when its session stops, after this close"| Z5
+    Z5 --> Z6["releaseListen of listen.json"]
+    Z6 --> Z7{"it reads as JSON and names the pid of this process?"}
+    Z7 -->|"yes"| Z8["removeListen: removed, an error ignored"]
+    Z7 -->|"no: no file, not JSON, or the file of another start"| Z9["left as it is"]
+```
+
+So Ctrl-C ends the programs that calls through the listener run, such as a `local_exec` or an `ssh_exec`, before the start goes on: none keeps running after the start has stopped, whatever its time limit. The answer of a call that was killed may still reach its client just before the connections are cut. A brokered call gets no signal: it runs in its session, which ends it when it stops, so a close with a brokered call running waits `closeWaitMs`.
+
+`listen.json`: `{ version: 1, pid, processStartedAt, addresses, tls, clients }`, `processStartedAt` only when `ps` gave the start time of this process. The claim holds the same record with no addresses and no clients; `ksproxy status` shows the listener once a write gives it its addresses. Only the claim must work; the writes after it are best effort. The listener never writes the token, the Authorization header or a body to it, to an event or to an error text.
+
+### liveListener
+
+`liveListener` of env is the check of `startMany` in `src/start-many.js` before anything opens: the same `livePid` that `startListener` uses.
+
+```mermaid
+flowchart TD
+    Q1["liveListener of env"] --> Q2["livePid of listenPath of env: the pid of a live listener of this state folder, or null"]
+```
+
 ## src/mcp.js
 
-The stdio MCP server: `serve` reads JSON-RPC lines and writes answers, `handleMessage` answers one message, `inventoryForTools` reads the inventory for the tool listing, `instructionsFor` gives the instructions of `initialize`, and `SERVER_INFO` gives the name ksproxy and the package version. The env of `ksproxy mcp --project NAME` carries the project, so `inventoryForTools`, `instructionsFor` and `callTool` all use that project's files and texts.
+The stdio MCP server: `serve` reads JSON-RPC lines and writes answers, `handleMessage` answers one message, `inventoryForTools` reads the inventory for the tool listing, `instructionsFor` gives the instructions of `initialize`, and `SERVER_INFO` gives the name ksproxy and the package version. `handleMessage` takes an origin, `{ from, client }`, and a signal, the AbortSignal of the listener, for a message that came through the network listener of `src/listen.js`, and passes both on to `callTool`: the origin goes into the audit entries of the call, and an abort of the signal, at the close of the listener, kills the program the call runs. `serve` gives neither, so nothing changes for `ksproxy mcp`. The env of `ksproxy mcp --project NAME` carries the project, so `inventoryForTools`, `instructionsFor` and `callTool` all use that project's files and texts.
 
 ### serve
 
@@ -3293,7 +3819,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    H1["handleMessage of message, env"] --> H2{"an object with no method and a result or error field?"}
+    H1["handleMessage of message, env, origin and signal, neither from serve"] --> H2{"an object with no method and a result or error field?"}
     H2 -->|"yes"| N1["OK: null"]
     H2 -->|"no"| H3{"an object, jsonrpc 2.0, method a string?"}
     H3 -->|"no"| E1["error -32600 Invalid Request, id when a string or finite number, else null"]
@@ -3311,7 +3837,7 @@ flowchart TD
     H6 -->|"tools/list"| L1["OK: tools from toolDefinitions of inventoryForTools, see the next diagram"]
     H6 -->|"tools/call"| C1{"params an object with a string name,<br/>arguments absent or a plain object?"}
     C1 -->|"no"| E3["error -32602 Invalid params"]
-    C1 -->|"yes"| C2["callTool of name and arguments, or an empty object"]
+    C1 -->|"yes"| C2["callTool of name and arguments, or an empty object, with the origin and the signal"]
     C2 --> C3["OK: content with one text item, isError"]
     H6 -->|"anything else"| E4["error -32601 Method not found: METHOD"]
     H6 -->|"a handler throws"| E5["error -32603 Internal error: MESSAGE"]
@@ -3350,15 +3876,15 @@ flowchart TD
 
 ## src/paths.js
 
-Where ksproxy keeps things and how it writes them: `expandHome`, `configDir`, `projectsDir`, `inventoryPath`, `rootStateDir`, `stateDir`, `sessionDir`, `logDir`, `auditLogPath`, `socketDir`, `socketPath`, `reviewSocketPath` (the socket `REVIEW_SOCKET_NAME` in the socket folder), `callSocketPath` (the socket `CALL_SOCKET_NAME`, `call-sock`, of the brokered kinds), `sshBin`, `kubectlBin`, `mongoshBin`, `ensureDir` and `writeFileAtomic`, and two path helpers that `src/tools.js` uses for the output of every kind and the local mechanics use for their checks: `isCaseInsensitive` and `dropDataVolume`.
+Where ksproxy keeps things and how it writes them: `expandHome`, `configDir`, `projectsDir`, `inventoryPath`, `rootStateDir`, `listenDir`, `stateDir`, `sessionDir`, `logDir`, `auditLogPath`, `socketDir`, `socketPath`, `reviewSocketPath` (the socket `REVIEW_SOCKET_NAME` in the socket folder), `callSocketPath` (the socket `CALL_SOCKET_NAME`, `call-sock`, of the brokered kinds), `sshBin`, `kubectlBin`, `mongoshBin`, `ensureDir` and `writeFileAtomic`, and two path helpers that `src/tools.js` uses for the output of every kind and the local mechanics use for their checks: `isCaseInsensitive` and `dropDataVolume`.
 
-Projects: `PROJECT_KEY` is `KSPROXY_PROJECT`, the key of the `env` object that names the project of a command. `projectOf` reads it, `withProject` sets it, `PROJECT_RE` is the name rule and `PROJECT_RULE` the error text, `--project: a project name is 1 to 24 characters: lower-case letters, digits, "-" and "_", starting with a letter or a digit`. `initCommand`, `startCommand` and `checkCommand` are the commands a message tells the user to run. `stateDir` and `inventoryPath` follow the project, so every path built on `stateDir` (the session, log and socket folders, the sockets, the working folders of the command engine) follows it too. `rootStateDir` and `configDir` never do: the guards that keep ksproxy's own files out of reach use them, in `src/kinds/local/folder.js`, `src/kinds/command/index.js` and the scrub of `src/tools.js`, so that no project reaches the files of another one or of the default session.
+Projects: `PROJECT_KEY` is `KSPROXY_PROJECT`, the key of the `env` object that names the project of a command. `projectOf` reads it, `withProject` sets it, `PROJECT_RE` is the name rule and `PROJECT_RULE` the error text, `--project: a project name is 1 to 24 characters: lower-case letters, digits, "-" and "_", starting with a letter or a digit`. `PROJECT_DEFAULT` is `default`, the name that means the default inventory wherever `--project` is taken: `takeProject` in `src/cli.js` turns it into no project, and so do `projectOf` and `withProject` here, so no path is ever built on `projects/default.json` or `p/default`. `otherInventories` in `src/projects.js` still reads `projects/default.json`, only for the secret files and the ports it names. `listenDir` is the folder of the network listener and of its token, `listen` in the root state folder: there is one token for every project. `initCommand`, `startCommand` and `checkCommand` are the commands a message tells the user to run. `stateDir` and `inventoryPath` follow the project, so every path built on `stateDir` (the session, log and socket folders, the sockets, the working folders of the command engine) follows it too. `rootStateDir` and `configDir` never do: the guards that keep ksproxy's own files out of reach use them, in `src/kinds/local/folder.js`, `src/kinds/command/index.js` and the scrub of `src/tools.js`, so that no project reaches the files of another one or of the default session.
 
 ### Locations and programs
 
 #### Folders
 
-This diagram shows where the config, state, session, log and socket folders are. The session, log and socket folders are built on `stateDir`, so they are those of the project when there is one.
+This diagram shows where the config, state, listen, session, log and socket folders are. The session, log and socket folders are built on `stateDir`, so they are those of the project when there is one. The listen folder is built on `rootStateDir`, so it is the same for every project.
 
 ```mermaid
 flowchart TD
@@ -3371,6 +3897,7 @@ flowchart TD
     S1["rootStateDir, the same for every project"] --> S2{"KSPROXY_STATE_DIR set and not empty?"}
     S2 -->|"yes"| S3["that folder"]
     S2 -->|"no"| S4["home/.ksproxy"]
+    N1["listenDir, the same for every project"] --> N2["rootStateDir/listen, never under p/NAME"]
     D1["sessionDir"] --> D2["stateDir/session"]
     L1["logDir"] --> L2["stateDir/logs"]
     L3["auditLogPath"] --> L4["logDir/audit.log"]
@@ -3379,13 +3906,15 @@ flowchart TD
 
 #### projectOf
 
-This diagram shows how the project of a command is read. A value that breaks the rule is never taken as no project.
+This diagram shows how the project of a command is read. A value that breaks the rule is never taken as no project; the name `default` always is.
 
 ```mermaid
 flowchart TD
     P1["projectOf of env"] --> P2{"PROJECT_KEY in env, not undefined?"}
     P2 -->|"no"| P3["OK: null, no project"]
-    P2 -->|"yes"| P4{"a string that PROJECT_RE matches: a lower-case letter or a digit,<br/>then at most 23 lower-case letters, digits, dashes or underscores?"}
+    P2 -->|"yes"| P7{"the name default, PROJECT_DEFAULT?"}
+    P7 -->|"yes"| P3
+    P7 -->|"no"| P4{"a string that PROJECT_RE matches: a lower-case letter or a digit,<br/>then at most 23 lower-case letters, digits, dashes or underscores?"}
     P4 -->|"no"| P5["THROW: PROJECT_RULE"]
     P4 -->|"yes"| P6["OK: the name"]
 ```
@@ -3398,7 +3927,7 @@ This diagram shows how the env of one project, or of none, is built. Only the CL
 flowchart TD
     W1["withProject of env and name"] --> W2["a copy of env, env itself is not changed"]
     W2 --> W3["PROJECT_KEY removed from the copy, so an inherited value never chooses a project"]
-    W3 --> W4{"name is null?"}
+    W3 --> W4{"name is null, or the name default, PROJECT_DEFAULT?"}
     W4 -->|"yes"| W5["OK: the copy, no project"]
     W4 -->|"no"| W6["OK: the copy with PROJECT_KEY set to name"]
 ```
@@ -3485,17 +4014,21 @@ flowchart TD
 ```mermaid
 flowchart TD
     E1["ensureDir of dir"] --> E2["mkdir recursive, mode 0700, then chmod 0700"]
-    W1["writeFileAtomic of file and text"] --> W2["temp name: file, pid, 12 random hex characters, .tmp"]
+    W1["writeFileAtomic of file, text and keep, a check that gives true when not given"] --> W2["temp name: file, pid, 12 random hex characters, .tmp"]
     W2 --> W3["create the temp file exclusively with mode 0600, chmod 0600"]
-    W3 --> W4["rename the temp file onto file"]
-    W4 --> W5{"any step failed?"}
+    W3 --> W8{"keep, asked just before the rename, gives true?"}
+    W8 -->|"no"| W9["remove the temp file: false, the file is left as it was"]
+    W8 -->|"yes"| W4["rename the temp file onto file"]
+    W4 --> W5{"any step failed, keep included?"}
     W5 -->|"yes"| W6["remove the temp file, rethrow"]
-    W5 -->|"no"| W7["OK"]
+    W5 -->|"no"| W7["OK: true"]
 ```
+
+A reader sees the old text or the new one, never a part of it. `revokeToken` in `src/token.js` is the only caller that gives `keep`: it reads `token.json` again just before the rename.
 
 ## src/projects.js
 
-What one command needs to know of the other inventory files and the other live sessions. `liveSessions` gives every live session, for `ksproxy status` and for the ports. `otherInventories` reads every inventory file but the one of this command as JSON, without checking it. `usedPorts` collects the ports those files and the other live sessions name, and `portProblem` says why a target may not open because of them. `otherSecretFiles` collects the files that hold credentials in those files, and `everySecretFile` adds them to the files of this command's inventory for the local targets, in `start` and in `ksproxy check`. `start` calls `usedPorts` once before any target opens and `portProblem` for each selected target; `ksproxy init` calls `usedPorts` for the ports of its sample. `whereOf` names where a port comes from in a message: `the default inventory` for the default, its file or its session, and `project NAME` for a project. `NO_FOLDER` holds the two errors of a projects folder that mean it holds no project file, `ENOENT` and `ENOTDIR`. `entriesOf` gives the entries of one kind in a file read as JSON.
+What one command needs to know of the other inventory files and the other live sessions. `liveSessions` gives every live session, for `ksproxy status` and for the ports; a folder `p/default` is never a project, since the name `default` is the default. `otherInventories` reads every inventory file but the one of this command as JSON, without checking it. `projects/default.json` is one of them: no command uses it as a project, but the secret files and the ports it names are still kept from every command. `usedPorts` collects the ports those files and the other live sessions name, and `portProblem` says why a target may not open because of them. `otherSecretFiles` collects the files that hold credentials in those files, and `everySecretFile` adds them to the files of this command's inventory for the local targets, in `start` and in `ksproxy check`. `start` calls `usedPorts` once before any target opens and `portProblem` for each selected target; `ksproxy init` calls `usedPorts` for the ports of its sample. `whereOf` names where a port comes from in a message: `the default inventory` for the default, its file or its session, `projects/default.json` for that file, and `project NAME` for a project. `NO_FOLDER` holds the two errors of a projects folder that mean it holds no project file, `ENOENT` and `ENOTDIR`. `entriesOf` gives the entries of one kind in a file read as JSON.
 
 ### liveSessions
 
@@ -3504,7 +4037,7 @@ flowchart TD
     L1["liveSessions of the environment"] --> L2["readdir with the type of each entry of p in the root state folder"]
     L2 --> L3{"the folder can be read?"}
     L3 -->|"no"| L4["no project names"]
-    L3 -->|"yes"| L5["keep the entries that are folders themselves, a link to a folder is not one and is never followed,<br/>whose names match PROJECT_RE, sorted"]
+    L3 -->|"yes"| L5["keep the entries that are folders themselves, a link to a folder is not one and is never followed,<br/>whose names match PROJECT_RE and are not default, PROJECT_DEFAULT, sorted"]
     L4 --> L6["the default first, then each name in order"]
     L5 --> L6
     L6 --> L7["next: withProject and that project, liveSession of its session folder"]
@@ -3525,16 +4058,16 @@ flowchart TD
     O2 --> O3{"it works?"}
     O3 -->|"no, ENOENT or ENOTDIR"| O4["no project names"]
     O3 -->|"no, any other error"| O5["OK: no others, unreadable is the projects folder"]
-    O3 -->|"yes"| O6["the names that end in .json, without it, that match PROJECT_RE, sorted"]
+    O3 -->|"yes"| O6["the names that end in .json, without it, that match PROJECT_RE, sorted,<br/>default among them: projects/default.json is read for its files and ports"]
     O4 --> O7["the default first, then each name in order"]
     O6 --> O7
-    O7 --> O8{"the project of this command, or the default for none?"}
+    O7 --> O8{"the project of this command, or the default for none? Never default, which projectOf gives as none"}
     O8 -->|"yes"| O9["skip it"]
-    O8 -->|"no"| O10["read inventoryPath of withProject and that project, then JSON.parse"]
+    O8 -->|"no"| O10["read inventory.json for the default, else projectsDir/NAME.json, then JSON.parse"]
     O10 --> O11{"thrown?"}
     O11 -->|"ENOENT, also a link to a file that is gone"| O9
     O11 -->|"any other error, or not JSON"| O12["OK: the others so far, unreadable is that file, the later files are not read"]
-    O11 -->|"no"| O13["add whereOf of the project and the value read, not checked"]
+    O11 -->|"no"| O13["add whereOf of the project and the value read, not checked:<br/>the default inventory, projects/default.json for default, else project NAME"]
     O9 --> O14{"more?"}
     O13 --> O14
     O14 -->|"yes"| O8
@@ -3602,7 +4135,7 @@ flowchart TD
     P7 --> P8
 ```
 
-The real text is `port N is also used by project NAME; give each project its own port`, with `the default inventory` in place of `project NAME` for the default. The port is the only thing that ties a cluster to its proxy, so two files that name it would let a call of one project reach the cluster of another.
+The real text is `port N is also used by project NAME; give each project its own port`, with `the default inventory` in place of `project NAME` for the default, and `projects/default.json` for that file. The port is the only thing that ties a cluster to its proxy, so two files that name it would let a call of one project reach the cluster of another.
 
 ## src/review.js
 
@@ -3965,7 +4498,7 @@ flowchart TD
 
 ## src/start.js
 
-Runs `ksproxy start`: `start` sets up the session around the run drawn in Part 1 (diagrams 2a to 2d, 3, 5 and 8), with the helpers `bounded`, `emptyDirectory`, `fileSize`, `startFollower`, `ensureStateDir` for the state folder of the default or of a project, and `credentialVariables`, `withoutVariables` and `readSecrets` for the credentials. The call service of the brokered kinds (`startCallServer` of `src/broker.js`, with `answerCall` of `src/tools.js` as its handler) is drawn in 2d.2b, its closing in 3b. `logKind` gives the log label of a kind from its key (`kindByKey` of the key, then its label); every log line of a lifecycle event uses it. `withOutputLimit` adds the `maxOutputKiB` of the inventory entry to the record of each opened target that has one (diagram 2d.2): the session file carries it for `ksproxy mcp`, and the call service uses the record in memory. A raised limit prints no line in the terminal: no setting of a target has a WARN line of its own, and settings such as read-write are named only in the opening line that a kind writes.
+Runs `ksproxy start`: `start` sets up the session around the run drawn in Part 1 (diagrams 2a to 2d, 3, 5 and 8), with the helpers `bounded`, `emptyDirectory`, `fileSize`, `startFollower`, `ensureStateDir` for the state folder of the default or of a project, and `credentialVariables`, `withoutVariables` and `readSecrets` for the credentials. The call service of the brokered kinds (`startCallServer` of `src/broker.js`, with `answerCall` of `src/tools.js` as its handler) is drawn in 2d.2b, its closing in 3b. `logKind` gives the log label of a kind from its key (`kindByKey` of the key, then its label); every log line of a lifecycle event uses it. `chooseTargets`, `credentialVariables` and `withoutVariables` are exported for `startMany` in `src/start-many.js`, which runs the picker before any session opens and builds the env of its listener without any credential. `withOutputLimit` adds the `maxOutputKiB` of the inventory entry to the record of each opened target that has one (diagram 2d.2): the session file carries it for `ksproxy mcp`, and the call service uses the record in memory. A raised limit prints no line in the terminal: no setting of a target has a WARN line of its own, and settings such as read-write are named only in the opening line that a kind writes.
 
 The run walks `KINDS` and names no kind: what is particular to a kind sits in its object (the "The session" diagrams of `src/kinds/ssh/index.js`, `src/kinds/kubernetes/index.js` and `src/kinds/local/index.js`). The core keeps the skeleton: the stop checks, the empty-allow warning, the order of the lines, the guard that closes a target opened during a stop, the review service, the files, the follower and the health loop. `closeOne` closes one opened target through its kind's `close`, bounded by `limits[closeLimit]` and with the kind's `onCloseTimeout` past it; the time limits keep their names `sshCloseMs` and `kubeCloseMs`. `closeStaleSockets` lives in `src/kinds/ssh/master.js` and is no longer exported from here.
 
@@ -4007,6 +4540,30 @@ flowchart TD
     R6 -->|"yes"| R7["write it: lifecycle lines on stderr, the READY line on stdout"]
     R6 -->|"no"| W3
 ```
+
+### The hooks of startMany: stop, secretFiles and ready
+
+This diagram shows the three hooks of `host` that `startMany` gives each `start` it runs. Without them, as for a start with one project and no `--listen`, the run is exactly as before.
+
+```mermaid
+flowchart TD
+    H1["start of options, env, host"] --> H2{"host.stop given, a promise of a close reason?"}
+    H2 -->|"yes"| H3["when it settles: requestStop with that reason, such as another project stopped,<br/>as a signal does with its own, the first reason is kept"]
+    H2 -->|"no"| H4["only the signals, a fatal error or a closed output stop the run, as before"]
+    H3 --> H5["the secret files of the local targets: everySecretFile of the inventory and the other inventory files"]
+    H4 --> H5
+    H5 --> H6{"host.secretFiles given?"}
+    H6 -->|"yes"| H7["those files too, today the TLS key file of the listener, so no local target reaches it"]
+    H6 -->|"no"| H8["no more"]
+    H7 --> H9["the run, diagrams 2a to 2d"]
+    H8 --> H9
+    H9 --> H10{"host.ready given, once the session file, the summary and READY are written and the follower and health loop run?"}
+    H10 -->|"yes"| H11["host.ready, once: startMany starts its listener when every session it runs has called it"]
+    H10 -->|"no"| H12["wait for a stop, as before"]
+    H11 --> H12
+```
+
+`ksproxy check` cannot know the TLS key file of a running listener: it protects only the files that the inventory files name.
 
 ### The project of a run
 
@@ -4251,6 +4808,232 @@ flowchart TD
     R3 --> Z3
 ```
 
+## src/start-many.js
+
+Runs several projects in one `ksproxy start`, and the network listener that serves them (`ksproxy start --project shop,ops --all --listen HOST:PORT`). `startMany` checks everything before anything opens (`checkProjects`, `checkListen`, `chooseAll`), runs the `start` of `src/start.js` once per project in this process, each with a stand-in process from `wrapProcess` whose two `LineStream`s put `[NAME] ` before every line, starts the listener once every session is ready, and stops them together. `nameOf` gives the name of a project, `default` for null. `servedEnvs` builds the env of each project for the listener, and `projectUrl` the URL the terminal prints. `RELAYED` lists the events of the real process that go to every session; `ANOTHER_STOPPED` and `NO_LISTENER` are the close reasons `startMany` gives; `LISTEN` is the prefix of its own lines; `DAY_MS` is the default time between two expiry warnings. With one project the prefix is empty, so its lines are as they were; `cli.js` runs a start with one project and no `--listen` without `startMany` at all.
+
+### The pre-checks, in order
+
+This diagram shows the checks that run before any session opens. The first failure is printed on stderr and `startMany` gives 1: no session folder, socket, listener or token is touched.
+
+```mermaid
+flowchart TD
+    A1["startMany of plan, env without a project, host with the real process: now is host.now, else the clock,<br/>limits.warnMs is DAY_MS unless host.limits names it, pick is host.checkbox, else the checkbox picker"] --> A2["checkProjects, 1: loadInventory of each project in order, with its own initCommand"]
+    A2 --> A3{"thrown?"}
+    A3 -->|"an InventoryError"| X1["print its message, 1"]
+    A3 -->|"another error, such as a project name that breaks the rule"| X2["rethrown: startMany rejects, runCli prints ksproxy: MESSAGE, 1"]
+    A3 -->|"no"| A4{"checkProjects, 2: liveSession of the session folder of a listed project, in order?"}
+    A4 -->|"yes"| X3["print PREFIX a session is already running, pid N, the text of start, 1"]
+    A4 -->|"no"| A5{"a --listen value?"}
+    A5 -->|"no"| A6["no addresses and no TLS"]
+    A5 -->|"yes"| A7["checkListen, 3 to 7, next diagram, with terminal: the real stdout isTTY is true"]
+    A7 --> A8{"an error?"}
+    A8 -->|"yes"| X4["print it, 1"]
+    A8 -->|"no"| A9["the parsed addresses, and the TLS files in memory"]
+    A6 --> A10["chooseAll, 8, see the selection"]
+    A9 --> A10
+    A10 --> A11{"an error?"}
+    A11 -->|"yes"| X5["print it, 1"]
+    A11 -->|"no"| A12["continues in: startMany, running the sessions"]
+```
+
+PREFIX is `[NAME] ` with several projects, `[default] ` for the default, and nothing with one project. The exact text of a live session: `[ops] a session is already running (pid N); stop it with Ctrl-C in its terminal`.
+
+```mermaid
+flowchart TD
+    L1["checkListen of plan, env, now, terminal"] --> L2{"3: each --listen value, parseListen with the interfaces of this machine, throws?"}
+    L2 -->|"yes"| X1["ERROR: its message, such as --listen: HOST is not a loopback or private address of this machine"]
+    L2 -->|"no"| L3{"4: TLS files given?"}
+    L3 -->|"no"| L6["tls null"]
+    L3 -->|"yes"| L4{"the cert file, then the key file: can it be read?"}
+    L4 -->|"no"| X2["ERROR: --tls-cert: cannot read FILE, or --tls-key: cannot read FILE"]
+    L4 -->|"yes"| L5["tls: both files as buffers, read once here and kept in memory"]
+    L5 --> L10{"createSecureContext of the cert and the key throws?"}
+    L10 -->|"yes: not PEM, or a key of another certificate"| X5["ERROR: --tls-cert and --tls-key cannot be used together: MESSAGE"]
+    L10 -->|"no"| L7{"5: liveListener of env, a live pid in listen.json?"}
+    L6 --> L7
+    L7 -->|"yes"| X3["ERROR: another ksproxy start is listening, pid N"]
+    L7 -->|"no"| L11["tokenState of env at now"]
+    L11 --> L8{"6: no --new-token, and the state is unreadable?"}
+    L8 -->|"yes"| X4["ERROR: cannot read FILE: start with --new-token to replace it"]
+    L8 -->|"no"| L12{"7: a new token would be made, --new-token or a state that is not ok,<br/>and terminal is false: stdout is a file or a pipe?"}
+    L12 -->|"yes"| X6["ERROR: a new token is shown only on a terminal: run this start once with its output on a terminal"]
+    L12 -->|"no"| L9["OK: the addresses and tls"]
+```
+
+The exact text of check 5: `another ksproxy start is listening (pid N)`. Check 5 refuses before anything opens, also with `--new-token`, so the token of the running listener is never replaced from here. Check 4 makes the TLS context the servers will use, so a pair that cannot work together stops the start before any session opens. Check 7 keeps a new token out of a file: with `start ... --listen ... | tee start.log`, the token would be written into `start.log`, so such a start is refused before anything opens, whether the token is missing, revoked or expired, or `--new-token` asks for one.
+
+### The selection: chooseAll
+
+```mermaid
+flowchart TD
+    C1["chooseAll of projects, inventories, options, the real process, pick, label"] --> C2{"--all, or the flag of some kind given?"}
+    C2 -->|"yes"| C3["OK: every start gets the options as given, kind flags are resolved by name in start as before"]
+    C2 -->|"no"| C4{"several projects, and stdin is not a terminal?"}
+    C4 -->|"yes"| X1["ERROR: several projects need --all when not running in a terminal"]
+    C4 -->|"no"| C5["next project, in the order given"]
+    C5 --> C6["chooseTargets of src/start.js with its inventory and the real process,<br/>through pick with the title after PREFIX, such as [shop] Which kinds of proxy?"]
+    C6 --> C7{"an error? Only one project gets here without a terminal"}
+    C7 -->|"yes"| X2["ERROR: its text, no targets selected: use FLAGS or --all when not running in a terminal"]
+    C7 -->|"no"| C8["the names picked, kind by kind, become the kind flags of the options of that project"]
+    C8 --> C9{"no name in any kind: cancelled or nothing chosen?"}
+    C9 -->|"yes"| X3["ERROR: PREFIX nothing selected"]
+    C9 -->|"no"| C10{"more projects?"}
+    C10 -->|"yes"| C5
+    C10 -->|"no"| C11["OK: one options object per project, start never runs a picker of its own"]
+    P1["pick: host.checkbox, else checkbox of src/select.js on the real stdin and stderr, the real process for its signals"]
+```
+
+Kind flags with several projects never get here: `parseStartArgs` in `src/cli.js` refuses them.
+
+### startMany: running the sessions
+
+```mermaid
+flowchart TD
+    R1["servedEnvs, the secret files: the TLS key file as an absolute path, or none, and http or https"] --> R2["wrapProcess of the real process for each project, with its PREFIX"]
+    R2 --> R3["add to the real process: a handler for each event of RELAYED, and one for the error of stdout and of stderr"]
+    R3 --> R4["start each project at once: its options, withProject of env and the project,<br/>host with the wrapper as process, stop, secretFiles and ready, see src/start.js"]
+    R4 --> R5{"what comes first?"}
+    R5 -->|"every session called ready"| R6{"stopping, or no --listen value?"}
+    R5 -->|"a session ended"| R7["stopAll with ANOTHER_STOPPED: stopping is set"]
+    R7 --> R6
+    R6 -->|"no"| R8["openListener, see the listener"]
+    R6 -->|"yes"| R10["wait until every session has ended"]
+    R8 --> R9{"it gives a listener?"}
+    R9 -->|"no"| R11["failed, stopAll with NO_LISTENER: the listener could not start"]
+    R9 -->|"yes"| R10
+    R11 --> R10
+    R10 --> R12["closeListener once more, nothing when it is closed"]
+    R12 --> R13["finally: close the typed lines, clear the warning timer, remove every handler it added to the real process"]
+    R13 --> R14["0 when not failed and every session gave 0, else 1"]
+```
+
+### Ending, stopping and relaying
+
+```mermaid
+flowchart TD
+    E1["the start of one session settles"] --> E2{"rejected?"}
+    E2 -->|"yes"| E3["write ksproxy: MESSAGE on its stderr, with its PREFIX, its code is 1"]
+    E2 -->|"no"| E4["its exit code"]
+    E3 --> E5["flush both of its streams"]
+    E4 --> E5
+    E5 --> E6{"stopping already?"}
+    E6 -->|"no: it ended on its own"| E7["failed: the exit code will be 1"]
+    E6 -->|"yes"| E8["stopAll with ANOTHER_STOPPED, then wake the main flow"]
+    E7 --> E8
+    S1["stopAll of a reason"] --> S2{"stopping already?"}
+    S2 -->|"yes"| S3["nothing"]
+    S2 -->|"no"| S4["stopping, closeListener first, then settle the host.stop of every session with the reason"]
+    G1["an event of RELAYED on the real process: SIGINT, SIGTERM, SIGHUP, uncaughtException, unhandledRejection"] --> G2["relay: stopping, closeListener first"]
+    G2 --> G3["emit the same event with its arguments on every wrapper: each start stops as it does alone,<br/>Ctrl-C, terminated, terminal closed, or error: MESSAGE and exit 1"]
+    O1["an error of the real stdout or stderr"] --> O2["fail of that stream of every wrapper: each start stops with output closed"]
+    C1["closeListener"] --> C2["await listenerStart: null when none was started or it could not start"]
+    C2 --> C3{"a listener?"}
+    C3 -->|"yes"| C4["close it: every connection is cut and listen.json removed, a second close does nothing"]
+    C3 -->|"no"| S3
+    D1["ready of one session"] --> D2{"every session ready now?"}
+    D2 -->|"yes"| D3["wake the main flow"]
+    D2 -->|"no"| S3
+```
+
+A session that ends while the others run, such as one whose output failed or that could not open any target, ends on its own: the listener closes, then every other session stops with the close reason `another project stopped`, and the exit code is 1, as the design asks, even when that session gave 0 (for example after its output closed). A session that ends because startMany stopped it, after Ctrl-C or another signal, does not count as ending on its own.
+
+### The listener: openListener
+
+```mermaid
+flowchart TD
+    L1["openListener"] --> L2["startListener with the addresses, tls, servedEnvs, the root env, onEvent and now"]
+    L2 --> L3{"it threw?"}
+    L3 -->|"yes"| X1["fail: LISTEN cannot listen: MESSAGE on the real stderr, null"]
+    L3 -->|"no"| L4["print LISTEN listening on the bound addresses, joined by a comma and a space, then http or https"]
+    L4 --> L5["tokenState of the root env, read only now that this listener runs"]
+    L5 --> L6{"--new-token, or the state is not ok: none, revoked, expired or unreadable?"}
+    L6 -->|"yes"| L13{"stdout is a terminal? Else the token changed since check 7"}
+    L13 -->|"no"| X3["fail: close this listener, LISTEN a new token is shown only on a terminal on the real stderr, null"]
+    L13 -->|"yes"| L7["showNewToken, see the token lines"]
+    L6 -->|"no"| L8["print LISTEN token from DAY, expires DAY, then for each project LISTEN NAME: its projectUrl"]
+    L7 --> L9["warn once now, then every warnMs, a day unless host.limits names it, a timer that does not keep the process alive"]
+    L8 --> L9
+    L9 --> L10{"the real stdin is a terminal?"}
+    L10 -->|"yes"| L11["read its lines with readline, terminal false, so Ctrl-C stays a signal, see the token lines"]
+    L10 -->|"no"| L12["OK: the listener"]
+    L11 --> L12
+    L4 -->|"a later step threw, such as newToken"| X2["fail: close this listener again, then LISTEN cannot listen: MESSAGE on the real stderr, null"]
+```
+
+```mermaid
+flowchart TD
+    V1["onEvent of the listener"] --> V2{"connected?"}
+    V2 -->|"yes"| V3["print LISTEN ADDRESS CLIENT connected"]
+    V2 -->|"no, refused"| V4["print LISTEN refused N wrong tokens from ADDRESS"]
+    F1["fail of a text"] --> F2{"a listener was started?"}
+    F2 -->|"yes"| F3["close it: its calls are ended and listen.json is released"]
+    F2 -->|"no"| F4["complain: LISTEN and the text on the real stderr"]
+    F3 --> F4
+    F4 --> F5["null: startMany stops every session with NO_LISTENER, exit 1"]
+```
+
+LISTEN is `[listen] `. Every line of the listener, the token and the warning goes to the real stdout with no project prefix, one line each. Its errors go to the real stderr through `complain`: `[listen] cannot listen: MESSAGE`, `[listen] cannot make a new token: MESSAGE` and `[listen] a new token is shown only on a terminal`; so does an error that stops the start before any session opens. The listener closes first at every stop: `stopAll` and `relay` close it before any session is told to stop. A new token is made only once `startListener` has resolved, so a start whose listener is refused never replaces the token of the one that runs.
+
+### The token lines, the typed lines and the warning
+
+```mermaid
+flowchart TD
+    T1["a typed line"] --> T2["trimmed"]
+    T2 --> T3{"empty?"}
+    T3 -->|"yes"| T4["ignored"]
+    T3 -->|"no"| T5{"new-token?"}
+    T5 -->|"no"| T6["print LISTEN type new-token to replace the token"]
+    T5 -->|"yes"| T8{"stdout is a terminal?"}
+    T8 -->|"no"| T9["LISTEN a new token is shown only on a terminal, on the real stderr: nothing changes"]
+    T8 -->|"yes"| N1["showNewToken with the bound addresses"]
+    N1 --> N2["newToken of the root env at now: the old token stops at once, only its digest is kept"]
+    N2 -->|"it threw, before anything is printed"| T7["from a typed line: LISTEN cannot make a new token: MESSAGE on the real stderr, the old token stays.<br/>From openListener: the throw goes on to its catch, see the listener"]
+    N2 --> N3["print LISTEN a new token was made, it is shown only now"]
+    N3 --> N4["for each project, without any prefix so it can be copied: claude mcp add --transport http ksproxy-NAME URL<br/>--header Authorization: Bearer TOKEN, the URL from projectUrl, ksproxy-default for the default"]
+    W1["warn"] --> W2["tokenState of the root env at now"]
+    W2 --> W3{"a record, and expiryWarning of it gives a text: not revoked, at most 30 days left?"}
+    W3 -->|"yes"| W4["print LISTEN the token expires on DAY, type new-token to replace it"]
+    W3 -->|"no"| W5["nothing"]
+```
+
+The exact texts with a semicolon: `[listen] a new token was made; it is shown only now` and `[listen] the token expires on DAY; type new-token to replace it`. The client line is `claude mcp add --transport http ksproxy-shop http://192.168.1.20:7443/p/shop/mcp --header "Authorization: Bearer ksp_…"`. The token is printed only in these lines, once, when it is made, and only when the real stdout is a terminal (`terminal`, its `isTTY` is true): a stdout that is a file or a pipe never gets a token.
+
+### LineStream, wrapProcess and projectUrl
+
+```mermaid
+flowchart TD
+    S1["LineStream write of a text"] --> S2["the piece that waits, then the text, split at each newline: the last piece waits"]
+    S2 --> S3{"any whole line?"}
+    S3 -->|"yes"| S4["one write to the real stream: each line with the prefix in front and its newline"]
+    S3 -->|"no"| S5["true"]
+    S4 --> S5
+    F1["flush, when the session is over"] --> F2{"a piece waits?"}
+    F2 -->|"yes"| F3["write it with the prefix and a newline"]
+    F2 -->|"no"| F4["nothing"]
+    Q1["isTTY and columns"] --> Q2{"the real columns are an integer?"}
+    Q2 -->|"yes"| Q3["isTTY of the real stream, its columns less the width of the prefix"]
+    Q2 -->|"no"| Q4["isTTY of the real stream, its columns as they are"]
+    E1["fail of an error"] --> E2{"an error listener on this stream, the one start adds?"}
+    E2 -->|"yes"| E3["emit error to it"]
+    E2 -->|"no"| F4
+    P1["wrapProcess of the real process and a prefix"] --> P2["an EventEmitter for the events startMany emits, stdout and stderr as LineStreams, the real stdin, pid and execPath"]
+    U1["projectUrl of the scheme, the bound list and a project"] --> U2{"a bound HOST:PORT without a percent sign, that is, not link-local?"}
+    U2 -->|"yes"| U3["the first such one"]
+    U2 -->|"no, every one is link-local"| U4["the first, its percent sign written %25"]
+    U3 --> U5["SCHEME://HOST:PORT then /mcp for the default, /p/NAME/mcp for a project"]
+    U4 --> U5
+```
+
+```mermaid
+flowchart TD
+    V1["servedEnvs of the projects, their inventories and the env of start"] --> V2["credentialVariables of every inventory, then withoutVariables of env and all of them"]
+    V2 --> V3["a Map: for each project, null for the default, withProject of that env and the project"]
+    N1["nameOf of a project"] --> N2["its name, or default for null"]
+```
+
+Only a link-local IPv6 address has a zone after `%`, as `parseListen` requires, so the terminal prints a URL on another address when there is one. The listener serves each project with the env from `servedEnvs`: no credential variable of any listed project reaches it, and each session holds its own.
+
 ## src/text.js
 
 The small text helper that sits below everything else and imports nothing: `clip` of text and max. It was in `src/audit.js`; `src/audit.js` imports the list of kinds and the kinds import the cluster mechanics, which need `clip`, so keeping it in `src/audit.js` made a loop of imports. Now `src/audit.js`, `src/review.js`, `src/tools.js`, `src/broker.js`, `src/kinds/kubernetes/cluster.js`, `src/kinds/engines/http.js` and the kinds `http`, `command`, `kafka` and `mongodb` (the last also in its `document.js`) import it from here.
@@ -4266,6 +5049,136 @@ flowchart TD
     T1 --> T5["src/broker.js and src/kinds/engines/http.js: import clip"]
     T1 --> T6["the kinds http, command, kafka and mongodb, and src/kinds/mongodb/document.js: import clip"]
 ```
+
+## src/token.js
+
+The global token of the network listener: one token for every project. `newToken` makes one, `tokenState` reads its state, `checkToken` checks the token a request gives, `sameDigest` compares two digests, `noteUse` writes when and from where it was last used, `revokeToken` revokes it, `tokenLines` gives the lines of `ksproxy token` and `expiryWarning` the warning of the last days. `tokenPath` is its file, `token.json` in `listenDir`, the folder `listen` in the root state folder. `TOKEN_PREFIX` is `ksp_`, `TOKEN_DAYS` is 365, `WARN_DAYS` is 30, `USE_WRITE_MS` is 60000 and `TOKEN_FILE_BYTES` is 512, the size of `token.json` at all times. The helpers: `digestOf` gives the SHA-256 of a text, `dayOf` the day of a time, `textOf` the text of a record padded with spaces to a size, `isTime` and `isAddress` check a field, `parseRecord` reads a record from a text, `readRecord` reads the file and `writeRecord` writes it. `TOKEN_BYTES` is 32, `REVOKE_TRIES` is 3, `DAY_MS` one day in milliseconds, `DIGEST_RE` the form of a digest, `ADDRESS_RE` the form of an address and `UNKNOWN_ADDRESS` the address written in place of one that does not have that form.
+
+The file holds only the digest of the token, never the token. No function here writes the token to a file, a log or a message: `newToken` gives it back once, to the caller. `ksproxy token` uses `tokenState`, `tokenLines` and `revokeToken`; the other functions are for the network listener.
+
+### newToken, writeRecord and the record
+
+```mermaid
+flowchart TD
+    N1["newToken of env and now, the time now when not given"] --> N2["the token: TOKEN_PREFIX ksp_, then 32 random bytes in base64url, 43 characters"]
+    N2 --> N3["the record: version 1, sha256 the hex of digestOf of the token,<br/>created now, expires TOKEN_DAYS 365 days later, revoked, lastUsed and lastAddress null"]
+    N3 --> W1["writeRecord: ensureDir of listenDir, mode 0700"]
+    W1 --> W2["writeFileAtomic of tokenPath with textOf of the record, mode 0600, keep passed on:<br/>a new file at token.json, JSON with two spaces and a new line, then spaces to TOKEN_FILE_BYTES, 512"]
+    W2 --> N4["the token before stops working at once: its digest is no longer in the file"]
+    N4 --> N5["OK: the token, given back once and written nowhere"]
+    P1["tokenPath of env"] --> P2["listenDir/token.json: the root state folder, the same file for every project"]
+```
+
+Every write of `token.json` gives exactly 512 bytes, and a note of use writes exactly the length it read, so the size of the file never changes once it is made. A reader in another process takes the size first and then reads: had the file grown in between, it would read a cut text, fail to parse it, and `ksproxy token revoke` would fail. The largest record there can be needs about 425 bytes: times of 27 characters, such as `+275760-09-13T00:00:00.000Z`, and an address of 64 characters that JSON writes as 128, when each is a quote or a backslash. A test makes that record and checks that it fits.
+
+### readRecord, parseRecord and tokenState
+
+```mermaid
+flowchart TD
+    R1["readRecord of env: read tokenPath"] --> R2{"read?"}
+    R2 -->|"no, ENOENT"| R3["none"]
+    R2 -->|"no, any other error, such as a folder in its place"| R4["unreadable"]
+    R2 -->|"yes"| R5["parseRecord: JSON.parse"]
+    R5 --> R6{"JSON, an object, version 1, and sha256 a text of 64 lower-case hex characters?"}
+    R6 -->|"no"| R4
+    R6 -->|"yes"| R7{"created and expires times, isTime: exactly as toISOString writes them,<br/>and revoked null or a time?"}
+    R7 -->|"no"| R4
+    R7 -->|"yes"| R8{"lastUsed and lastAddress both null, or lastUsed a time and lastAddress an address,<br/>isAddress: 1 to 64 printable ASCII characters without a space?"}
+    R8 -->|"no"| R4
+    R8 -->|"yes"| R9["the record, with only the seven known keys"]
+    S1["tokenState of env and now"] --> S2["readRecord"]
+    S2 --> S3{"none or unreadable?"}
+    S3 -->|"yes"| S4["OK: that state, record null"]
+    S3 -->|"no"| S5{"revoked set?"}
+    S5 -->|"yes"| S6["OK: revoked, even once expired, with the record"]
+    S5 -->|"no"| S7{"now at or after expires?"}
+    S7 -->|"yes"| S8["OK: expired, with the record"]
+    S7 -->|"no"| S9["OK: ok, with the record"]
+```
+
+### checkToken and sameDigest
+
+```mermaid
+flowchart TD
+    C1["checkToken of env, the text after Bearer, and now"] --> C2{"a text that is not empty?"}
+    C2 -->|"no"| C3["missing"]
+    C2 -->|"yes"| C4["tokenState of env and now: the file is read on every call"]
+    C4 --> C5{"a record, not none and not unreadable?"}
+    C5 -->|"no"| C6["unreadable: no file, or one that cannot be read or is not a record, lets nothing in"]
+    C5 -->|"yes"| C7["sameDigest of digestOf of the text and the digest of the record"]
+    C7 --> C8{"the same?"}
+    C8 -->|"no"| C9["wrong, whatever the state of the file"]
+    C8 -->|"yes"| C10["the state: ok, revoked or expired, and only ok lets the request in"]
+    D1["sameDigest of a and b"] --> D2{"the same length?"}
+    D2 -->|"no"| D3["false, and timingSafeEqual is not called: it would throw"]
+    D2 -->|"yes"| D4["crypto.timingSafeEqual of a and b: the time does not depend on where they differ"]
+```
+
+So a revoke or a new token from any process counts at the next request. A wrong token gives `wrong` even when the file is revoked or expired, so only the holder of the token learns that it was revoked or that it expired.
+
+### noteUse
+
+```mermaid
+flowchart TD
+    U1["noteUse of env, the client address and now"] --> U2["open tokenPath to read and write, read it through that open file"]
+    U2 --> U3{"opened and read?"}
+    U3 -->|"no, no file or a folder in its place"| U9["false, it never throws"]
+    U3 -->|"yes"| U4{"parseRecord gives a record?"}
+    U4 -->|"no"| U9
+    U4 -->|"yes"| U5{"lastUsed set and less than USE_WRITE_MS, one minute, from now, before or after?"}
+    U5 -->|"yes"| U9
+    U5 -->|"no"| U6["lastUsed now, lastAddress the address when isAddress, else UNKNOWN_ADDRESS, unknown"]
+    U6 --> U11{"textOf of the record, padded with spaces to the old length, is exactly that long?"}
+    U11 -->|"no: it would make the file longer"| U9
+    U11 -->|"yes"| U7["write it from the start of the open file, in place: the size does not change"]
+    U7 --> U8["true"]
+    U8 --> U10["the open file is closed in every case"]
+    U9 --> U10
+```
+
+It writes in place and never through a new file, unlike `writeRecord`. A revoke or a new token from another process puts a new file at `token.json`. A note of use that read the file before that, and writes after it, writes into the old file, which is no longer `token.json`, so it can never undo the revoke or bring back the old token. A note of use that comes later reads the new file and keeps its `revoked`.
+
+### revokeToken
+
+```mermaid
+flowchart TD
+    V1["revokeToken of env and now: try 1"] --> V2["readRecord"]
+    V2 --> V3{"none or unreadable?"}
+    V3 -->|"yes"| V4["that result: nothing is written or made"]
+    V3 -->|"no"| V5{"revoked set?"}
+    V5 -->|"yes"| V6["already: the first date stays"]
+    V5 -->|"no"| V7["writeRecord of the record with revoked now: the temporary file is written"]
+    V7 --> V9{"try 1 or 2, less than REVOKE_TRIES?"}
+    V9 -->|"no, try 3"| V12["rename without the check: the record read on this try is revoked"]
+    V9 -->|"yes"| V10{"keep: readRecord again just before the rename, the same sha256 as the first read?"}
+    V10 -->|"yes"| V11["rename: a new file at token.json"]
+    V10 -->|"no: a new token, or no file or record any more"| V13["the temporary file is removed, start over: the next try"]
+    V13 --> V2
+    V11 --> V8["revoked: the listener refuses the token at its next request, which reads the file"]
+    V12 --> V8
+```
+
+The check stops a revoke from putting back an old record over a new token that the start terminal made at the same moment: the revoke starts over and revokes the new one. A tiny window remains between the last read and the rename, on every try. A new token made in it is replaced by the revoked record, so that token is refused as wrong: it fails closed, and no token that should be refused is let in.
+
+### tokenLines and expiryWarning
+
+```mermaid
+flowchart TD
+    L1["tokenLines of a record and now"] --> L2["created DAY, where dayOf gives the first 10 characters of a time: YYYY-MM-DD in UTC"]
+    L2 --> L3{"now at or after expires?"}
+    L3 -->|"yes"| L4["expired DAY"]
+    L3 -->|"no"| L5["expires DAY"]
+    L4 --> L6["revoked DAY, or revoked no"]
+    L5 --> L6
+    L6 --> L7["last used DAY from ADDRESS, or last used never: never the token or its digest"]
+    E1["expiryWarning of a record and now"] --> E2{"revoked, or no time left?"}
+    E2 -->|"yes"| E3["null"]
+    E2 -->|"no"| E4{"more than WARN_DAYS, 30 days, left?"}
+    E4 -->|"yes"| E3
+    E4 -->|"no"| E5["the token expires on DAY, type new-token to replace it"]
+```
+
+The real warning has a semicolon after the day: `the token expires on DAY; type new-token to replace it`. With exactly 30 days left it is given; at the moment the token expires it is not.
 
 ## src/tools.js
 
@@ -4295,17 +5208,17 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    C1["callTool of name, args, env"] --> C2{"name is list_targets, or kindByTool finds the kind of that tool?"}
+    C1["callTool of name, args, env, origin: undefined, or from and client of a network client,<br/>and signal: undefined, or the AbortSignal of the network listener"] --> C2{"name is list_targets, or kindByTool finds the kind of that tool?"}
     C2 -->|"no"| C3["unknown tool: NAME, isError"]
     C2 -->|"yes"| C4["liveSession of the session folder"]
     C4 --> C5{"none, or targets not a list?"}
     C5 -->|"yes"| C6["noSessionText of env, see below, isError unless the tool is list_targets"]
     C5 -->|"no"| C7{"list_targets?"}
-    C7 -->|"yes"| C8["listTargets: audit an entry with event list,<br/>a failed write is reported on stderr"]
+    C7 -->|"yes"| C8["listTargets: audit an entry with event list, and from and client when there is an origin,<br/>a failed write is reported on stderr"]
     C8 --> C9["OK: JSON with startedAt and each target's kind, name, description, state from targetState, allow, review true<br/>for a reviewed target, and outputLimit N KiB per stream when outputKiB of the target is not 256, isError false"]
     C7 -->|"no"| C10{"isPlainObject: args an object, not null and not an array?"}
     C10 -->|"no"| C11["invalid arguments: expected an object, isError"]
-    C10 -->|"yes"| C12["execTool, next diagrams"]
+    C10 -->|"yes"| C12["execTool with the origin and the signal, next diagrams"]
     C1 -->|"anything throws"| C13["internal error: MESSAGE, isError"]
 ```
 
@@ -4363,7 +5276,7 @@ This diagram shows the argument checks and the lookup of the open target.
 ```mermaid
 flowchart TD
     X1["execTool of tool and args"] --> X1b["detailOf: the argument detailKey, or for a tool with detailShape object, http_request,<br/>an object of every argument but the target name and timeout_seconds"]
-    X1b --> X2["audit entry: event call, tool, the kind's label, target clipped to 64 or unprintable, under detailKey auditedDetailOf:<br/>command or args when well typed, what the tool's auditedDetail keeps of an object call, else null"]
+    X1b --> X2["audit entry: event call, tool, the kind's label, target clipped to 64 or unprintable, under detailKey auditedDetailOf:<br/>command or args when well typed, what the tool's auditedDetail keeps of an object call, else null,<br/>and from and client when there is an origin, so every refusal and the allowed entry carry them"]
     X2 --> X2a{"auditedDetailOf threw?"}
     X2a -->|"yes"| R6["REFUSE: invalid arguments, the call could not be written to the log, audited with null for the call, nothing of the error kept"]
     X2a -->|"no"| X3{"name a string?"}
@@ -4381,7 +5294,7 @@ flowchart TD
     X9 -->|"no"| Z1["continues in: execTool, the decision and the review"]
     X9 -->|"yes"| X9a{"callSocketOrNull: the call socket path can be used?"}
     X9a -->|"no"| R5["REFUSE: session did not answer, the text is REFUSED with the word and the name: the session did not answer"]
-    X9a -->|"yes"| X9c["OK: the answer of askCall with kind, name, the call and the timeout, waiting the timeout plus 75 s,<br/>not audited here: start audits what it decides, diagram 8.1"]
+    X9a -->|"yes"| X9c["OK: the answer of askCall with kind, name, the call, the timeout and, when there is an origin, origin with from and client, waiting the timeout plus 75 s,<br/>not audited here: start audits what it decides, diagram 8.1. The signal is not passed: the session ends the call when it stops"]
     R1 --> Z2["continues in: execTool, the audit of a refusal"]
     R2 --> Z2
     R5 --> Z2
@@ -4423,8 +5336,8 @@ flowchart TD
 ```mermaid
 flowchart TD
     Y0["visibleLimit of the target as session.json has it: outputKiB times 1024, 262144 by default, at most 4 MiB"] --> Y1["command of the kind, with the target, the decision and dir, env, session and the input,<br/>gives program, args and options, drawn in the kind sections"]
-    Y1 --> Y5["run program and args with the timeout in ms, at most the read limit,<br/>the visible limit plus 32768, bytes kept per stream, and the kind's options"]
-    Y5 --> Y6["audit: decision allowed, rule, review certainty and reason when reviewed, exitCode, timedOut, spawnError,<br/>durationMs, stdoutBytes, stderrBytes. A failed audit write prints ksproxy: could not write audit log: MESSAGE on stderr and the answer is unchanged"]
+    Y1 --> Y5["run program and args with the timeout in ms, at most the read limit,<br/>the visible limit plus 32768, bytes kept per stream, the kind's options, and the signal when given:<br/>its abort kills the process group at once, the result is audited as any other"]
+    Y5 --> Y6["audit: the entry of the call, with from and client when there is an origin, decision allowed, rule, review certainty and reason when reviewed, exitCode, timedOut, spawnError,<br/>durationMs, stdoutBytes, stderrBytes. A failed audit write prints ksproxy: could not write audit log: MESSAGE on stderr and the answer is unchanged"]
     Y6 --> Y7["fitStreams: fitStream on stdout and stderr with no secret values: scrubOutput, drop the end of a stream<br/>that reached the read limit, then cut to the visible limit, see answerCall"]
     Y7 -->|"the hiding or the scrub throws, after the audit"| YF["outputFailed: the line of formatResult with no output and no truncation note, then the output could not be shown, isError true"]
     Y7 --> Y8["formatResult: could not start, or timed out after N s, or exit code N, then a stdout and a stderr section<br/>when not empty, then a truncation note with the visible limit when run or fitStream left something out"]
@@ -4452,10 +5365,17 @@ A target whose kind is in no kind's key can only come from a session file edited
 
 ### answerCall
 
-The flow of `answerCall` is drawn in Part 1, 8.2 (finding the target in memory, the type of the call, `decide`, `reviewStep`) and 8.3 (the run and the answer). Its audit entry has the fields of `execTool`: event call, tool, the kind's label, the target clipped to 64, the call from `auditedDetailOf`, then the decision fields. The audit write goes through the terminal of `start` when it fails. Before the cut, `hideSecrets` of the http engine replaces every secret value of the target, and every form of one that the kind's `hiddenForms` gives, in both streams by `[hidden]`, for every brokered kind, so that a program that prints its own environment gives nothing away. No kind hides anything in `perform`: hiding there would shorten a stream that reached the read limit, and the core could no longer tell that it was cut. The texts to hide are used for nothing else; the byte counts of the audit entry are those of the output that `perform` gave. The audit entry is written before the streams are fitted, in `execTool` too, so a call that ran is audited even when the hiding or the scrub throws; the agent then gets the first line of the answer and `the output could not be shown`, without any output. This diagram shows the helpers of the run.
+The flow of `answerCall` is drawn in Part 1, 8.2 (finding the target in memory, the type of the call, `decide`, `reviewStep`) and 8.3 (the run and the answer). Its audit entry has the fields of `execTool`: event call, tool, the kind's label, the target clipped to 64, the call from `auditedDetailOf`, `from` and `client` when `checkedOriginFields` accepts the origin of the request, then the decision fields. `checkedOriginFields` gives both fields only when the origin is a plain object and each of `from` and `client` is a string of 1 to 64 printable ASCII characters (0x20 to 0x7E); otherwise it gives none, and the call runs as a local one. It never refuses a call. `originFields` is the other side: for the origin that `callTool` was given, it gives `from` and `client`, or none when the origin is undefined. The audit write goes through the terminal of `start` when it fails. Before the cut, `hideSecrets` of the http engine replaces every secret value of the target, and every form of one that the kind's `hiddenForms` gives, in both streams by `[hidden]`, for every brokered kind, so that a program that prints its own environment gives nothing away. No kind hides anything in `perform`: hiding there would shorten a stream that reached the read limit, and the core could no longer tell that it was cut. The texts to hide are used for nothing else; the byte counts of the audit entry are those of the output that `perform` gave. The audit entry is written before the streams are fitted, in `execTool` too, so a call that ran is audited even when the hiding or the scrub throws; the agent then gets the first line of the answer and `the output could not be shown`, without any output. This diagram shows the helpers of the run and the check of the origin.
 
 ```mermaid
 flowchart TD
+    G1["originFields of an origin: callTool was given none"] -->|"undefined"| G2["no fields"]
+    G1 -->|"given"| G3["from and client of the origin, as they are"]
+    H1["checkedOriginFields of request.origin, from the call socket"] --> H2{"a plain object: not null, not an array?"}
+    H2 -->|"no"| H4["no fields, the call runs, nothing is refused"]
+    H2 -->|"yes"| H3{"from and client each a string of 1 to 64 characters from 0x20 to 0x7E?"}
+    H3 -->|"no"| H4
+    H3 -->|"yes"| H5["from and client, copied into every entry answerCall writes for the call"]
     T1["hiddenTexts of the kind and the opened target"] --> T2{"the kind has hiddenForms?"}
     T2 -->|"yes"| T3["the secret values, then hiddenForms of the target and the secrets"]
     T2 -->|"no"| T4["the secret values"]

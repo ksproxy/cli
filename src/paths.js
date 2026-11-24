@@ -33,21 +33,25 @@ export function configDir(env = process.env) {
 export const PROJECT_KEY = 'KSPROXY_PROJECT';
 export const PROJECT_RE = /^[a-z0-9][a-z0-9_-]{0,23}$/;
 export const PROJECT_RULE = '--project: a project name is 1 to 24 characters: lower-case letters, digits, "-" and "_", starting with a letter or a digit';
+// The name that means the default inventory wherever --project is taken: it is never the name of a project.
+export const PROJECT_DEFAULT = 'default';
 
 // The project of a command, or null. Only the CLI sets it, through withProject; a present value that breaks the rule
-// throws, so that a mistake can never fall back to the default session.
+// throws, so that a mistake can never fall back to the default session. The name default is no project, so no path is
+// ever built on projects/default.json or p/default.
 export function projectOf(env = process.env) {
   const name = env[PROJECT_KEY];
-  if (name === undefined) return null;
+  if (name === undefined || name === PROJECT_DEFAULT) return null;
   if (typeof name !== 'string' || !PROJECT_RE.test(name)) throw new Error(PROJECT_RULE);
   return name;
 }
 
-// A copy of env for one project, or for none: an inherited value is removed first, so only the flag chooses.
+// A copy of env for one project, or for none: an inherited value is removed first, so only the flag chooses. The name
+// default gives the copy for none.
 export function withProject(env, name) {
   const out = { ...env };
   delete out[PROJECT_KEY];
-  if (name !== null) out[PROJECT_KEY] = name;
+  if (name !== null && name !== PROJECT_DEFAULT) out[PROJECT_KEY] = name;
   return out;
 }
 
@@ -64,6 +68,11 @@ export function inventoryPath(env = process.env) {
 // use it, never stateDir, so that no project can reach the files of another one.
 export function rootStateDir(env = process.env) {
   return env.KSPROXY_STATE_DIR || path.join(os.homedir(), '.ksproxy');
+}
+
+// The folder of the network listener and of its token: one for every project, in the root state folder.
+export function listenDir(env = process.env) {
+  return path.join(rootStateDir(env), 'listen');
 }
 
 // Where this session keeps its files: the root for no project, else root/p/NAME.
@@ -158,12 +167,20 @@ export function ensureDir(dir) {
   fs.chmodSync(dir, 0o700);
 }
 
-export function writeFileAtomic(file, text) {
+// Writes the text through a temporary file and a rename, so a reader sees the old text or the new one, never a part.
+// keep is asked just before the rename: when it gives false, the temporary file is removed, the file is left as it
+// was, and the result is false. Gives true once the file holds the text.
+export function writeFileAtomic(file, text, keep = () => true) {
   const tmp = `${file}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
   try {
     fs.writeFileSync(tmp, text, { flag: 'wx', mode: 0o600 });
     fs.chmodSync(tmp, 0o600);
+    if (!keep()) {
+      fs.rmSync(tmp, { force: true });
+      return false;
+    }
     fs.renameSync(tmp, file);
+    return true;
   } catch (err) {
     fs.rmSync(tmp, { force: true });
     throw err;

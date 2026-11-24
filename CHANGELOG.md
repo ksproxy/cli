@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-24
+
+### Added
+
+- Network access: `ksproxy start --listen HOST:PORT` (given once or several times) serves the projects of that start over HTTP on loopback or private addresses of this machine, at `/mcp` and `/p/NAME/mcp`, behind one global token. `--tls-cert FILE --tls-key FILE` turn on TLS, and `--new-token` makes a new token at start. The listener refuses a request with an `Origin` header, a wrong `Host`, a wrong token (10 in a minute block the address for a minute) and a body over 256 KiB. Its limits are 64 connections, 16 of them from one address, 16 calls running at once (`503`), 10 seconds for a request to arrive and 60 seconds idle.
+- `ksproxy token` shows when the token was made, expires and was last used, and `ksproxy token revoke` revokes it at once. Typing `new-token` in the `start` terminal makes a new one.
+- Several projects in one start: `ksproxy start --project shop,ops --all` runs them in one terminal, with `[NAME] ` before each line. `default` names the default inventory in the list.
+- `ksproxy log --from ADDRESS` shows the calls that came over the network from one address. Their entries carry `from` and `client`.
+- `ksproxy status` shows the listen addresses, the token and the clients of a live listener.
+
+### Changed
+
+- `default` is a reserved project name: it means the default inventory wherever `--project` is accepted, no command uses `projects/default.json` as a project, but ksproxy still reads it so that the files it protects stay protected and its ports stay taken, and `ksproxy init --project default` writes `inventory.json`. While a project named `default` still exists (`projects/default.json` or `p/default`), `--project default` is refused with `--project default now means inventory.json, but an old project named default is still here (PATH); rename it, for example to default-old, and update its agent configs`.
+- Migration: if you had a project named `default`, rename its file (`projects/default.json` to `projects/default-old.json`) and its state folder (`p/default` to `p/default-old`), and update the agent configs that use `mcp --project default`.
+
 ## [0.4.0] - 2026-11-22
 
 ### Added
@@ -79,6 +94,7 @@ First release.
 - `ksproxy init`, `ksproxy status` and `ksproxy check <ssh|kube|local> <name> <command...>` to create an inventory, inspect the session, and test a rule without opening anything.
 - No npm dependencies. Requires Node.js 24 or later, on macOS or Linux.
 
+[0.5.0]: https://github.com/ksproxy/cli/releases/tag/v0.5.0
 [0.4.0]: https://github.com/ksproxy/cli/releases/tag/v0.4.0
 [0.3.0]: https://github.com/ksproxy/cli/releases/tag/v0.3.0
 [0.2.0]: https://github.com/ksproxy/cli/releases/tag/v0.2.0

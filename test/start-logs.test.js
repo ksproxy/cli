@@ -149,13 +149,16 @@ test('during a session the log is rotated, at most five old files stay, and ever
     await new Promise((resolve) => setTimeout(resolve, 100));
     const shown = (run.proc.stdout.text.match(/cat file-(\d{3})/g) ?? []).map((m) => Number(m.slice(-3)));
     assert.deepEqual(shown, Array.from({ length: total }, (_, i) => i));
-    const rotated = rotatedLogs(world.logDir);
-    assert.ok(rotated.length >= 1 && rotated.length <= 5, `rotated files: ${rotated.length}`);
-    assert.ok(fs.statSync(world.auditLog).size < 1500);
-    assert.equal(fs.readdirSync(world.logDir).length, rotated.length + 1);
   } finally {
     const code = await stopWith(run);
     assert.equal(code, 0);
   }
   assert.match(run.proc.stderr.text, new RegExp(`CLOSED +${total} calls: ${total} ok`));
+  // The files are checked once the session has stopped. While it runs, the follower can rotate the log at any tick,
+  // and audit.log does not exist from the rename until the next entry. Stopping reads what is left but never rotates,
+  // and the closing entries write audit.log again.
+  const rotated = rotatedLogs(world.logDir);
+  assert.ok(rotated.length >= 1 && rotated.length <= 5, `rotated files: ${rotated.length}`);
+  assert.ok(fs.statSync(world.auditLog).size < 1500);
+  assert.equal(fs.readdirSync(world.logDir).length, rotated.length + 1);
 });
