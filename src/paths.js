@@ -75,8 +75,15 @@ export function listenDir(env = process.env) {
   return path.join(rootStateDir(env), 'listen');
 }
 
-// Where this session keeps its files: the root for no project, else root/p/NAME.
+// The key of a state folder that a run is given in place of its own: ksproxy doctor opens its targets in a temporary
+// folder. A symbol is no environment variable, so only code can set it, a copy of env keeps it, and no child process
+// gets it. rootStateDir and configDir never follow it, so the guards keep using the real folders.
+export const STATE_FOLDER = Symbol('state folder');
+
+// Where this session keeps its files: the folder under STATE_FOLDER when env has one, else the root for no project,
+// else root/p/NAME.
 export function stateDir(env = process.env) {
+  if (env[STATE_FOLDER] !== undefined) return env[STATE_FOLDER];
   const project = projectOf(env);
   return project === null ? rootStateDir(env) : path.join(rootStateDir(env), 'p', project);
 }

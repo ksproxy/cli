@@ -57,9 +57,57 @@ Homepage: https://ksproxy.github.io/cli/ · Source: https://github.com/ksproxy/c
    The config is the same on every run, so you do this once.
 5. Press Ctrl-C when you are done. Every ssh connection and tunnel is closed, every proxy is stopped, `session.json` and the socket folder are removed, and the audit log in `logs/` is kept. The other session files (`ssh_config`, `kubeconfig`, `AGENT.md`, `mcp.json` and the proxy logs) stay until the next `start`.
 
-Other commands: `ksproxy status [--project NAME]` (every live session and each target's state, then the time of the last call and the number of calls this session; exit 0 only when everything is up), `ksproxy log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]` (the history, see "The log"), `ksproxy token` and `ksproxy token revoke` (the network token, see "Network access"), `ksproxy check [--project NAME] <flag of the kind> <name> <command...>`, for example `ksproxy check ssh web1 uptime` (see below), `ksproxy mcp [--project NAME]` (the MCP server; your agent starts it, you do not), `ksproxy --help`, `ksproxy --version`. `ksproxy init` and `ksproxy start` take `--project NAME` too. `ksproxy start` also takes `--project a,b` (several projects, see "Projects") and `--listen HOST:PORT`, `--new-token`, `--tls-cert FILE` and `--tls-key FILE` (see "Network access").
+Other commands: `ksproxy status [--project NAME]` (every live session and each target's state, then the time of the last call and the number of calls this session; exit 0 only when everything is up), `ksproxy log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]` (the history, see "The log"), `ksproxy token` and `ksproxy token revoke` (the network token, see "Network access"), `ksproxy check [--project NAME] <flag of the kind> <name> <command...>`, for example `ksproxy check ssh web1 uptime` (see below), `ksproxy doctor` (takes the arguments of `start` and checks every target without opening a session, see "Checking your targets with doctor"), `ksproxy mcp [--project NAME]` (the MCP server; your agent starts it, you do not), `ksproxy --help`, `ksproxy --version`. `ksproxy init` and `ksproxy start` take `--project NAME` too. `ksproxy start` also takes `--project a,b` (several projects, see "Projects") and `--listen HOST:PORT`, `--new-token`, `--tls-cert FILE` and `--tls-key FILE` (see "Network access").
 
 Only one session runs at a time for each project, and for the default (no project). `start` refuses while a live session of the same project exists and cleans up a stale one. See "Projects" below.
+
+## Checking your targets with doctor
+
+`ksproxy doctor` tells you, target by target, whether your inventory still works: the credential is there, the target can be reached and opened, and one harmless read succeeds. It changes nothing on any target.
+
+It takes exactly the arguments of `ksproxy start`: `--project` (one name or a list), `--all`, the kind flags, `-v`, `--listen`, `--tls-cert` and `--tls-key`. `--new-token` is accepted and changes nothing. Target names may also be given as plain words (`ksproxy doctor web1 shop-db`). With no selection, doctor checks every target of the selected projects and never shows the picker. It has no flag of its own.
+
+When `ksproxy start` fails, run the same line again with `doctor` in place of `start`. `start` stops at the first problem; doctor goes on and shows all of them in one run. It reports:
+
+- the pre-checks of `start`, in the order of `start`: the inventory of each project loads; no session of the project runs; the `--listen` values are valid; the TLS files can be read and belong together; no other program listens on the address; the token file can be read. A failed pre-check is printed as `FAIL` with the message of `start`. With `--listen`, doctor also opens each address for a moment and closes it again, without making a token.
+- each target: doctor reads its credential from the environment, applies the inventory checks and prints the warnings that `start` prints, opens the target the way a session does, runs **one fixed, read-only check** of its kind, and closes it. Targets are checked one after another. The check is fixed by ksproxy; it is never taken from your `allow` rules, and it is never sent to the model reviewer.
+
+| Kind | The check |
+|---|---|
+| `ssh` | The connection opens. Nothing is run on the server. |
+| `kubernetes` | `GET /version` through the opened proxy. |
+| `local` | The folder checks. |
+| `http` | The host answers on its port (TLS for https). No request is sent. |
+| `command` | The program is found. Nothing is run. |
+| `elasticsearch` | `GET /_cluster/health` |
+| `rabbitmq` | `GET /api/whoami` |
+| `redis` | `PING` |
+| `postgres`, `mysql` | `select 1` |
+| `mongodb` | The `ping` command. |
+| `kafka` | List the topics. |
+
+A kind with no check of its own is `OK` once it has opened. Each target has its open time limit and then 30 seconds for the check, so a dead host does not hang the run. Ctrl-C stops the run, closes what is open and exits 1.
+
+```text
+$ ksproxy doctor
+10:00:01 --   inventory  OK              loaded /home/someone/.config/ksproxy/inventory.json
+10:00:01 --   session    OK              no session is running
+10:00:01 ssh  web1       OK              connected
+10:00:02 kube lab        OK              server v1.31.2
+10:00:02 loc  infra      OK              folder checks passed
+10:00:03 pg   shop-db    OK              select 1 answered
+10:00:03 rds  cache      OK              PONG
+10:00:04 es   es-logs    FAIL            HTTP 401 from GET /_cluster/health: authentication failed
+5 of 6 targets OK
+```
+
+Each line has the format of the log: `OK` or `FAIL` and a short detail, cleaned, with every secret value hidden. The lines that `start` would print while it opens a target (`WARN`, `SKIPPED`) are printed too. With several projects each line starts with `[NAME] `, as in `start`. The last line is `N of M targets OK`.
+
+Exit code: 0 when every checked target is `OK`, 1 otherwise, 2 for a usage error.
+
+- **A project with a running session** is reported as `FAIL` (`a session of project NAME is running`, with its process number) and its targets are not opened, because a session holds fixed ports and the socket folder. Other projects of the same run are checked. To look at a running session, use `ksproxy status`.
+- **It writes nothing a session writes.** It uses a temporary socket folder of its own and removes it at the end. If doctor is killed before it can remove the folder, the next `ksproxy doctor` or `ksproxy start` stops the cluster proxies and ssh connections left in it and removes it; a folder left empty by a doctor killed while it was making it is removed once it is five minutes old. It never writes `session.json`, the call socket or the agent files, so no agent can reach a target through it, and it writes nothing to the audit log.
+- **It does contact every checked target** with your credentials, with the one read of its kind. It does not run your `allow` rules (use `ksproxy check` for that) and it repairs nothing.
 
 ## Projects
 
@@ -165,9 +213,11 @@ Any validation failure is an error that names the entry and the field. Unknown k
 | `manifestRoots` (optional) | Absolute or `~/` directories. The only places `-f` and `--patch-file` may read a single file from. |
 | `local[].cwd` | The folder the commands run in. Required; absolute or `~/`. It is never shown to the agent. |
 | `local[].protect` (optional) | Local targets only. Up to 50 files and folders inside `cwd` that no wildcard argument or argument sent to the model reviewer may name, enter or contain. Plain paths relative to `cwd`, no patterns. See "Local targets". |
+| `local[].paths` (optional) | Local targets only. Up to 50 files, folders and patterns inside `cwd` that every path of a call must lie inside: a wildcard argument of a rule, a path of a listed program, a path of a reviewed command. See "Listed programs inside chosen paths". |
+| `local[].programs` (optional) | Local targets only. Up to 50 bare program names that may run with any arguments inside `paths`; it needs `paths`. See "Listed programs inside chosen paths". |
 | `description` (optional) | A string shown in the selection list and to the agent. |
 | `maxOutputKiB` (optional) | Any kind of target. The output limit of each of the two streams of a call, in KiB: an integer from 256 to 4096. Without it the limit is 256 KiB. It only raises the limit for this target; `list_targets` and `AGENT.md` show it when it is not 256. The agent cannot ask for more. |
-| `allow` | An array of rule strings, or the string `"any"`. Missing means an empty list, which refuses everything. `start` warns for each selected target with an empty list; the warning is printed before the target is opened, even if the target is then skipped. `"any"` is an error for `local` targets: list the commands, and every `local` rule must start with the program name (not `*` or `...`). |
+| `allow` | An array of rule strings, or the string `"any"`. Missing means an empty list, which refuses everything. `start` warns for each selected target with an empty list; the warning is printed before the target is opened, even if the target is then skipped. `"any"` is an error for `local` targets: list the commands, and every `local` rule must start with the program name (not `*` or `...`), or list programs with `programs` and `paths` (see "Listed programs inside chosen paths"). |
 
 State is kept in `~/.ksproxy` (override: `KSPROXY_STATE_DIR`). Keep that path short: unix socket paths are limited in length, and `start` fails with a clear message if one would exceed 100 bytes, or 83 bytes for the socket of an ssh connection or a cluster tunnel, because ssh first creates that socket under a name 17 bytes longer. Directories are created 0700 and files 0600. `ssh` and `kubectl` are found on `PATH`; `KSPROXY_SSH` and `KSPROXY_KUBECTL` override them with absolute paths. `KSPROXY_PSQL`, `KSPROXY_MYSQL` and `KSPROXY_MONGOSH` do the same for the database clients.
 
@@ -383,7 +433,7 @@ The first check that fails refuses the call, with a short reason in the log.
 - **Folders that cannot be a target:** the filesystem root, your home directory or a parent of it, ksproxy's own folders, and a folder that contains a kubeconfig or Kafka client file named in any of your inventory files. Such a target is `SKIPPED`; `ksproxy check local <name>`, or `ksproxy check --project NAME local <name>` for a target of a project, tells you why, and a refused call tells the agent to ask you for that same command. When another inventory file cannot be read or is not valid JSON, the files it names are not known, so every local target is `SKIPPED` with `cannot read <file> to protect the files it names`, and `ksproxy check` refuses the same way.
 - **One file outside the folder:** write it into a rule as it is, for example `cat /etc/hosts`. That allows exactly that command.
 - **To open one secret-looking file anyway:** write it into a rule as it is, for example `cat .env.production`. `.env.example`, `.env.sample`, `.env.template` and `.env.dist` are not treated as secrets.
-- **`"allow": "any"` is refused** for local targets. List the commands.
+- **`"allow": "any"` is refused** for local targets. List the commands, or list programs with `programs` and `paths` (see "Listed programs inside chosen paths").
 
 ### What the checks cannot do
 
@@ -395,6 +445,50 @@ The first check that fails refuses the call, with a short reason in the log.
 - Whatever you write literally in a rule is allowed exactly as written.
 
 Allow only programs and flags you would run on that folder yourself. The exact rules, limits and refusal messages are in [docs/LOCAL-TARGETS.md](docs/LOCAL-TARGETS.md).
+
+### Listed programs inside chosen paths
+
+**What this means, plainly.** With a `programs` list, the agent can run the programs you name with any flags and arguments, as you, on this machine, as long as every path the command names is inside the `paths` you chose. You name programs, not command patterns. A program can do more than its arguments say: the agent can, for example, write a file and then have another program read that file as instructions. Name only programs you would let the agent use freely on that folder.
+
+```json
+{ "name": "docs", "cwd": "~/projects/shop",
+  "programs": ["cat", "grep", "sed", "ls", "head", "wc"],
+  "allow": ["git status", "git diff ..."],
+  "paths": ["docs", "README.md", "assets/*.png"], "protect": ["docs/private"] }
+```
+
+- **`programs`** is a list of 1 to 50 bare program names: letters, digits and `_ . + -`, not starting with `-`, and no `/`, with no repeats. It needs `paths`. The first word of a call must be exactly one of the names (`CAT` is not `cat`). The program is found on the clean `PATH`, so a file in the folder never replaces it, and a program given as a path (`./run.sh`, `/usr/bin/cat`) is never taken from `programs`.
+- **`paths`** is a list of 1 to 50 entries, each relative to `cwd` (no leading `/` or `~`, no `..` part). An entry is a folder (`docs`), a file (`README.md`) or a pattern. In a pattern, `*` stands for any characters inside one folder or file name, names that start with a dot included (`assets/*.png`), `**` for any number of folders (`**/*.md`), and `.` for the whole folder. A path is inside when it, or a folder above it, matches an entry, judged on the real `cwd` after links are followed.
+- **Your rules in `allow` are tried first** and are checked exactly as before. When `paths` is given, every wildcard argument of a rule that is a path must also be inside `paths`. `paths` may be given without `programs` for that alone. In the example, `git status` is allowed by its own rule although `git` is not in `programs`.
+- **Which arguments are paths.** Each positional argument, the value after `=` of a long flag (`--output=out/x`), and every tail of a short flag from its third character on (`-oout`); after `--` every word is checked whole and also as a flag would be, since `--` can be the value of the flag before it (`sort -T -- -onotes` writes `notes`). Such a word is a path when it contains `/`, or when the whole word or a part of it after `= : @ , + %` starts with `.` or names an existing entry of `cwd` (`prod+creds`). Other words, such as a search word or a number, are free. Give a path as its own word: a value glued to a short flag is checked whole, with every tail.
+- **What every path must pass.** The checks of every local target (no `..`, the length limits, links followed, inside the real `cwd`, not a `protect` entry, not a name that usually holds secrets, not ksproxy's own files), a plain relative path (letters, digits and `_ . / -`), and then inside `paths`. The first failure refuses the call.
+- **No program is refused for being listed.** You chose it. When you list a program that can act as you, `ksproxy start` and `ksproxy check` warn, for example `programs that can act as you: python3, ps; the agent can use them with your whole account`. A name is compared by its base name in lower case, also without a version (`python3.12`) and without a leading `g`, `gnu` or `bsd` (`gnumake`; `gzip` and `gunzip` keep their `g`), and by the part of each before its first `-` (`docker-buildx` is `docker`). The list:
+  - shells: `sh`, `bash`, `rbash`, `zsh`, `dash`, `ksh`, `mksh`, `fish`, `csh`, `tcsh`, `pwsh`, `busybox`, `toybox`;
+  - interpreters: `python`, `perl`, `php`, `lua` (and every name that starts with them), `node`, `nodejs`, `deno`, `bun`, `ruby`, `irb`, `erb`, `tclsh`, `wish`, `expect`, `osascript`, `awk`, `gawk`, `mawk`, `nawk`, `R`, `Rscript`, `julia`, `java`, `jshell`, `groovy`, `scala`, `kotlin`, `swift`, `dotnet`, `ghci`, `runghc`, `erl`, `elixir`, `iex`, `guile`, `racket`, `sbcl`, `m4`, `dc`, `sqlite3`, `duckdb`;
+  - programs that run other programs: `env`, `xargs`, `exec`, `command`, `nohup`, `nice`, `timeout`, `time`, `watch`, `stdbuf`, `setsid`, `script`, `parallel`, `flock`, `taskset`, `ionice`, `chrt`, `caffeinate`, `arch`, `sandbox-exec`, `open`, `xdg-open`, `xcrun`, `tmux`, `screen`, `entr`, `ssh-agent`, `crontab`, `at`, `batch`, `launchctl`, `systemctl`, `systemd-run`, `taskpolicy`, `lockf`, `prlimit`, `shortcuts`, `automator`;
+  - privileges: `sudo`, `doas`, `su`, `pkexec`, `chroot`, `unshare`, `nsenter`, `runuser`, `setpriv`, `capsh`, `sg`, `newgrp`, `fakeroot`;
+  - network clients: `curl`, `wget`, `nc`, `ncat`, `netcat`, `socat`, `ssh`, `scp`, `sftp`, `rsync`, `ftp`, `lftp`, `telnet`, `openssl`, `http`, `xh`, `aria2c`, `rclone`, `dig`, `nslookup`, `host`, `mail`, `mailx`, `sendmail`, `mutt`, `psql`, `mysql`, `mongosh`, `redis-cli`, `pg_dump`, `pg_dumpall`, `mysqldump`;
+  - editors and pagers: `vi`, `vim`, `nvim`, `view`, `ex`, `ed`, `nano`, `pico`, `emacs`, `mg`, `micro`, `code`, `less`, `more`, `most`, `man`;
+  - debuggers: `lldb`, `gdb`, `strace`, `ltrace`, `dtrace`, `dtruss`, `valgrind`, `perf`;
+  - build tools and compilers: `make`, `cmake`, `ninja`, `bazel`, `meson`, `scons`, `gradle`, `mvn`, `ant`, `rake`, `cargo`, `go`, `cc`, `gcc`, `g++`, `c++`, `clang`, `clang++`, `javac`, `xcodebuild`;
+  - package managers: `npm`, `npx`, `yarn`, `pnpm`, `corepack`, `pip` (and every name that starts with it), `uv`, `uvx`, `poetry`, `conda`, `mamba`, `gem`, `bundle`, `bundler`, `composer`, `rustup`, `brew`, `port`, `apt`, `apt-get`, `dpkg`, `yum`, `dnf`, `rpm`, `apk`, `pacman`, `nix`, `nix-env`, `nix-shell`, `snap`, `flatpak`, `asdf`, `mise`;
+  - document tools, which run filters or commands, or read any file: `pandoc`, `latexmk`, `tex`, `latex`, `pdftex`, `pdflatex`, `xetex`, `xelatex`, `luatex`, `lualatex`, `groff`, `troff`, `nroff`;
+  - archive programs, because an unpacked member can have an absolute name, or be a link that points anywhere, which a program that follows links then reads: `tar`, `unzip`, `zip`, `cpio`, `pax`, `ditto`;
+  - other processes, your data and saved logins: `ps`, `pgrep`, `pkill`, `kill`, `killall`, `lsof`, `top`, `htop`, `security`, `defaults`, `pbpaste`, `pbcopy`, `log`, `dscl`, `gpg`, `ssh-add`, `op`, `vault`, `pass`, `gh`, `glab`, `aws`, `gcloud`, `gsutil`, `az`, `doctl`, `heroku`, `flyctl`, `vercel`, `terraform`, `pulumi`, `ansible`, `helm`, `kubectl`, `docker`, `podman`, `nerdctl`, `minikube`, `git`, `svn`, `hg`, `ksproxy`, `ssh-keygen`, `oc`, `k9s`, `stern`, `kubectx`, `kubens`, `argocd`, `flux`, `istioctl`, `docker-compose`, `aws-vault`, `sops`, `bw`, `tofu`, `terragrunt`, `ansible-playbook`, `mdfind`, `screencapture`.
+- **Options that are always refused**, whatever you list, also shortened (`--to-com`), with `=` or with a separate value, and inside a group of short flags (`-xPf`). This list is a best effort, like the list above: a program can have other options that run code or reach outside the paths. The options: `find` with `-exec`, `-execdir`, `-ok` or `-okdir`; `tar` (and `gtar`, `bsdtar`) with `-I`, `-F`, `-P`, `-C`, `-T`, `--to-command`, `--use-compress-program`, `--checkpoint-action`, `--info-script`, `--new-volume-script`, `--rsh-command`, `--rmt-command`, `--absolute-names`, `--absolute-paths`, `--directory`, `--cd`, `--files-from` or `--insecure`, also in its first argument without a dash (`tar xPf`); `cpio` with `--insecure` or `--rsh-command`; `tar`, `cpio` and `pax` with any argument that holds `:` (a remote archive); `zip` with `-TT` or `--unzip-command`; `unzip` with `-:`; `sort` with `--compress-program`; `split` with `--filter`; `install` with `--strip-program`; `sdiff` and `diff3` with `--diff-program`; `sed` with a script whose command is `e`, `w`, `W`, `r` or `R`, or an `s` command with the flag `e` or `w`, and `sed -f` or `--file`. An exact option of the same program that only shares a start with a refused one is not refused: `tar --checkpoint=1`, `tar --file=docs/a.tar`, `sort --check` and `install --strip` work.
+- **`review`** may be used with `programs`. A call that no rule allows and whose program is not in `programs` goes to the reviewer as before, and every path of a reviewed command must also be inside `paths`. A call of a listed program that a check refuses is never reviewed.
+- **`"allow": "any"` is still refused** for local targets, and so is every rule that starts with `*` or `...`, `* ...` included.
+- **At start**, `ksproxy start` prints a `WARN` line for each such target that names the programs and the paths in full, for example `programs cat, grep, sed may run with any arguments inside docs, README.md, assets/*.png`, and the warning above when it applies. `AGENT.md` tells the agent the listed programs, that every path must be inside the paths shown, and the options always refused. `ksproxy check local NAME COMMAND` explains a refusal as before, and prints `ALLOWED by rule: programs: cat` for a call that a listed program allows.
+
+What this mode cannot do:
+
+- A listed program runs with your `HOME`, like every local command, so a program that reads saved logins can use them.
+- An argument that is not a path by the rule above is free. A program can still create or read a file named by such a word in `cwd` (`touch notes` creates `cwd/notes` when `notes` does not exist yet), and a flag value given as its own word that starts with `-` (`sort -o -notes`) is taken as a flag.
+- Archive members are not checked. An archive unpacked inside `paths` can hold names that land elsewhere inside `cwd`, and `cpio` and `pax` can unpack a member with an absolute name, anywhere you can write. An unpacked archive can also hold links that point anywhere, so a program that follows links (`grep -R`, `cp -RL`, `zip -r`) can then read any file of yours through them. This is why `tar`, `unzip`, `zip`, `cpio`, `pax` and `ditto` are on the list of programs that can act as you. Leave them out of `programs` if that matters.
+- A recursive command reads everything below a path inside `paths`, and a command with no path argument works on the whole folder (`grep -r word`).
+- Output is not scrubbed, except that the folder and ksproxy's state folder are replaced as for every local target.
+
+The full rules are in [docs/LOCAL-TARGETS.md](docs/LOCAL-TARGETS.md#listed-programs-inside-chosen-paths).
 
 ## Databases, queues and HTTP APIs
 
@@ -508,7 +602,8 @@ The allowlist is a second lock; the first is that the agent never holds a creden
 
 - **A local command runs as you, on the machine that holds your keys.** Give local targets the shortest allow list of all.
 - **The folder check for local targets looks at arguments only.** A program can still read other files by itself, and some programs run code they find in the folder. See "Local targets".
-- **`"any"` is refused for local targets on purpose.** A local target always lists its commands.
+- **`"any"` is refused for local targets on purpose.** A local target lists its commands, or the programs that may run with any arguments inside chosen `paths`. A listed program runs as you, and one that can act as you (an interpreter, a network client, a program that uses your saved logins) gives the agent your whole account; `ksproxy start` warns about it. See "Listed programs inside chosen paths".
+- **`ksproxy doctor` contacts every target** it checks with your credentials, with one fixed read-only check of its kind. It changes nothing on a target.
 - **The allowlist binds the MCP path only.** The sockets and proxy ports belong to you, so an agent that also has an unrestricted local shell can call `ssh -S <sock>` or `curl 127.0.0.1:<port>` directly.
 - **An agent that can edit the inventory or session files can widen its own rules.** Same exposure.
 - **The credentials of service targets live only in the memory of `ksproxy start`.** `ksproxy mcp` forwards a service call over a private socket, and every failure on that path is a refusal. The rights of the database or service account are the real boundary, a secret that the service returns in its own output reaches the agent, and rules do not understand what a request does. See "What these kinds do not protect against" in [docs/SERVICES.md](docs/SERVICES.md).

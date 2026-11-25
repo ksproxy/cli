@@ -9,7 +9,7 @@ const FUNCTIONS = ['decide', 'agentSection', 'validate', 'hint', 'openingMessage
 const OPTIONAL_FUNCTIONS = [
   'wordsNotForReview', 'notForReview', 'reviewServerCheck', 'scrubDirs', 'scrubText', 'forCheck', 'checkExtra', 'secretFiles',
   'reapStale', 'prepare', 'close', 'onCloseTimeout', 'sessionFiles', 'secrets', 'checkInput', 'ruleWarnings', 'hiddenForms',
-  'ports', 'freeSample',
+  'ports', 'freeSample', 'doctor',
 ];
 const DETAIL_SHAPES = ['object'];
 // A brokered kind is carried out inside ksproxy start by perform; every other kind names the one process to start with command.

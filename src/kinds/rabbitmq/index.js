@@ -41,6 +41,8 @@ export default httpServiceKind({
     description: 'management API, read only',
     allow: ['GET /api/overview', 'GET /api/queues/...', 'GET /api/exchanges/...', 'GET /api/nodes'],
   }],
+  doctorPath: '/api/whoami',
+  doctorDescribe: (body) => (typeof body.name === 'string' && body.name !== '' ? `user ${body.name}` : null),
   toolName: 'rabbitmq_request',
   toolBullet: '- `rabbitmq_request { target, method, path, query?, body?, timeout_seconds? }` - send one request to the management API of a RabbitMQ target.',
   toolDescription: 'Send one request to the management HTTP API of a RabbitMQ target the user opened. The user fixed the host and the credential; give the method and the path, and optionally a query and a JSON body. Each request is checked against the target\'s allowlist and logged.',

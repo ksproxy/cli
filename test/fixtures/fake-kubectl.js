@@ -12,9 +12,19 @@ if (argv.includes('proxy')) {
   const portArg = argv.find((a) => a.startsWith('--port='));
   const port = Number(portArg.slice('--port='.length));
   const status = Number(process.env.KSPROXY_FAKE_KUBECTL_STATUS ?? 200);
+  const hold = process.env.KSPROXY_FAKE_KUBECTL_HOLD;
+  let versions = 0;
   const server = http.createServer((req, res) => {
+    // With KSPROXY_FAKE_KUBECTL_HOLD, only the first GET /version is answered, the probe of open: every later one, the
+    // doctor check, is held without an answer, and a line is added to the file it names.
+    if (req.url === '/version') versions += 1;
+    if (hold && req.url === '/version' && versions > 1) {
+      fs.appendFileSync(hold, 'held\n');
+      return;
+    }
     res.writeHead(status, { 'content-type': 'application/json' });
-    res.end('{}');
+    // /version answers as a cluster does, for the doctor check; every other path answers {}.
+    res.end(req.url === '/version' ? '{"major":"1","minor":"31","gitVersion":"v1.31.2"}' : '{}');
   });
   server.listen(port, '127.0.0.1');
   // With KSPROXY_FAKE_KUBECTL_IGNORE_TERM the proxy is one that is slow to close: it stays up after SIGTERM, so a

@@ -152,7 +152,8 @@ This diagram shows how a run that owns the state removes what an earlier run lef
 ```mermaid
 flowchart TD
     Y1["comes from: 2a.1, no live session exists"] --> A10["this run now owns the state: clearSession removes a stale session.json"]
-    A10 --> A11["walk the kinds in reverse list order, calling reapStale where a kind has it and printing the lines it gives, diagram 4"]
+    A10 --> A10a["reapDoctorFolders of env and the pid of the process: what a killed ksproxy doctor left in the root state folder,<br/>each line it gives printed as the lines below, nothing when there is nothing to clean, see src/doctor-folder.js"]
+    A10a --> A11["walk the kinds in reverse list order, calling reapStale where a kind has it and printing the lines it gives, diagram 4"]
     A11 --> A12["local: no reapStale"]
     A12 --> A13["kubernetes: reapStaleProxies, then the line closed N proxy process(es) left by an earlier run when N is over 0"]
     A13 --> A14["ssh: closeStaleSockets of the socket folder, skipping review-sock and call-sock, no line"]
@@ -195,7 +196,7 @@ flowchart TD
     B0["next kind, in list order"] --> B1["next selected target of that kind, in inventory order"]
     B1 --> B2{"stop requested?"}
     B2 -->|"yes"| B30["leave this kind, the next kinds stop at once too"]
-    B2 -->|"no"| B3{"allow is a list and empty? never for allow any"}
+    B2 -->|"no"| B3{"allow is a list and empty, and no programs list? never for allow any"}
     B3 -->|"yes"| B4["WARN: allowlist is empty, every command will be refused"]
     B3 -->|"no"| B16["allowWarnings of the allow list"]
     B4 --> B16
@@ -290,7 +291,7 @@ flowchart TD
     Y1["comes from: 2d.1, the review service is settled"] --> W1["one session target per opened target, in opening order: record of its kind,<br/>with env, the selected targets of that kind, the secret files and whether it is kept for review"]
     W1 --> W3{"kind?"}
     W3 -->|"ssh"| W4["kind, name, description, allow, host, jumps when the inventory has it, socket, state up, review true when kept"]
-    W3 -->|"local"| W5["kind, name, description, allow, cwd,<br/>path = cleanPath of PATH over every selected local folder, the skipped ones included,<br/>protected = sessionProtected: the secret files, state and config folders and their real paths,<br/>state up, review true when kept, protect when the inventory has it, programs when kept"]
+    W3 -->|"local"| W5["kind, name, description, allow, cwd,<br/>path = cleanPath of PATH over every selected local folder, the skipped ones included,<br/>protected = sessionProtected: the secret files, state and config folders and their real paths,<br/>state up, review true when kept, protect when the inventory has it,<br/>paths, and listedPrograms for its programs list, when the inventory has them, programs when kept"]
     W3 -->|"kubernetes"| W6["kind, name, description, allow, proxyPort, manifestRoots,<br/>tunnel, state from opening, review true when kept"]
     W3 -->|"a brokered kind"| W6b["what its record gives: kind, name, description, allow, state, review true when kept, never a secret"]
     W4 --> WL{"withOutputLimit: the inventory entry has maxOutputKiB?"}
@@ -1140,7 +1141,7 @@ This diagram shows how a lifecycle event gets its status, kind, target and detai
 
 ```mermaid
 flowchart TD
-    Y0["comes from: formatLogLine, a lifecycle event"] --> Y1["status: target_opening OPENING, target_up UP, target_skipped SKIPPED,<br/>target_warn WARN, target_review REVIEW, target_down DOWN, target_recovered UP,<br/>session_start READY, session_closing CLOSING, session_end CLOSED"]
+    Y0["comes from: formatLogLine, a lifecycle event"] --> Y1["status: target_opening OPENING, target_up UP, target_skipped SKIPPED,<br/>target_warn WARN, target_review REVIEW, target_down DOWN, target_recovered UP,<br/>session_start READY, session_closing CLOSING, session_end CLOSED,<br/>doctor_ok OK, doctor_fail FAIL: the lines of ksproxy doctor, never written to a log"]
     Y1 --> Y2{"event starts with session_?"}
     Y2 -->|"yes"| Y3["kind two dashes, target session"]
     Y2 -->|"no"| Y4["lifecycleKind: the label of the first kind in list order that namesKind finds by the entry kind field alone, a tool field plays no part, else two dashes,<br/>target from the entry"]
@@ -1167,7 +1168,7 @@ flowchart TD
     J5 -->|"no"| O1["OK: the plain line"]
     J5 -->|"yes"| J6{"statusColor of the status gives a color, and the status stands intact at column 25?"}
     J6 -->|"no"| O1
-    J6 -->|"yes"| O2["OK: status wrapped in an ANSI color: green ok UP READY REVIEW,<br/>yellow exit N TIMEOUT ERROR WARN SKIPPED, red DENIED DOWN"]
+    J6 -->|"yes"| O2["OK: status wrapped in an ANSI color: green ok OK UP READY REVIEW,<br/>yellow exit N TIMEOUT ERROR WARN SKIPPED, red DENIED DOWN FAIL"]
 ```
 
 ### callStatus and callDetail
@@ -1474,7 +1475,7 @@ flowchart TD
 
 ## src/cli.js
 
-Parses the command line and runs one command (`main`), and turns its result into the process exit code (`runCli`). `token` runs `ksproxy token` and `ksproxy token revoke`, with the texts of `REVOKE_TEXTS` and `NEW_TOKEN_HINT`. `start` with one project and no `--listen` runs `start` of `src/start.js` exactly as before; a list of projects, or `--listen`, runs `startMany` of `src/start-many.js`.
+Parses the command line and runs one command (`main`), and turns its result into the process exit code (`runCli`). `token` runs `ksproxy token` and `ksproxy token revoke`, with the texts of `REVOKE_TEXTS` and `NEW_TOKEN_HINT`. `start` with one project and no `--listen` runs `start` of `src/start.js` exactly as before; a list of projects, or `--listen`, runs `startMany` of `src/start-many.js`. `doctor` takes the arguments of `start`, read by the same `takeProject` and `parseStartArgs` (`START_LIKE` names the two commands), so the two can never disagree on what a line of arguments selects; it runs `doctor` of `src/doctor.js`.
 
 ### main and runCli
 
@@ -1486,13 +1487,13 @@ flowchart TD
     M4 -->|"yes"| M5["OK: print the package version, 0"]
     M4 -->|"no"| MT{"token? It takes no --project, so it comes before takeProject"}
     MT -->|"yes"| MU["token with the words after it and withProject of the environment and null, see token"]
-    MT -->|"no"| P1["takeProject of the arguments and the environment, for check only before the kind, for start with a list"]
+    MT -->|"no"| P1["takeProject of the arguments and the environment, for check only before the kind, for start and doctor with a list"]
     P1 --> P2{"error?"}
     P2 -->|"yes"| U1["usageError: message and usage on stderr, 2"]
     P2 -->|"no"| P3["withProject of the environment and the project: a copy without any inherited project, then the flag value when given"]
     P3 --> M6{"command?"}
     M6 -->|"init"| M7["init with the project environment"]
-    M6 -->|"start"| M8["continues in: main, start"]
+    M6 -->|"start or doctor"| M8["continues in: main, start"]
     M6 -->|"status"| M11["status with the project environment"]
     M6 -->|"log"| M12["parseLogArgs of the arguments left"]
     M12 --> M13{"error?"}
@@ -1507,9 +1508,11 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    M8["parseStartArgs of the arguments left and the number of projects"] --> M9{"error?"}
+    M8["parseStartArgs of the arguments left, the number of projects, and the command: start or doctor"] --> M9{"error?"}
     M9 -->|"yes"| U1["usageError: message and usage on stderr, 2"]
-    M9 -->|"no"| MS{"one project and no --listen value?"}
+    M9 -->|"no"| MD{"doctor?"}
+    MD -->|"yes"| MX["doctor with the projects, the options, the listen values, newToken, tls and the target names,<br/>withProject of the environment and null, and host with the process, its result is the exit code, see src/doctor.js"]
+    MD -->|"no, start"| MS{"one project and no --listen value?"}
     MS -->|"yes"| M10["start with the options and the project environment, exactly as before, its result is the exit code"]
     MS -->|"no"| MM["startMany with the projects, the options, the listen values, newToken and tls,<br/>withProject of the environment and null, and host with the process, its result is the exit code, see src/start-many.js"]
 ```
@@ -1539,8 +1542,8 @@ flowchart TD
     T7 -->|"no"| T8["the value: after the equals sign, or the next argument which is consumed"]
     T8 --> T9{"no value or an empty one?"}
     T9 -->|"yes"| E2["ERROR: --project needs a project name"]
-    T9 -->|"no"| TL{"the value split on commas gives more than one name, and list is false: not start?"}
-    TL -->|"yes"| E4["ERROR: a list of projects works only with start"]
+    T9 -->|"no"| TL{"the value split on commas gives more than one name, and list is false: neither start nor doctor?"}
+    TL -->|"yes"| E4["ERROR: a list of projects works only with start, the text of every command but start and doctor"]
     TL -->|"no"| T10{"every name matches PROJECT_RE?"}
     T10 -->|"no"| E3["ERROR: the PROJECT_RULE text, also for an empty name"]
     T10 -->|"yes"| TW{"a name twice?"}
@@ -1556,7 +1559,7 @@ flowchart TD
 
 ### startUsage
 
-This diagram shows how the start line and the check lines of the usage text are built from the list of kinds each time the usage is printed. The rest of the usage text is fixed: it shows `[--project NAME]` after init, status, log and mcp, says that status shows every live session and each target's state, has the lines `token` and `token revoke` after mcp, and has the option line `--project NAME` with the text `use the project NAME (projects/NAME.json), or default (inventory.json)` after `--version`. After the start lines and their text come two more start lines, `START_MANY_USAGE` and `START_LISTEN_USAGE`: `start ... --project a,b` with the text `run several projects in one start`, and `start ... --listen HOST:PORT [--new-token] [--tls-cert FILE --tls-key FILE]` with the text `serve its projects over HTTP on the local network` on the next line.
+This diagram shows how the start line and the check lines of the usage text are built from the list of kinds each time the usage is printed. The rest of the usage text is fixed: it shows `[--project NAME]` after init, status, log and mcp, says that status shows every live session and each target's state, has the lines `token` and `token revoke` after mcp, and has the option line `--project NAME` with the text `use the project NAME (projects/NAME.json), or default (inventory.json)` after `--version`. After the start lines and their text come two more start lines, `START_MANY_USAGE` and `START_LISTEN_USAGE`: `start ... --project a,b` with the text `run several projects in one start`, and `start ... --listen HOST:PORT [--new-token] [--tls-cert FILE --tls-key FILE]` with the text `serve its projects over HTTP on the local network` on the next line. Then comes `DOCTOR_USAGE`, one line: `doctor ... [NAME...]` with the text `check each target start ... would open, then close it`.
 
 ```mermaid
 flowchart TD
@@ -1580,7 +1583,7 @@ flowchart TD
 
 ### parseStartArgs
 
-`parseStartArgs` takes the arguments left and the number of projects. The options it gives are the object `start` takes, as before; the listen values, `newToken` and `tls` come apart from them, so a start with one project and no `--listen` gets exactly the options it got before. `VALUE_FLAG` matches the three options that take one value.
+`parseStartArgs` takes the arguments left, the number of projects and the command, `start` unless `doctor` asks. The options it gives are the object `start` takes, as before; the listen values, `newToken` and `tls` come apart from them, so a start with one project and no `--listen` gets exactly the options it got before. `VALUE_FLAG` matches the three options that take one value.
 
 #### parseStartArgs, one argument
 
@@ -1602,12 +1605,12 @@ flowchart TD
     V6 -->|"yes"| E4["ERROR: --tls-cert given twice, or --tls-key given twice"]
     V6 -->|"no"| V7["keep the file name"]
     V1 -->|"no"| P6{"the flag of a kind in the list, any of the twelve kinds, alone or with an equals sign and value?"}
-    P6 -->|"no"| E1["ERROR: unknown option for start: ARG"]
-    P6 -->|"yes"| P7{"value after an equals sign?"}
+    P6 -->|"no"| PW{"the command is doctor, and the word does not start with a dash?"}
+    PW -->|"yes"| PX["a target name: append it to the names"]
+    PW -->|"no"| E1["ERROR: unknown option for COMMAND: ARG, the command being start or doctor"]
+    P6 -->|"yes"| P7{"a value after an equals sign, even an empty one, else a next argument, which is consumed?"}
     P7 -->|"yes"| P9["split the value on commas, trim, drop empty names"]
-    P7 -->|"no"| P8{"a next argument?"}
-    P8 -->|"no"| E2["ERROR: FLAG needs a comma-separated list of names"]
-    P8 -->|"yes, consumed"| P9
+    P7 -->|"no"| E2["ERROR: FLAG needs a comma-separated list of names"]
     P9 --> P10["append to that kind's list, which now counts as given even when empty"]
 ```
 
@@ -1623,10 +1626,12 @@ flowchart TD
     C2 -->|"yes"| E6["ERROR: --tls-cert and --tls-key go together"]
     C2 -->|"no"| C3{"more than one project, and the flag of a kind given, the first in list order?"}
     C3 -->|"yes"| E7["ERROR: --FLAG names targets of one project, use it with a single --project"]
-    C3 -->|"no"| P12["OK: options, one list per kind flag that was given and null for the others, all, verbose.<br/>Apart from them: the listen values, newToken, and tls, null or the cert and key file names"]
+    C3 -->|"no"| C4{"more than one project, and a target name given, only doctor takes them?"}
+    C4 -->|"yes"| E8["ERROR: NAMES_OF_ONE, target names belong to one project, use them with a single --project"]
+    C4 -->|"no"| P12["OK: options, one list per kind flag that was given and null for the others, all, verbose.<br/>Apart from them: the listen values, newToken, tls, null or the cert and key file names, and names, empty for start"]
 ```
 
-The exact text behind the last error: `--ssh names targets of one project; use it with a single --project`, with the flag that was given. Every error here is a usage error: the message, then the usage on stderr, exit 2.
+The exact texts behind the last two errors: `--ssh names targets of one project; use it with a single --project`, with the flag that was given, and `target names belong to one project; use them with a single --project`. Every error here is a usage error: the message, then the usage on stderr, exit 2. For `start` a plain word is refused as before (`unknown option for start: WORD`); for `doctor` it is a target name, and an unknown option reads `unknown option for doctor: ARG`.
 
 ### parseLogArgs and showLog
 
@@ -1818,6 +1823,250 @@ flowchart TD
     C17 --> C18{"an argument list to send?"}
     C18 -->|"yes"| R3["REFUSE: print NOT ON THE ALLOWLIST: a running session asks reviewer NAME, 1, no model is called"]
     C18 -->|"no"| R2["REFUSE: print one line, REFUSED: REASON, and when reviewRoute gave a note a full stop and a space and the note, which reads It was not sent to the reviewer: WHY ending in a full stop, 1"]
+```
+
+## src/doctor-folder.js
+
+The temporary state folders of `ksproxy doctor` and the clean-up after a doctor that was killed. `doctor` makes one folder per project in the root state folder (`makeDoctorFolder`): its name is `d-` (`PREFIX`) and six random characters from `fs.mkdtempSync`, so its socket paths are at most 9 bytes longer than those of the default session of `start`, and shorter than those of a project with a name of 6 characters or more. Each folder holds an owner record, `owner.json` (`OWNER`), written by `writeOwner` as `session.json` is: the pid of the process and its start time from `processStartTime`, or null when `ps` cannot tell. A doctor removes its folder when its project is done, but a doctor killed with SIGKILL cannot: its folder stays, and in it a cluster proxy that holds the port of its target with the credential, and the ssh master of a target or of a tunnel. `reapDoctorFolders` stops them and removes the folder; `doctor` calls it after its session pre-checks, `start` before it reaps its own leftovers (diagram 2a.2), so either one cleans up.
+
+A folder is a doctor folder only when it is a folder, not a link or a file, its name starts with `d-` and it holds an owner record; it is stale only when `isLive` of `src/session.js` says that the record names no live process. The entries of the root state folder are read with their types, which, as `lstat`, do not follow a link, so a `d-` link is never followed. A folder without a record is left alone while it is recent: a live doctor may be making it. A doctor killed after it made its folder and before it wrote its record leaves a folder that holds nothing, or only the temporary file of the record; once it has not changed for 5 minutes (`ABANDONED_MS`) it is no live doctor's, and `removeAbandoned` removes it. The clean-up first takes each stale folder over (`takeOver`), writing its own owner record in it, all before its first await: another `start` of the same process, as the sessions of several projects run at once, or another process, then finds a live owner and leaves the folder, so each leftover is stopped once.
+
+### makeDoctorFolder and writeOwner
+
+```mermaid
+flowchart TD
+    M1["makeDoctorFolder of env and pid"] --> M2["ensureDir of the root state folder, mode 0700"]
+    M2 --> M3["mkdtempSync of root/d-: the folder d- and six random characters, mode 0700"]
+    M3 --> M4["writeOwner of the folder and pid"]
+    M4 --> M5["the folder"]
+    W1["writeOwner of folder and pid"] --> W2["processStartTime of pid: its start time in ms, or null"]
+    W2 --> W3["writeFileAtomic of folder/owner.json: pid and processStartedAt, mode 0600"]
+```
+
+### takeOver and removeFolder
+
+```mermaid
+flowchart TD
+    T1["takeOver of folder, pid and now"] --> T2{"folder/owner.json can be read?"}
+    T2 -->|"no: missing, or not a file"| T0["removeAbandoned of the folder and now"]
+    T0 --> T3["false: left alone"]
+    T2 -->|"yes"| T4{"JSON?"}
+    T4 -->|"no"| T5["no owner: not live"]
+    T4 -->|"yes"| T6{"isLive of the record: the pid runs, and its start time is unknown or within 5 s?"}
+    T6 -->|"yes"| T3
+    T6 -->|"no"| T7["writeOwner of the folder and pid"]
+    T5 --> T7
+    T7 --> T8{"it throws?"}
+    T8 -->|"yes"| T3
+    T8 -->|"no"| T9["true: taken over"]
+    R1["removeFolder of folder"] --> R2["rmSync of every entry but owner.json, recursive and forced"]
+    R2 --> R3["rmSync of the folder"]
+    R3 --> R4{"anything threw?"}
+    R4 -->|"yes"| R5["the folder stays with its owner record: the next run takes it over again"]
+    R4 -->|"no"| R6["gone"]
+```
+
+### removeAbandoned and recordTemp
+
+```mermaid
+flowchart TD
+    B1["removeAbandoned of folder and now"] --> B2{"now minus the mtime of lstat of the folder under ABANDONED_MS, 5 minutes?"}
+    B2 -->|"yes"| B3["left: a live doctor may be making it"]
+    B2 -->|"no"| B4{"recordTemp of every entry: nothing in it, or only temporary files of the record?"}
+    B4 -->|"no"| B5["left: something else is in it"]
+    B4 -->|"yes"| B6["rmSync of the folder, recursive and forced"]
+    B6 --> B7{"anything threw, here or above?"}
+    B7 -->|"yes"| B8["left for the next run"]
+    B7 -->|"no"| B9["gone"]
+    C1["recordTemp of a name"] --> C2["true when it starts with owner.json and a dot and ends with .tmp, the name writeFileAtomic writes first"]
+```
+
+### reapDoctorFolders
+
+```mermaid
+flowchart TD
+    A1["reapDoctorFolders of env, without credentials, and pid"] --> A2{"the root state folder can be read?"}
+    A2 -->|"no"| A3["no lines, nothing is made"]
+    A2 -->|"yes"| A4["now, then each entry that is a folder, not a link or a file, by its type,<br/>and whose name starts with d-: takeOver of it for pid and now, all before the first await"]
+    A4 --> A5{"next folder taken over?"}
+    A5 -->|"none left"| A9["the lines"]
+    A5 -->|"yes"| A6["moved: a copy of env with STATE_FOLDER set to the folder"]
+    A6 --> A7["reapStale of each kind that has it, in reverse list order as start runs it on its own:<br/>socketDir of moved, folder/s, and moved, each line kept, see diagram 4"]
+    A7 --> A8["removeFolder of the folder"]
+    A8 --> A5
+```
+
+The lines are those of the kinds: today only the kubernetes kind gives one, `closed N proxy process(es) left by an earlier run`. `start` prints each on stderr, as the lines of its own clean-up; `doctor` prints each as an OK line named `leftovers`.
+
+## src/doctor.js
+
+Runs `ksproxy doctor`: `doctor` runs the pre-checks of `start` in `start`'s order and reports every one, then checks each target that `start` would open with the same arguments, one after another: it opens the target with the code of `start` (`openTarget` of `src/start.js`), runs the `doctor` hook of its kind when the kind has one (`runCheck`), and closes it again (`closeTarget`). The pre-checks are those of `src/start-many.js`, one function each (`loadProject`, `runningSession`, `parseAddresses`, `readTls`, `listenerProblem`, `tokenProblem`), and the selection is that of `chooseTargets`, so `doctor` and `start` never disagree on a line of arguments. It never runs the picker, never makes or changes a token, and writes no session file, agent file, call socket or audit entry.
+
+Where the files go: a kind puts its sockets and proxy pid files in the socket folder and the kubernetes kind its log in the session folder, both built on `stateDir`. For each project, `doctor` makes a temporary folder `d-XXXXXX` with an owner record inside the root state folder (`makeDoctorFolder` of `src/doctor-folder.js`) and gives the kinds an env whose `STATE_FOLDER` (see `src/paths.js`) is that folder: the sockets go to `d-XXXXXX/s`, the kube logs to `d-XXXXXX/session`. `rootStateDir` and `configDir` stay the real ones, so the folder checks of the local and command kinds are those of `start`, and every local target refuses a path inside the root state folder, the temporary one included. The folder is removed when the project is done, after a stop too; a doctor killed with SIGKILL leaves it, and the next `doctor` or `start` cleans it up (`reapDoctorFolders`). Inside the root state folder its socket paths are about as long as those of `start`; the system's temporary folder is long on macOS and would push an ssh socket over its 83 bytes.
+
+Every line is in the format of the log (`formatLogLine`, events `doctor_ok` as OK and `doctor_fail` as FAIL, never written to a log), with no clipping to the width of the terminal (`NO_CLIP`): the reasons of `start` can be long. With several projects each line of a project starts with `[NAME] ` (a `LineStream` of `src/start-many.js`, `nameOf`); the lines of `--listen` and the last line have no prefix. The kind column is two dashes for a check that is not a target, and the target column names the check:
+
+| Column | OK text | FAIL text |
+| --- | --- | --- |
+| `inventory` | `loaded FILE` | the InventoryError of `start` |
+| `session` | `no session is running` | `runningText`: `a session of project NAME is running (pid N): start would stop here; see ksproxy status` |
+| `leftovers`, only after a killed doctor | each line of `reapDoctorFolders`, such as `closed 1 proxy process(es) left by an earlier run` | none |
+| `listen`, one per value | the value | the parse error of `start`, or `cannot listen on HOST:PORT: MESSAGE` |
+| `tls`, with the two files | `the certificate and the key work together` | the text of `start` |
+| `listener` | `no other listener is running` | `another ksproxy start is listening (pid N)` |
+| `token` | `start would make a new token`, or `the token can be used` | the texts of `start` |
+| `targets` | none | the error of `chooseTargets`, `unknown target "NAME"; known targets: ...`, or `nothing selected` |
+| `sockets` | none | `socket path too long ...`: a path of `start`, or one in the temporary folder |
+| `doctor` | none | `stopped: REASON` |
+
+```mermaid
+flowchart TD
+    D1["doctor of plan, env without a project, host: checkMs is CHECK_MS, 30 s, unless host.limits names it,<br/>now is host.now, else the clock, the time of the token check"] --> D2["add the handlers: SIGINT, SIGTERM, SIGHUP, uncaughtException, unhandledRejection, an error of stdout"]
+    D2 --> D3["1: loadProject of each project in order, one inventory line each"]
+    D3 --> D4["2: runningSession of each project in order, one session line each"]
+    D4 --> D7["credentials: the variables of every loaded inventory, credentialVariables"]
+    D7 --> D7a["reapDoctorFolders of env without them and the pid of the process, see src/doctor-folder.js:<br/>an OK leftovers line for each line it gives"]
+    D7a --> D5{"a --listen value?"}
+    D5 -->|"yes"| D6["the listen checks, 3 to 7, see below"]
+    D5 -->|"no"| D8
+    D6 --> D8{"next project, in order?"}
+    D8 -->|"a stop was asked"| D11
+    D8 -->|"its inventory loaded and no session of it runs"| D9["check the project, see below"]
+    D8 -->|"else"| D8
+    D9 --> D8
+    D8 -->|"none left"| D11{"a stop was asked?"}
+    D11 -->|"yes"| D12["FAIL doctor: stopped: REASON"]
+    D11 -->|"no"| D13["the last line: N of M targets OK, M the targets selected in the projects reached"]
+    D12 --> D13
+    D13 --> D14{"any FAIL line?"}
+    D14 -->|"no"| D15["0"]
+    D14 -->|"yes"| D16["1"]
+    D15 --> D17["finally: every handler removed"]
+    D16 --> D17
+    D3 -->|"another error than an InventoryError throws"| D17
+```
+
+A usage error never reaches `doctor`: `main` gives 2 for it, after the usage.
+
+### The listen checks
+
+This diagram shows pre-checks 3 to 7 of `start`, with `--listen` only. Each gives one line, OK or FAIL, and the next one runs whatever the result.
+
+```mermaid
+flowchart TD
+    L1["next --listen value"] --> L2{"parseAddresses of that value alone gives an error?"}
+    L2 -->|"yes"| L3["FAIL listen: the error of start"]
+    L2 -->|"no"| L4["bindOnce: a server listens on the address and closes again, nothing is served"]
+    L4 --> L5{"it could listen?"}
+    L5 -->|"no"| L6["FAIL listen: cannot listen on HOST:PORT: MESSAGE"]
+    L5 -->|"yes"| L7["OK listen: the value"]
+    L3 --> L8{"more values?"}
+    L6 --> L8
+    L7 --> L8
+    L8 -->|"yes"| L1
+    L8 -->|"no"| L9{"--tls-cert and --tls-key given?"}
+    L9 -->|"yes"| L10["readTls: OK tls, or FAIL tls with the text of start"]
+    L9 -->|"no"| L11["listenerProblem: OK listener, or FAIL listener: another ksproxy start is listening, pid N"]
+    L10 --> L11
+    L11 --> L12["tokenProblem with plan, so --new-token as start reads it, and terminal: stdout isTTY is true"]
+    L12 --> L13{"a problem?"}
+    L13 -->|"yes"| L14["FAIL token: cannot read FILE, start with --new-token to replace it, or a new token is shown only on a terminal"]
+    L13 -->|"no"| L15{"--new-token, or tokenState is not ok?"}
+    L15 -->|"yes"| L16["OK token: start would make a new token, none is made"]
+    L15 -->|"no"| L17["OK token: the token can be used"]
+```
+
+### Checking a project
+
+This diagram shows one project whose inventory loaded and whose session does not run, as `start` would prepare it.
+
+```mermaid
+flowchart TD
+    P1["held: the credential variables of this inventory with their values from env, the strings among them are hidden in every line"] --> P2["selectionOf of the inventory, the options and the target names"]
+    P2 --> P3{"an error?"}
+    P3 -->|"yes"| P4["FAIL targets: the error, nothing of this project opens"]
+    P3 -->|"no"| P5{"nothing selected?"}
+    P5 -->|"yes"| P6["FAIL targets: nothing selected"]
+    P5 -->|"no"| P7["M grows by the selected targets.<br/>otherInventories, everySecretFile and usedPorts, as start does, and the TLS key file when given, as startMany adds it"]
+    P7 --> P8["bare: the env of the project without the variables of every loaded inventory"]
+    P8 --> P9{"prepareTargets of the selection with bare, the paths start would use, throws?"}
+    P9 -->|"yes"| P10["FAIL sockets: its message, and go on"]
+    P9 -->|"no"| P11["makeDoctorFolder of env and the pid of the process: the folder d-XXXXXX in the root state folder, with its owner record"]
+    P10 --> P11
+    P11 --> P12["openEnv: bare with STATE_FOLDER set to that folder, ensureDir of its s and session folders"]
+    P12 --> P13{"prepareTargets of the selection with openEnv throws?"}
+    P13 -->|"yes"| P14["FAIL sockets: its message, no target of this project opens"]
+    P13 -->|"no"| P15{"next selected target, kinds in list order?"}
+    P15 -->|"a stop was asked, or none left"| P16["remove the temporary folder, in every case"]
+    P15 -->|"yes"| P17["check the target, see below, with the context of start: openEnv, its session folder, the secret files, their problem, what prepare gave"]
+    P17 --> P15
+    P14 --> P16
+```
+
+### Checking a target
+
+```mermaid
+flowchart TD
+    T1["hide: the held values of the project"] --> T2["openTarget of the kind and the target, see src/start.js"]
+    T2 --> T3["lifecycle: only target_warn and target_skipped are shown, SHOWN, every value of hide replaced by hidden in brackets"]
+    T2 --> T4["open: hide grows by the target's secrets and formsOf them, then the kind's open, awaited"]
+    T4 --> T5{"opened, a stop was asked meanwhile, and the kind has close?"}
+    T5 -->|"yes"| T6["closeTarget at once, the result is late"]
+    T5 -->|"no"| T7["the result of open"]
+    T2 --> T8{"what openTarget gives?"}
+    T8 -->|"skipped"| T9["FAIL with the text of the SKIPPED line, hidden"]
+    T8 -->|"late"| T10["nothing more"]
+    T8 -->|"opened"| T11{"a stop was asked?"}
+    T11 -->|"yes"| T13
+    T11 -->|"no"| T12["runCheck of the kind and the opened entry, with openEnv and its secrets"]
+    T12 --> T14{"null: a stop came first?"}
+    T14 -->|"no"| T15["OK or FAIL with the detail, hidden, then clipped to DETAIL_MAX, 200 characters, OK counts toward N"]
+    T14 -->|"yes"| T13{"the kind has close?"}
+    T15 --> T13
+    T13 -->|"yes"| T16["closeTarget: bounded by limits under closeLimit, else closeMs"]
+    T13 -->|"no"| T10
+```
+
+### runCheck, selectionOf, formsOf and bindOnce
+
+```mermaid
+flowchart TD
+    R1["runCheck of kind, opened, the context, ms, stopped"] --> R2{"the kind has a doctor hook?"}
+    R2 -->|"no"| R3["OK: opened"]
+    R2 -->|"yes"| R4["doctor of opened and env, secrets, timeoutMs ms, signal of an AbortController"]
+    R4 --> R5{"what comes first?"}
+    R5 -->|"a stop"| R6["null"]
+    R5 -->|"ms passed"| R7["FAIL: the check did not finish within N seconds"]
+    R5 -->|"a throw, or not a boolean ok and a text detail"| R8["FAIL: the check failed"]
+    R5 -->|"ok and detail"| R9["ok and detail as given"]
+    R6 --> R10["finally: the timer cleared, the signal fired"]
+    R7 --> R10
+    R8 --> R10
+    R9 --> R10
+    S1["selectionOf of inventory, options, names"] --> S2{"next name: no kind holds a target of it?"}
+    S2 -->|"yes"| S3["ERROR: unknown target NAME, known targets: every name once, or none"]
+    S2 -->|"no"| S4["the name joins the flag of each kind that holds it"]
+    S4 --> S2
+    S2 -->|"no name left"| S5["chooseTargets with the options as they are when --all or a kind flag is given, else with all, never the picker"]
+    F1["formsOf of kind, target, secrets"] --> F2["hiddenForms of the kind, none without it or when it throws"]
+    B1["bindOnce of address and text"] --> B2["listen, then close: null, or cannot listen on TEXT: MESSAGE.<br/>A connection that arrives meanwhile is destroyed at once, so the close never waits for it"]
+```
+
+The exact texts behind labels that had to drop characters: `unknown target "NAME"; known targets: web1, infra` (or `none`), and `cannot listen on HOST:PORT: MESSAGE`.
+
+### Stopping
+
+```mermaid
+flowchart TD
+    Q1["SIGINT, SIGTERM, SIGHUP: the reason Ctrl-C, terminated or terminal closed, SIGNALS"] --> Q5["requestStop of the reason"]
+    Q2["uncaughtException or unhandledRejection, FATAL: error: MESSAGE, or the value itself when it is no Error"] --> Q5
+    Q3["an error of stdout: no more is written, the reason output closed"] --> Q5
+    Q4["a write that throws: no more is written, the reason output closed"] --> Q5
+    Q5 --> Q7{"a stop asked already?"}
+    Q7 -->|"yes"| Q8["nothing: the first reason is kept"]
+    Q7 -->|"no"| Q9["stopping, the reason kept, the promise stopped settles"]
+    Q9 --> Q10["the check that runs ends at once with null, its signal fires, an open that runs is awaited and its target closed,<br/>the target is closed, no other target or project is begun, the temporary folder is removed"]
+    Q10 --> Q11["FAIL doctor: stopped: REASON when stdout still works, the last line, exit 1"]
 ```
 
 ## src/exec.js
@@ -2144,6 +2393,17 @@ flowchart TD
     H3["backMessage"] --> H4["connection is back"]
 ```
 
+### doctor
+
+What `ksproxy doctor` asks of an opened ssh target, `{ kind, target, socket }`, after `open` and before `close`. Nothing is run on the server.
+
+```mermaid
+flowchart TD
+    D1["doctor of the opened target and the context env"] --> D2{"checkMaster on the recorded socket and host?<br/>it asks the control connection, it runs no command"}
+    D2 -->|"yes"| D3["OK: ok true, detail connected"]
+    D2 -->|"no"| D4["ok false, detail the connection is gone,<br/>also when the ssh program is missing"]
+```
+
 ### Agent notes of an ssh server
 
 `toolBullet` is the line in the Tools list of AGENT.md. `agentSection` of a session target is the ssh section of AGENT.md; the shared reviewed line comes from `src/kinds/shared.js`.
@@ -2274,6 +2534,16 @@ flowchart TD
     X2 --> X3["127.0.0.1 or localhost, a colon and the port,<br/>not followed by a digit, becomes proxy in angle brackets"]
 ```
 
+### doctor
+
+What `ksproxy doctor` asks of an opened cluster, `{ kind, target, handle }`: the one fixed read, `GET /version`, through the proxy that `open` started. The port is the `proxyPort` of the target; the context gives the time limit and the stop signal.
+
+```mermaid
+flowchart TD
+    D1["doctor of the opened cluster and the context timeout and signal"] --> D2["versionCheck of the proxy port, see src/kinds/kubernetes/cluster.js"]
+    D2 --> D3["OK: its ok and detail, never a throw"]
+```
+
 ### The session: reapStale, prepare, open, close, record and the files
 
 What `start` calls for this kind, drawn in diagrams 2a to 5 of Part 1. An opened cluster is kept as `{ kind, target, handle }`, the handle being what `openCluster` returned. `downMessage` is private to this file and is also the `downMessage` of the kind.
@@ -2332,7 +2602,7 @@ flowchart TD
 
 The local kind as a plain object: key `local`, flag `local`, log label `loc`, word `local`, noun `local target`, count noun `folder(s)`, and the tool `local_exec` with the argument names `target` and `command` and its definition. The mechanics are in `src/kinds/local/folder.js`.
 
-The kind also holds `sample`, `hint` (the folder, then a dash and the description) and `validate` (the checks of one local entry, below); `checkProtect` and `checkRegexRules` are private to this file. For a call it holds `decide` (the function `decideLocal`, with `usableRule`, `regexProgram` and `regexProblem`), `reviewServerCheck`, `command`, `state`, `scrubDirs` and `forCheck`, and for a session `openingMessage`, `open`, `record`, `downMessage` and `backMessage`, each drawn below.
+The kind also holds `sample`, `hint` (the folder, then a dash and the description), `validate` (the checks of one local entry, below) and `ruleWarnings`; `entryParts`, `checkProtect`, `checkPaths`, `checkPrograms` and `checkRegexRules` are private to this file. For a call it holds `decide` (the function `decideLocal`, with `usableRule`, `ruleProblem`, `unlisted`, `regexProgram` and `regexProblem`), `reviewServerCheck`, `command`, `state`, `scrubDirs` and `forCheck`, and for a session `openingMessage`, `open` (with `named`), `record`, `downMessage` and `backMessage`, each drawn below. What the `programs` and `paths` lists add to a call is in `src/kinds/local/scope.js`, and the `paths` check itself in `src/kinds/local/folder.js`.
 
 ```mermaid
 flowchart TD
@@ -2345,16 +2615,18 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    L0["checkCommon, run by validateInventory"] --> L1{"only the keys name, cwd, description, allow, review, protect?"}
+    L0["checkCommon, run by validateInventory"] --> L1{"only the keys name, cwd, description, allow, review, protect, paths, programs?"}
     L1 -->|"no"| E0["ERROR: unknown key"]
     L1 -->|"yes"| L2{"cwd a non-empty string, absolute after expanding a leading tilde?"}
     L2 -->|"no"| E1["ERROR: cwd must be a non-empty path, or absolute or start with tilde slash"]
     L2 -->|"yes"| L3["cwd normalised with path.resolve"]
-    L3 --> L4["checkAllow, any not allowed, every word rule must start with the program"]
+    L3 --> L4["checkAllow, any not allowed, every word rule must start with the program,<br/>so the rule star and three dots is an error too"]
     L4 --> L8["checkRegexRules: see its diagram"]
     L8 --> L6["checkReview, programs required"]
     L6 --> L7["protect: checkProtect, see its diagram"]
-    L7 --> L5["OK: local target"]
+    L7 --> L10["paths: checkPaths, see its diagram"]
+    L10 --> L11["programs: checkPrograms, see its diagram"]
+    L11 --> L5["OK: local target"]
 ```
 
 ### checkRegexRules and regexProgram
@@ -2380,7 +2652,21 @@ flowchart TD
     U4 -->|"no"| U6["true when the first word is not a star or three dots"]
 ```
 
-### checkProtect
+### entryParts, checkProtect and checkPaths
+
+`entryParts` holds the checks that a `protect` entry and a `paths` entry share.
+
+```mermaid
+flowchart TD
+    EP1["entryParts of an entry and AT, its name in the errors"] --> EP2{"a non-empty string of at most 512 bytes with no control character?"}
+    EP2 -->|"no"| PE2["ERROR: AT must be a path of 1 to 512 bytes without control characters"]
+    EP2 -->|"yes"| EP3{"starts with a slash or a tilde?"}
+    EP3 -->|"yes"| PE3["ERROR: AT must be relative to the folder, not an absolute path or one that starts with a tilde"]
+    EP3 -->|"no"| EP4["split on slash, drop empty parts and single-dot parts"]
+    EP4 --> EP5{"a part is two dots?"}
+    EP5 -->|"yes"| PE4["ERROR: AT may not contain '..'"]
+    EP5 -->|"no"| EP6["the parts"]
+```
 
 ```mermaid
 flowchart TD
@@ -2389,14 +2675,8 @@ flowchart TD
     PR2 -->|"no"| PR4{"a list of 1 to 50 entries?"}
     PR4 -->|"no"| PE1["ERROR: protect must be a list of 1 to 50 paths inside the folder"]
     PR4 -->|"yes"| PR5["next entry, index J"]
-    PR5 --> PR6{"a non-empty string of at most 512 bytes with no control character?"}
-    PR6 -->|"no"| PE2["ERROR: protect[J] must be a path of 1 to 512 bytes without control characters"]
-    PR6 -->|"yes"| PR7{"starts with a slash or a tilde?"}
-    PR7 -->|"yes"| PE3["ERROR: protect[J] must be relative to the folder, not an absolute path or one that starts with a tilde"]
-    PR7 -->|"no"| PR8["split on slash, drop empty parts and single-dot parts"]
-    PR8 --> PR9{"a part is two dots?"}
-    PR9 -->|"yes"| PE4["ERROR: protect[J] may not contain '..'"]
-    PR9 -->|"no"| PR10{"no part left?"}
+    PR5 --> PR6["entryParts of the entry, AT is protect[J]"]
+    PR6 --> PR10{"no part left?"}
     PR10 -->|"yes"| PE5["ERROR: protect[J] names the folder itself, list a file or folder inside it"]
     PR10 -->|"no"| PR11{"the parts joined by a slash already in the list?"}
     PR11 -->|"yes"| PE6["ERROR: protect[J] PATH is listed twice"]
@@ -2407,6 +2687,67 @@ flowchart TD
 
 The real messages put a colon after the entry name (`WHERE: protect[J]: ...`), write the tilde as `"~"` and the two dots as `".."`, and the folder message reads `names the folder itself; list a file or folder inside it`. Two spellings of one path, such as `a/b` and `./a//b`, count as listed twice.
 
+`paths` is the list of files, folders and patterns that the commands of the target may name (decisions in `src/kinds/local/scope.js`). Unlike a protect entry, it may name the whole folder: `.` and `./` clean to `.`.
+
+```mermaid
+flowchart TD
+    PA1["checkPaths of a local entry"] --> PA2{"paths absent?"}
+    PA2 -->|"yes"| PA3["OK: nothing added"]
+    PA2 -->|"no"| PA4{"a list of 1 to 50 entries?"}
+    PA4 -->|"no"| PAE1["ERROR: paths must be a list of 1 to 50 paths or patterns inside the folder"]
+    PA4 -->|"yes"| PA5["next entry, index J"]
+    PA5 --> PA6["entryParts of the entry, AT is paths[J]"]
+    PA6 --> PA7{"a part holds two stars but is not exactly two stars?"}
+    PA7 -->|"yes"| PAE2["ERROR: paths[J] two stars must be a whole part, as in docs/**/*.md"]
+    PA7 -->|"no"| PA8["clean: the parts joined by a slash, or a single dot when no part is left"]
+    PA8 --> PA9{"clean already in the list?"}
+    PA9 -->|"yes"| PAE3["ERROR: paths[J] CLEAN is listed twice"]
+    PA9 -->|"no"| PA10{"more entries?"}
+    PA10 -->|"yes"| PA5
+    PA10 -->|"no"| PA11["OK: paths, the cleaned entries in order"]
+```
+
+The real message for two stars reads `paths[J]: "**" must be a whole part, as in docs/**/*.md`.
+
+### checkPrograms
+
+`programs` is the list of programs that may run with any arguments inside `paths` (decisions in `src/kinds/local/scope.js`). It runs after `checkPaths`, so a bad `paths` list gives the error of `checkPaths` first. `review` may be used with it. `BARE_PROGRAM` is the pattern of a name.
+
+```mermaid
+flowchart TD
+    PG1["checkPrograms of a local entry"] --> PG2{"programs absent?"}
+    PG2 -->|"yes"| PG3["OK: nothing added"]
+    PG2 -->|"no"| PG4{"a list of 1 to MAX_PROGRAMS, 50, entries?"}
+    PG4 -->|"no"| PGE1["ERROR: programs must be a list of 1 to 50 program names, for example cat and grep"]
+    PG4 -->|"yes"| PG5["next entry, index J"]
+    PG5 --> PG6{"a string that BARE_PROGRAM matches: letters, digits and _ . + -, not starting with a dash, no slash?"}
+    PG6 -->|"no"| PGE2["ERROR: programs[J] must be a bare program name"]
+    PG6 -->|"yes"| PG7{"the same name earlier in the list?"}
+    PG7 -->|"yes"| PGE3["ERROR: programs[J] NAME is listed twice"]
+    PG7 -->|"no"| PG8{"more entries?"}
+    PG8 -->|"yes"| PG5
+    PG8 -->|"no"| PG9{"paths absent?"}
+    PG9 -->|"yes"| PGE4["ERROR: programs needs paths, the files and folders its commands may name"]
+    PG9 -->|"no"| PG10["OK: programs, a copy of the list"]
+```
+
+The real messages put a colon after the field (`WHERE: programs: ...`, `WHERE: programs[J]: ...`) and read `must be a list of 1 to 50 program names, for example ["cat", "grep"]`, `must be a bare program name: letters, digits and _ . + -, not starting with "-", and no "/"` and `needs "paths", the files and folders its commands may name`. A rule that starts with `*` or `...`, the rule `* ...` included, is refused by `checkAllow`, and `"allow": "any"` stays refused.
+
+### ruleWarnings
+
+What `ksproxy start` prints as a `WARN` line before the `OPENING` line of the target, and `ksproxy check` as `WARNING: local "NAME": ...` before its answer.
+
+```mermaid
+flowchart TD
+    W1["ruleWarnings of the inventory target"] --> W2["allowWarnings of allow: a regex rule that can be very slow"]
+    W2 --> W3["actingPrograms of the programs list, an empty list without one"]
+    W3 --> W4{"any program that can act as you?"}
+    W4 -->|"no"| W5["the warnings of allow, as before"]
+    W4 -->|"yes"| W6["the warnings of allow, then: programs that can act as you: NAMES as the list writes them,<br/>the agent can use them with your whole account"]
+```
+
+The real line has a semicolon before `the agent`.
+
 ### decideLocal
 
 `decide` of this kind. The folder check and the strict tokenizer run before any rule, so no rule of either sort can bring back what they refuse. The reason of the folder refusal is `this target's folder is not acceptable; ask the user to run "ksproxy check local NAME"`, with `ksproxy check --project PROJECT` in place of `ksproxy check` for a target of a project (`checkCommand` of `src/paths.js`).
@@ -2415,12 +2756,13 @@ The real messages put a colon after the entry name (`WHERE: protect[J]: ...`), w
 flowchart TD
     L1["decideLocal of target, command, env, platform"] --> L2{"allow a list?"}
     L2 -->|"no"| R1["REFUSE: allowlist is empty"]
-    L2 -->|"yes"| L3["localFolderProblem with the recorded protected list"]
+    L2 -->|"yes"| L3["localFolderProblem with the recorded protected list, an empty list when it is not a list"]
     L3 --> L4{"a problem?"}
     L4 -->|"yes"| R2["REFUSE: folder not allowed, the reason asks the user to run checkCommand of env, local and the name"]
     L4 -->|"no"| L5["usableRule keeps the rules it accepts, see its diagram"]
     L5 --> L6["localScope, once for this decision"]
-    L6 --> L7["tokenizeSshCommand"]
+    L6 --> L6b["pathsOf: the paths list or null, programsOf: the bare names of listedPrograms when paths is not empty"]
+    L6b --> L7["tokenizeSshCommand"]
     L7 --> L8{"AllowError?"}
     L8 -->|"yes"| R3["REFUSE: its short reason"]
     L8 -->|"no"| L9["see decideLocal, the rules"]
@@ -2429,25 +2771,37 @@ flowchart TD
 
 ### decideLocal, the rules
 
+The rules of `allow` come first, in order, then the programs list, only for a first token that is exactly one of its names. `remember` keeps the first problem, and the first that is not `not a plain argument`.
+
 ```mermaid
 flowchart TD
-    L9["next usable rule, in order"] --> L10{"matchRuleDetail matches?"}
-    L10 -->|"no"| L14{"more rules?"}
-    L10 -->|"yes"| L19{"a regex match?"}
+    L9["next usable rule, in order"] --> L10["ruleProblem of the tokens and the rule"]
+    L10 --> L11{"matchRuleDetail matches?"}
+    L11 -->|"no: undefined"| L14{"more rules?"}
+    L11 -->|"yes"| L19{"a regex match?"}
     L19 -->|"yes"| L20["regexProblem: see its diagram"]
-    L19 -->|"no"| L11["wildcardProblem of the star and rest args"]
-    L11 --> L12{"no problem?"}
-    L20 --> L12
+    L19 -->|"no"| L21["wildcardProblem of the star and rest args"]
+    L20 --> L22{"a problem?"}
+    L21 --> L22
+    L22 -->|"no"| L23["listedPathsProblem of the words checked above and paths"]
+    L23 --> L12{"no problem?"}
+    L22 -->|"yes"| L13["remember it"]
     L12 -->|"yes"| A1["ALLOW: that rule, argv is the tokens"]
-    L12 -->|"no"| L13["remember the first problem, and the first that is not 'not a plain argument'"]
+    L12 -->|"no"| L13
     L13 --> L14
     L14 -->|"yes"| L9
-    L14 -->|"no"| L15{"a problem remembered?"}
+    L14 -->|"no"| L24{"the first token is one of the programs of programsOf?"}
+    L24 -->|"yes"| L25["programsProblem of the tokens and paths, see src/kinds/local/scope.js"]
+    L25 --> L26{"a problem?"}
+    L26 -->|"no"| A2["ALLOW: rule programs: PROGRAM, argv is the tokens"]
+    L26 -->|"yes"| L27["remember it"]
+    L27 --> L15{"a problem remembered?"}
+    L24 -->|"no"| L15
     L15 -->|"yes"| R4["REFUSE: the remembered problem that is not 'not a plain argument',<br/>else the first one"]
-    L15 -->|"no"| L21["see decideLocal, no rule matched"]
+    L15 -->|"no"| L28["see decideLocal, no rule matched"]
 ```
 
-A rule that matched always leaves a problem when it does not allow, so a matched rule can never reach the `decide` below.
+A rule that matched always leaves a problem when it does not allow, so a matched rule can never reach the `decide` below. For a listed program there is always a problem or an allow, so a listed program that a check refuses has no `argv` and no `unmatched` and never reaches the reviewer. A program word given as a path is never one of the programs, since a name holds no slash.
 
 ### decideLocal, no rule matched
 
@@ -2455,11 +2809,23 @@ A rule that matched always leaves a problem when it does not allow, so a matched
 flowchart TD
     L21["no rule matched"] --> L16{"no usable rule but the allowlist is not empty?"}
     L16 -->|"yes"| R5["REFUSE: not on allowlist"]
-    L16 -->|"no"| L17["decide of tokens and usable rules"]
+    L16 -->|"no"| L17["decide of tokens and usable rules, then unlisted, see its diagram"]
     L17 --> L18{"the target is reviewed, and reviewProblem finds nothing?"}
     L18 -->|"yes"| R6["REFUSE: allowlist is empty when there are no rules, else not on allowlist,<br/>marked as no rule matched, with the tokens"]
     L18 -->|"no"| R7["REFUSE: the same reason, without the tokens so it is never reviewed,<br/>and on a reviewed target the reviewProblem reason as notReviewed"]
 ```
+
+`reviewProblem` also checks every path of the command against `paths` when the target has them (`src/kinds/local/folder.js`). `unlisted` keeps the refusal of `decide` on a target without programs, and names the programs on one with them:
+
+```mermaid
+flowchart TD
+    N1["unlisted of the refusal, the first token, the programs and the usable rules"] --> N2{"no programs, or the short reason is neither allowlist is empty nor not on allowlist?"}
+    N2 -->|"yes"| N3["the refusal as it is, a regex rule too slow included"]
+    N2 -->|"no"| N4["the refusal with short not on allowlist and the reason:<br/>not on the allowlist for this target. Allowed: describeAllow of the rules,<br/>the program PROGRAM is not one of its programs: the programs"]
+    N4 --> N5["unmatched stays true, so a reviewed target may still send it to the reviewer"]
+```
+
+The real reason has a semicolon before `the program`.
 
 ### regexProblem
 
@@ -2493,12 +2859,12 @@ flowchart TD
     F0 -->|"yes"| F3
     F0 -->|"no"| F2{"localFolderProblem of the folder with the secret files?"}
     F2 -->|"a problem"| F3["the refusal: ksproxy check prints REFUSED and the problem, 1"]
-    F2 -->|"none"| F4["the target for decide: protected is the secret files,<br/>review true and the programs when the target has a review"]
+    F2 -->|"none"| F4["the target for decide, without its programs key: protected is the secret files,<br/>listedPrograms the programs list when it has one,<br/>review true and the review programs as programs when the target has a review"]
 ```
 
 ### The session: open, folderProblem, looseSecrets and record
 
-What `start` calls for this kind, drawn in diagrams 2a to 5 of Part 1. This kind has no `reapStale`, `prepare`, `close` or `sessionFiles`: nothing is held open, so a stop cannot leave anything behind. Its `open` is awaited like the `open` of every kind and may be asynchronous. An opened local target is kept as `{ kind, target }`. `folderProblem`, `looseSecrets` and `MAX_NAMED` are private to this file.
+What `start` calls for this kind, drawn in diagrams 2a to 5 of Part 1. This kind has no `reapStale`, `prepare`, `close` or `sessionFiles`: nothing is held open, so a stop cannot leave anything behind. Its `open` is awaited like the `open` of every kind and may be asynchronous. An opened local target is kept as `{ kind, target }`. `folderProblem`, `looseSecrets`, `named` and `MAX_NAMED` are private to this file.
 
 ```mermaid
 flowchart TD
@@ -2513,30 +2879,70 @@ flowchart TD
     F4 -->|"yes"| F6["localFolderProblem with the secret files of every inventory file as protected"]
     F6 --> F7{"a problem?"}
     F7 -->|"yes"| F8["not ok, with that problem"]
-    F7 -->|"no"| L1["looseSecrets of the target"]
+    F7 -->|"no"| A1{"a programs list?"}
+    A1 -->|"yes"| A2["note: programs NAMES may run with any arguments inside PATHS, both lists in full"]
+    A1 -->|"no"| L1["looseSecrets of the target"]
+    A2 --> L1
     L1 --> L2{"readdir of the folder works, and some top-level name looksSecret and is not in protect, compared in lower case?"}
-    L2 -->|"no"| L3["OK: no notes"]
-    L2 -->|"yes"| L4["OK: one note, holds NAME1, NAME2, NAME3 and N more: list them in 'protect' to also refuse commands given the whole folder.<br/>Names sorted, at most 3 named, the and N more part only when there are over 3"]
-    D1["record of an opened target, env, the selected local targets and the secret files"] --> D2["kind, name, description, allow, cwd,<br/>path = cleanPath of PATH over every selected local folder, the skipped ones included,<br/>protected = sessionProtected of the secret files, state up,<br/>review true when reviewed, protect when the inventory has it, programs when reviewed"]
+    L2 -->|"yes"| L4["note: holds the named names: list them in 'protect' to also refuse commands given the whole folder, names sorted"]
+    L2 -->|"no"| L3{"any note?"}
+    L4 --> L3
+    L3 -->|"yes"| L5["OK: with the notes, in that order"]
+    L3 -->|"no"| L6["OK: no notes"]
+    N1["named of a list"] --> N2["at most MAX_NAMED, 3, of the names joined by commas, then and N more when there are over 3"]
+```
+
+Each note is written as a WARN after the UP line of the target. The real note writes protect in double quotes.
+
+```mermaid
+flowchart TD
+    D1["record of an opened target, env, the selected local targets and the secret files"] --> D2["kind, name, description, allow, cwd,<br/>path = cleanPath of PATH over every selected local folder, the skipped ones included,<br/>protected = sessionProtected of the secret files, state up"]
+    D2 --> D3["review true when reviewed, protect when the inventory has it,<br/>paths when the inventory has it, listedPrograms the programs list when it has one,<br/>programs the review programs when reviewed"]
     H1["downMessage"] --> H2["folder is gone"]
     H3["backMessage"] --> H4["folder is back"]
 ```
 
-The note is written as a WARN after the UP line of the target. The real note writes protect in double quotes.
+### doctor
+
+What `ksproxy doctor` asks of an opened local target, `{ kind, target }`. The folder checks of `open` run again, with the same `folderProblem`; the list of secret files of other inventory files is not part of the context, so it is empty here.
+
+```mermaid
+flowchart TD
+    D1["doctor of the opened target and the context env"] --> D2{"folderProblem of the folder, env and no secret files?"}
+    D2 -->|"none"| D3["OK: ok true, detail folder checks passed"]
+    D2 -->|"a problem"| D4["ok false, detail that problem,<br/>control characters made spaces, at most 300 characters"]
+```
+
 ### Agent notes of a local folder
 
-`toolBullet` is the line in the Tools list of AGENT.md. `agentSection` of a session target is the local section of AGENT.md. Its reviewed line is its own text, because it names the programs.
+`toolBullet` is the line in the Tools list of AGENT.md. `agentSection` of a session target is the local section of AGENT.md. Its reviewed line is its own text, because it names the programs. `pathsNotes` gives the lines of a target with `paths`, and `refusedOptionsText` the options always refused for a listed program.
 
 ```mermaid
 flowchart TD
     L0["toolBullet: local_exec with target, command and timeout_seconds, run one command on this machine in a target folder"]
     L1["agentSection of the session target: heading, tool local_exec, allowed commands, the fixed line that secret-looking files and protected paths are refused unless an allowed command names the file exactly,<br/>plain words, wildcard, folder, program and PATH rules"] --> L2{"state is not up?"}
     L2 -->|"yes"| L3["add: the folder is not available"]
-    L2 -->|"no"| L5{"review is true?"}
-    L3 --> L5
-    L5 -->|"yes"| L6["add the reviewed line, naming the programs that can be reviewed and the simple flag rule"]
+    L2 -->|"no"| L7{"paths a list?"}
+    L3 --> L7
+    L7 -->|"yes"| L8["add the lines of pathsNotes"]
+    L7 -->|"no"| L5{"review is true?"}
+    L8 --> L5
+    L5 -->|"yes"| L6["add the reviewed line, naming the programs that can be reviewed and the simple flag rule,<br/>and when paths is a list, that every path of a reviewed command must lie inside the paths shown"]
     L5 -->|"no"| L4["section done"]
     L6 --> L4
+```
+
+```mermaid
+flowchart TD
+    P1["pathsNotes of the session target"] --> P2["one line: every wildcard argument that is a path must also lie inside one of the paths, shown"]
+    P2 --> P3{"programsOf of the target and pathsOf gives programs?"}
+    P3 -->|"no"| P4["that line only"]
+    P3 -->|"yes"| P5["the programs, named exactly, never as a path, with any flags and arguments besides the commands above,<br/>and a refused command of them is never sent to a reviewer"]
+    P5 --> P6["which words are paths, the plain relative path, the paths shown,<br/>what a folder, a star, two stars and a dot cover, a star also on a name that starts with a dot"]
+    P6 --> P7["give a path as its own word: the value after the equals sign of a long flag is a path,<br/>a value glued to a short flag is checked whole with every tail, every word after two dashes as it is"]
+    P7 --> P8["the options always refused: refusedOptionsText, and the refused sed scripts"]
+    O1["refusedOptionsText"] --> O2["for each program of REFUSED_OPTIONS with words: its exact words, its short letters with a dash, its long options"]
+    O2 --> O3["joined by semicolons, then: the programs with colon, tar, cpio and pax,<br/>refuse every argument that holds a colon, a remote archive"]
 ```
 
 ## src/kinds/shared.js
@@ -2683,6 +3089,27 @@ flowchart TD
     Q2 -->|"no, error or timeout"| Q4["false"]
 ```
 
+### versionCheck and versionAnswer
+
+The doctor check of the kubernetes kind. `versionCheck` of the proxy port, the time limit (30 seconds when not given) and the stop signal sends `GET /version` to 127.0.0.1 and the port, and nothing else. It never rejects. `versionAnswer` turns the reply into the result. A detail never holds the body, only the version text, cleaned and cut to 64 characters.
+
+```mermaid
+flowchart TD
+    V1["versionCheck of port, timeoutMs and signal"] --> V2["GET /version, stopped when the time or the signal ends it"]
+    V2 --> V3{"the connection fails, or the time or the signal ends it?"}
+    V3 -->|"time or signal"| V4["ok false, no answer in time, or the check was stopped"]
+    V3 -->|"refused or reset"| V5["ok false, the proxy is not answering"]
+    V2 --> V6{"the body grows over 65536 bytes?"}
+    V6 -->|"yes"| V7["the request is destroyed, ok false, the cluster gave an answer that is too long"]
+    V6 -->|"no"| V8["versionAnswer of the status and the body text"]
+    V8 --> A1{"status?"}
+    A1 -->|"401 or 403"| A2["ok false, the cluster rejected the credential and the status"]
+    A1 -->|"another than 200"| A3["ok false, the cluster answered HTTP and the status"]
+    A1 -->|"200"| A4{"the body is JSON with a gitVersion that is a non-empty text?"}
+    A4 -->|"no"| A5["ok false, the cluster gave an answer that is not a version"]
+    A4 -->|"yes"| A6["OK: detail server and the gitVersion, control characters made spaces, at most 64 characters"]
+```
+
 ### reapStaleProxies and commandLine
 
 ```mermaid
@@ -2732,7 +3159,7 @@ The diagrams draw a double quote as a single quote. This is the exact short text
 
 ## src/kinds/local/folder.js
 
-Path checks for local targets: the wildcard and value checks (`wildcardProblem`, `plainValues`, `valueProblem`), path resolution (`realish`, `isInside`; `dropDataVolume` and `isCaseInsensitive` are imported from `src/paths.js`), the link check (`crossesPseudoFs`), the folder check (`localFolderProblem`) and what a session records and uses (`sessionProtected`, `protectedPaths`, `guardedPaths`, `localScope`, `cleanPath`) and the name check (`looksSecret`).
+Path checks for local targets: the wildcard and value checks (`wildcardProblem`, `plainValues`, `valueProblem`), path resolution (`realish`, `isInside`; `dropDataVolume` and `isCaseInsensitive` are imported from `src/paths.js`), the link check (`crossesPseudoFs`), the folder check (`localFolderProblem`) and what a session records and uses (`sessionProtected`, `protectedPaths`, `guardedPaths`, `localScope`, `cleanPath`) and the name check (`looksSecret`). The `paths` list of a target is checked here too (`isPath`, `covers`, `pathsOf`, `pathsProblem`, with the private `exists`, `partMatches` and `SEPARATORS`), so that `reviewProblem` can check it without an import loop; `src/kinds/local/scope.js` imports them.
 
 ksproxy's own files are the root state folder, every project included (`rootStateDir`, never the `stateDir` of the session), and the config folder, every project file included, each as written and by its real path. `ownDirs` gives them to `localFolderProblem` and `sessionProtected`; `protectedPaths` gives them to `valueProblem`. A local target of one project therefore cannot reach the state of another project, of the default session or of its own project.
 
@@ -2756,7 +3183,7 @@ flowchart TD
 
 ### reviewProblem
 
-The fixed checks an unlisted command on a reviewed local target must pass before `src/tools.js` sends it to the reviewer. The model cannot override any of them.
+The fixed checks an unlisted command on a reviewed local target must pass before `src/tools.js` sends it to the reviewer. The model cannot override any of them. When the target has `paths`, every value that is a path must also lie inside them, as for a listed program.
 
 ```mermaid
 flowchart TD
@@ -2774,10 +3201,82 @@ flowchart TD
     P5b --> P6
     P6 --> P7{"a problem?"}
     P7 -->|"yes"| R3["REFUSE: that problem"]
-    P7 -->|"no"| P8{"more arguments?"}
+    P7 -->|"no"| P9{"pathsOf the target is a list and isPath of the value?"}
+    P9 -->|"yes"| P10["pathsProblem of the value, REFUSE: outside paths when it gives one"]
+    P9 -->|"no"| P8{"more arguments?"}
+    P10 --> P8
     P8 -->|"yes"| P3
     P8 -->|"no"| A1["may be reviewed: null"]
 ```
+
+So a free word such as a search word is not checked against `paths`, and a tail of a flag that names an existing entry is.
+
+### isPath
+
+Which words are paths, for a listed program, a wildcard of a listed rule on a target with `paths`, and a reviewed command.
+
+```mermaid
+flowchart TD
+    I1["isPath of word and folder"] --> I2{"holds a slash?"}
+    I2 -->|"yes"| I3["true"]
+    I2 -->|"no"| I4["the whole word, then its parts, split on SEPARATORS: = : @ , + and %, without repeats"]
+    I4 --> I5{"one of them starts with a dot, or is not empty and exists: lstat of the folder joined with it works?"}
+    I5 -->|"yes"| I3
+    I5 -->|"no"| I6["false: a free word, not checked"]
+```
+
+The whole word is tested too, so `prod+creds` is a path when an entry of that name exists, although neither `prod` nor `creds` does. Such a path is then refused as not plain.
+
+### covers and partMatches
+
+A path is inside an entry when the entry matches the path or one of the folders above it, up to the folder of the target. A star matches any characters, names that start with a dot included.
+
+```mermaid
+flowchart TD
+    C1["covers of entry, the parts of a path, insensitive"] --> C2["fold: both sides in lower case when insensitive"]
+    C2 --> C3["reach: the counts of parts matched so far, at first only 0"]
+    C3 --> C4["next segment of the entry, empty and single-dot segments dropped"]
+    C4 --> C5{"two stars?"}
+    C5 -->|"yes"| C6["from each count in reach, every count up to the number of parts"]
+    C5 -->|"no"| C7["from each count J in reach with a part left, J plus 1 when partMatches of the segment and part J"]
+    C6 --> C8{"more segments?"}
+    C7 --> C8
+    C8 -->|"yes"| C4
+    C8 -->|"no"| C9["true when reach is not empty: the entry matched the path or a folder above it"]
+```
+
+```mermaid
+flowchart TD
+    M1["partMatches of pattern and name"] --> M2{"name read to its end?"}
+    M2 -->|"no"| M3{"the pattern character is a star?"}
+    M3 -->|"yes"| M4["remember the star and the name position, step the pattern"]
+    M3 -->|"no"| M5{"the pattern character equals the name character?"}
+    M5 -->|"yes"| M6["step both"]
+    M5 -->|"no"| M7{"a star remembered?"}
+    M7 -->|"yes"| M8["back to after the star, which takes one more name character"]
+    M7 -->|"no"| M9["false"]
+    M4 --> M2
+    M6 --> M2
+    M8 --> M2
+    M2 -->|"yes"| M10["true when only stars are left in the pattern"]
+```
+
+Each step either moves the name position or moves back with the remembered star one character further, so a pattern with many stars cannot take very long.
+
+### pathsOf and pathsProblem
+
+```mermaid
+flowchart TD
+    A1["pathsOf of a session target"] --> A2{"paths a list?"}
+    A2 -->|"no"| A3["null"]
+    A2 -->|"yes"| A4["its strings"]
+    P1["pathsProblem of a value that passed valueProblem, paths, scope"] --> P2["realish of the real folder joined with the value"]
+    P2 --> P3{"known, and some entry covers its parts relative to the real folder,<br/>insensitive on macOS and Windows?"}
+    P3 -->|"yes"| P4["OK: null"]
+    P3 -->|"no"| R1["REFUSE: outside paths, the reason lists the paths"]
+```
+
+The reason is `the argument VALUE is outside the paths this target allows: PATHS`, with the entries joined by a comma and a space. An empty list of paths, which only a session file edited by hand can hold, covers nothing.
 
 ### valueProblem
 
@@ -2959,6 +3458,239 @@ The diagrams draw a double quote as a single quote. This is the exact short text
 | Short reason | When it is given |
 | --- | --- |
 | `contains ".."` | an argument has a segment of two dots, so it could leave the folder |
+| `outside paths` | a path that lies outside the `paths` of the target: of a listed program, matched by a wildcard of a listed rule, or of a reviewed command |
+
+## src/kinds/local/scope.js
+
+What the `programs` list of a local target adds to a call: the programs the owner lets run with any arguments inside `paths`. It holds which options are always refused, which arguments are paths, and which listed programs can act as the owner, for the warning. The path checks stay in `src/kinds/local/folder.js` and are reused as they are (`plainValues`, `valueProblem`, `isPath`, `pathsProblem`). `decideLocal` of `src/kinds/local/index.js` calls `programsOf`, `listedPathsProblem` for a listed rule and `programsProblem` for a listed program; `validate` uses `BARE_PROGRAM`, and `ruleWarnings` uses `actingPrograms`. `ACTING`, `OWN_G`, `actingName`, `longOption`, `optionRefused`, `sedProblem`, `pathProblem` and `SED_ADDRESS` are private to this file.
+
+No program is refused for being listed: the owner chose it. A program word given as a path (`./run.sh`, `/usr/bin/cat`) is never one of the names, since `BARE_PROGRAM`, letters, digits and `_ . + -` not starting with `-`, has no slash. The program is found on the clean `PATH` of the session, so a file in the folder never replaces it.
+
+### programNames, actingPrograms and programsOf
+
+```mermaid
+flowchart TD
+    N1["programNames of program"] --> N2["base: the name after the last slash, in lower case"]
+    N2 --> N3["stem: the base cut at the first dot, then digits, dashes and underscores at the end dropped"]
+    N3 --> N5{"the stem one of OWN_G: gzip or gunzip, whose g belongs to the name?"}
+    N5 -->|"yes"| N6["names: the base and the stem, no repeats"]
+    N5 -->|"no"| N4["names: the base and the stem, each also without a leading g, gnu or bsd when something is left, no repeats"]
+    A1["actingPrograms of a programs list"] --> A2["for each program, as the list writes it, each of its programNames"]
+    A2 --> A3{"actingName of the name, or of its part before the first dash:<br/>in ACTING, the names of ACTING_PROGRAMS, or starts with a word of ACTING_PREFIXES?"}
+    A3 -->|"yes for one name"| A4["kept"]
+    A3 -->|"no"| A5["left out"]
+    L1["programsOf of a session target and paths"] --> L2{"paths null or empty, or listedPrograms not a list?"}
+    L2 -->|"yes"| L3["no programs"]
+    L2 -->|"no"| L4["the strings of listedPrograms that BARE_PROGRAM matches"]
+```
+
+So `PYTHON3.12`, `node20`, `gawk-5.1`, `gnumake`, `gm4` and `bsdgit` all match, and so do `docker-buildx`, `ansible-galaxy` and `aws-sso` by the part before their first dash. `gzip` and `gunzip` are not taken for `zip` and `unzip`. `ACTING_PROGRAMS` by group, and `ACTING_PREFIXES`:
+
+| Group | Programs |
+|---|---|
+| shells | sh, bash, rbash, zsh, dash, ksh, mksh, fish, csh, tcsh, pwsh, busybox, toybox |
+| interpreters | node, nodejs, deno, bun, ruby, irb, erb, tclsh, wish, expect, osascript, awk, gawk, mawk, nawk, r, rscript, julia, java, jshell, groovy, scala, kotlin, swift, dotnet, ghci, runghc, erl, elixir, iex, guile, racket, sbcl, m4, dc, sqlite3, duckdb, and every name that starts with python, perl, php or lua |
+| runners | env, xargs, exec, command, nohup, nice, timeout, time, watch, stdbuf, setsid, script, parallel, flock, taskset, ionice, chrt, caffeinate, arch, sandbox-exec, open, xdg-open, xcrun, tmux, screen, entr, ssh-agent, crontab, at, batch, launchctl, systemctl, systemd-run, taskpolicy, lockf, prlimit, shortcuts, automator |
+| privileges | sudo, doas, su, pkexec, chroot, unshare, nsenter, runuser, setpriv, capsh, sg, newgrp, fakeroot |
+| network | curl, wget, nc, ncat, netcat, socat, ssh, scp, sftp, rsync, ftp, lftp, telnet, openssl, http, xh, aria2c, rclone, dig, nslookup, host, mail, mailx, sendmail, mutt, psql, mysql, mongosh, redis-cli, pg_dump, pg_dumpall, mysqldump |
+| editors | vi, vim, nvim, view, ex, ed, nano, pico, emacs, mg, micro, code, less, more, most, man |
+| debuggers | lldb, gdb, strace, ltrace, dtrace, dtruss, valgrind, perf |
+| builders | make, cmake, ninja, bazel, meson, scons, gradle, mvn, ant, rake, cargo, go, cc, gcc, g++, c++, clang, clang++, javac, xcodebuild |
+| packages | npm, npx, yarn, pnpm, corepack, uv, uvx, poetry, conda, mamba, gem, bundle, bundler, composer, rustup, brew, port, apt, apt-get, dpkg, yum, dnf, rpm, apk, pacman, nix, nix-env, nix-shell, snap, flatpak, asdf, mise, and every name that starts with pip |
+| documents | pandoc, latexmk, tex, latex, pdftex, pdflatex, xetex, xelatex, luatex, lualatex, groff, troff, nroff: they run filters or commands, or read any file |
+| archives | tar, unzip, zip, cpio, pax, ditto: an unpacked member can have an absolute name, or be a link that points anywhere, which a program that follows links (zip -r, cp -RL, grep -R) then reads |
+| accounts | ps, pgrep, pkill, kill, killall, lsof, top, htop, security, defaults, pbpaste, pbcopy, log, dscl, gpg, ssh-add, op, vault, pass, gh, glab, aws, gcloud, gsutil, az, doctl, heroku, flyctl, vercel, terraform, pulumi, ansible, helm, kubectl, docker, podman, nerdctl, minikube, git, svn, hg, ksproxy, ssh-keygen, oc, k9s, stern, kubectx, kubens, argocd, flux, istioctl, docker-compose, aws-vault, sops, bw, tofu, terragrunt, ansible-playbook, mdfind, screencapture |
+
+### optionProblem, optionRefused and longOption
+
+```mermaid
+flowchart TD
+    O1["optionProblem of program and args"] --> O2{"programNames holds sed?"}
+    O2 -->|"yes"| O3["sedProblem of args, see its diagram"]
+    O2 -->|"no"| O4{"programNames holds a key of REFUSED_OPTIONS:<br/>find, tar, cpio, pax, zip, unzip, sort, split, install, sdiff or diff3?"}
+    O4 -->|"no"| O5["OK: null"]
+    O4 -->|"yes"| O6["optionRefused with the rules of that program, for each arg and its index"]
+    O6 --> O7{"an arg refused?"}
+    O7 -->|"yes"| R1["REFUSE: option refused, naming the first such arg"]
+    O7 -->|"no"| O8{"the rules have colon, and an arg holds a colon?"}
+    O8 -->|"yes"| R2["REFUSE: remote archive, naming the first such arg"]
+    O8 -->|"no"| O5
+    F1["optionRefused of rules, arg, index"] --> F2{"arg an exact word of the rules, or longOption of arg and the rules?"}
+    F2 -->|"yes"| F3["true"]
+    F2 -->|"no"| F4{"a group of short flags: one dash and not two,<br/>or with oldStyle, tar, its first arg without a dash?"}
+    F4 -->|"no"| F5["false"]
+    F4 -->|"yes"| F6{"the group holds the letters of a short entry of the rules?"}
+    F6 -->|"yes"| F3
+    F6 -->|"no"| F5
+    G1["longOption of arg and rules"] --> G2{"starts with two dashes, at least 3 characters long,<br/>and the part before the first equals sign is not a kept option?"}
+    G2 -->|"no"| G3["false"]
+    G2 -->|"yes"| G4["true when a long option starts with that part"]
+```
+
+GNU programs accept any start of a long option, so `--to-com=x` is `--to-command=x`. A kept option is an exact option of the same program that only shares a start with a refused one: `tar --checkpoint=1`, `tar --file=docs/a.tar` and `install --strip` run, `--checkpoint-a=x`, `--files-f=x` and `--strip-p=x` are refused. An option that only shares a shorter start, such as `sort --check` with `--compress-program`, is not a start of the refused one and runs without being kept. A letter of a group is refused wherever it stands, also in a value glued to the group (`-fdocs/T.tar`), so a path is given as its own word. `REFUSED_OPTIONS`:
+
+| Program | Exact words | Letters in a group of short flags | Long options, also shortened | Kept | Colon |
+|---|---|---|---|---|---|
+| find | -exec, -execdir, -ok, -okdir | | | | no |
+| tar | | I, F, P, C, T, also in the first argument without a dash (tar xPf) | --to-command, --use-compress-program, --checkpoint-action, --info-script, --new-volume-script, --rsh-command, --rmt-command, --absolute-names, --absolute-paths, --directory, --cd, --files-from, --insecure | --checkpoint, --file | yes |
+| cpio | | | --insecure, --rsh-command | | yes |
+| pax | | | | | yes |
+| zip | | TT | --unzip-command | | no |
+| unzip | | : | | | no |
+| sort | | | --compress-program | | no |
+| split | | | --filter | | no |
+| install | | | --strip-program | --strip | no |
+| sdiff | | | --diff-program | | no |
+| diff3 | | | --diff-program | | no |
+
+`sort --compress-program`, `split --filter`, `install --strip-program` and the `--diff-program` of `sdiff` and `diff3` name a program that the program runs. `cpio --insecure` unpacks members with absolute names and through links. The list is a best effort.
+
+Colon means that every argument that holds `:` is refused, because the program can read an archive name with `:` as a remote archive (`HOST:FILE`) and the archive name cannot be told apart from the other words. `gtar`, `gnutar`, `bsdtar`, `gfind`, `bsdcpio`, `gsort`, `gsplit`, `ginstall` and the like have the rules of their program, by `programNames`.
+
+### sedScripts
+
+sed reads its first operand as the script unless a script comes from `-e` or `--expression`. GNU sed and BSD sed read the arguments differently (BSD stops at the first operand, and its `-i` and `-I` take the next argument), so the arguments are read once each way and every script found is checked.
+
+```mermaid
+flowchart TD
+    S1["sedScripts of args: read as GNU sed, then as BSD sed"] --> S3["next arg"]
+    S3 --> S4{"options ended, or the arg does not start with a dash, or is a single dash?"}
+    S4 -->|"yes"| S5["an operand, and for BSD the options end here"]
+    S4 -->|"no"| S6{"two dashes alone?"}
+    S6 -->|"yes"| S7["the options end"]
+    S6 -->|"no"| S8{"two dashes and a NAME, with or without a value after an equals sign?"}
+    S8 -->|"yes"| S9{"NAME a start of file?"}
+    S9 -->|"yes"| N1["null: a script from a file"]
+    S9 -->|"no"| S10{"NAME a start of expression?"}
+    S10 -->|"yes"| S11["a script: the value, else the next arg"]
+    S10 -->|"no"| S12{"NAME a start of line-length, without a value?"}
+    S12 -->|"yes"| S13["skip the next arg"]
+    S8 -->|"no"| S14["a group of short flags: see sedScripts, a group"]
+    S5 --> S15{"more args?"}
+    S7 --> S15
+    S11 --> S15
+    S13 --> S15
+    S12 -->|"no"| S15
+    S14 --> S15
+    S15 -->|"yes"| S3
+    S15 -->|"no"| S16["no script from an option: the first operand is a script, possibly none"]
+    S16 --> S17["OK: the scripts of both readings"]
+```
+
+#### sedScripts, a group
+
+```mermaid
+flowchart TD
+    C1["next letter of the group after the dash"] --> C2{"f?"}
+    C2 -->|"yes"| N1["null: a script from a file"]
+    C2 -->|"no"| C3{"e?"}
+    C3 -->|"yes"| C4["a script: the rest of the group, else the next arg, and the group ends"]
+    C3 -->|"no"| C5{"a letter that takes a value: l for GNU, i or I for BSD?"}
+    C5 -->|"yes"| C6["the value is the rest of the group, else the next arg is skipped, and the group ends"]
+    C5 -->|"no"| C7{"i, for GNU: only a suffix glued to it?"}
+    C7 -->|"yes"| C8["the group ends"]
+    C7 -->|"no"| C9{"more letters?"}
+    C9 -->|"yes"| C1
+    C9 -->|"no"| C8
+```
+
+### sedScriptRefused and sedProblem
+
+A word holds no space, backslash, semicolon or exclamation mark, so one script is one command after its address.
+
+```mermaid
+flowchart TD
+    T1["sedScriptRefused of script"] --> T2{"a string?"}
+    T2 -->|"no"| T3["false"]
+    T2 -->|"yes"| T4["skip SED_ADDRESS: digits, commas, plus signs, and a regex between slashes with I or M after it"]
+    T4 --> T5{"the command is s?"}
+    T5 -->|"yes"| T6["the flags: what follows the third use of the separator, the character after s"]
+    T6 --> T7["true when the flags hold e or w"]
+    T5 -->|"no"| T8["true when the command is e, w, W, r or R"]
+    P1["sedProblem of args"] --> P2{"sedScripts is null?"}
+    P2 -->|"yes"| R1["REFUSE: sed script refused, a script read from a file cannot be checked"]
+    P2 -->|"no"| P3{"sedScriptRefused of one of the scripts?"}
+    P3 -->|"yes"| R2["REFUSE: sed script refused, naming the first such script"]
+    P3 -->|"no"| P4["OK: null"]
+```
+
+### argumentValues and listedPathsProblem
+
+```mermaid
+flowchart TD
+    V1["argumentValues of arg"] --> V2{"starts with a dash?"}
+    V2 -->|"no"| V3["the arg itself"]
+    V2 -->|"yes"| V4{"two dashes?"}
+    V4 -->|"yes"| V5{"an equals sign?"}
+    V5 -->|"yes"| V6["the value after the first equals sign"]
+    V5 -->|"no"| V7["none"]
+    V4 -->|"no"| V8["every tail from the third character: -oout gives out, ut and t, -o gives none"]
+    L1["listedPathsProblem of the wildcard args, paths, scope"] --> L2{"paths null?"}
+    L2 -->|"yes"| L3["OK: null"]
+    L2 -->|"no"| L4["next arg that isPath"]
+    L4 --> L5["pathsProblem of it"]
+    L5 --> L6{"a problem?"}
+    L6 -->|"yes"| R2["REFUSE: that problem"]
+    L6 -->|"no"| L7{"more args?"}
+    L7 -->|"yes"| L4
+    L7 -->|"no"| L3
+```
+
+The wildcard args of a listed rule already passed `wildcardProblem`, so they are plain and inside the folder.
+
+### programsProblem and pathProblem
+
+```mermaid
+flowchart TD
+    Y1["programsProblem of tokens, paths, target, env, scope, for a program word of the list"] --> Y4["optionProblem of the program and the args"]
+    Y4 --> Y5{"a problem?"}
+    Y5 -->|"yes"| R1["REFUSE: that problem"]
+    Y5 -->|"no"| Y6["next arg"]
+    Y6 --> Y7{"options not ended, and the arg is two dashes?"}
+    Y7 -->|"yes"| Y8["the options end, the two dashes are not checked"]
+    Y7 -->|"no"| Y9["values: argumentValues of the arg, or after the options ended the arg itself and its argumentValues"]
+    Y9 --> Y10["pathProblem of each value that isPath"]
+    Y10 --> Y11{"a problem?"}
+    Y11 -->|"yes"| R1
+    Y11 -->|"no"| Y12{"more args?"}
+    Y8 --> Y12
+    Y12 -->|"yes"| Y6
+    Y12 -->|"no"| Y13["ALLOW: null"]
+```
+
+A word after the two dashes is checked whole and also as a flag would be, without repeats: the two dashes may be the value of the flag before them, as in `sort -T -- -onotes`, where sort reads `-onotes` as `-o notes`.
+
+```mermaid
+flowchart TD
+    X1["pathProblem of value, paths, target, env, scope"] --> X2{"plainValues: letters, digits and _ . / -, not starting with a slash or a dash?"}
+    X2 -->|"no"| R1["REFUSE: not a plain path"]
+    X2 -->|"yes"| X3["valueProblem of the checks of today, remembered in scope.checked"]
+    X3 --> X4{"a problem?"}
+    X4 -->|"yes"| R2["REFUSE: that problem"]
+    X4 -->|"no"| X5["pathsProblem"]
+```
+
+### The reasons
+
+The exact text of each reason given to the agent, with PROGRAM, OPTION, SCRIPT, VALUE and PATHS standing for the words it names:
+
+| Short reason | Reason given to the agent |
+| --- | --- |
+| `option refused` | the option OPTION of PROGRAM can run other code or reach outside the paths, so it is always refused |
+| `remote archive` | the argument VALUE holds ":", which PROGRAM can read as a remote archive (HOST:FILE), so it is always refused |
+| `sed script refused` | a sed script read from a file cannot be checked, so -f and --file are always refused, or: the sed script SCRIPT runs a command, or writes or reads a file of its own, so it is always refused |
+| `not a plain path` | the argument VALUE is not a plain relative path: a path is made of letters, digits and _ . / - and does not start with / or - |
+| `outside paths` | the argument VALUE is outside the paths this target allows: PATHS, joined by a comma and a space (from `pathsProblem` of `src/kinds/local/folder.js`) |
+
+### Short reasons in the log
+
+| Short reason | When it is given |
+| --- | --- |
+| `option refused` | a listed find, tar, cpio, zip, unzip, sort, split, install, sdiff or diff3 with an option of `REFUSED_OPTIONS` |
+| `remote archive` | a listed tar, cpio or pax with an argument that holds `:` |
+| `sed script refused` | a listed sed with a script from a file, or one that runs a command or writes or reads a file of its own |
+| `not a plain path` | for a listed program, a path that is absolute, or holds a character other than letters, digits and `_ . / -` |
+| `outside paths` | a path, of a listed program or matched by a wildcard of a listed rule, that lies outside `paths` |
 
 ## src/kinds/engines/http.js
 
@@ -3299,6 +4031,16 @@ flowchart TD
     M1["downMessage and backMessage"] --> M2["the call service is not answering, the call service is back"]
 ```
 
+### doctor
+
+What `ksproxy doctor` asks of an opened http target, `{ kind, target }`. No HTTP request is sent and the credential is not used.
+
+```mermaid
+flowchart TD
+    D1["doctor of the opened target and the context timeout and signal"] --> D2["hostAnswers of the URL of baseUrl, see src/kinds/http/reach.js"]
+    D2 --> D3["OK: its ok and detail, never a throw"]
+```
+
 ### perform
 
 ```mermaid
@@ -3339,6 +4081,32 @@ flowchart TD
     A4 --> A5["URLSearchParams of the pairs, the encoded query as it would be sent, clipped to 1024 characters"]
     A5 --> A6["OK: the text the audit entry keeps under query"]
     Q1["QUERY_NOTE"] --> Q2["the agent note, shared with httpServiceKind: the four method override names are refused in any letter case, and a reviewer and the log see the query"]
+```
+
+## src/kinds/http/reach.js
+
+The doctor check of the http kind: does the host answer on its port. `hostAnswers` of the URL of the target, the context (time limit, 30 seconds when not given, and a stop signal) and, for a test only, extra TLS options. `codeOf` makes an error code safe to show.
+
+### hostAnswers and codeOf
+
+```mermaid
+flowchart TD
+    H1["hostAnswers of url, timeoutMs, signal and tlsOptions"] --> H2["port: the one in the URL, else 443 for https and 80 for http, host without the brackets of an IPv6 address"]
+    H2 --> H3{"https?"}
+    H3 -->|"no"| H4["a TCP connection to the host and the port"]
+    H3 -->|"yes"| H5["a TLS connection, the host as the server name unless it is an address, the certificate checked as fetch does"]
+    H4 --> H6{"the connection is made?"}
+    H5 --> H7{"the handshake completes?"}
+    H6 -->|"yes"| H8["OK: ok true, detail host answers, the socket is closed, no byte is sent"]
+    H7 -->|"yes"| H8
+    H6 -->|"error"| H9["ok false, the host did not answer on port N and the code"]
+    H7 -->|"error after the TCP connection"| H10["ok false, the TLS handshake with port N failed and the code"]
+    H7 -->|"error before it"| H9
+    H2 --> H11{"the time ends, or the signal fires or has fired?"}
+    H11 -->|"yes"| H12["ok false, no answer on port N in time, or the check was stopped, the socket is closed"]
+    C1["codeOf of an error"] --> C2{"its code is a text of capital letters, digits and _, 1 to 64 long?"}
+    C2 -->|"yes"| C3["that code"]
+    C2 -->|"no"| C4["the word error"]
 ```
 
 ## src/listen-status.js
@@ -3876,7 +4644,7 @@ flowchart TD
 
 ## src/paths.js
 
-Where ksproxy keeps things and how it writes them: `expandHome`, `configDir`, `projectsDir`, `inventoryPath`, `rootStateDir`, `listenDir`, `stateDir`, `sessionDir`, `logDir`, `auditLogPath`, `socketDir`, `socketPath`, `reviewSocketPath` (the socket `REVIEW_SOCKET_NAME` in the socket folder), `callSocketPath` (the socket `CALL_SOCKET_NAME`, `call-sock`, of the brokered kinds), `sshBin`, `kubectlBin`, `mongoshBin`, `ensureDir` and `writeFileAtomic`, and two path helpers that `src/tools.js` uses for the output of every kind and the local mechanics use for their checks: `isCaseInsensitive` and `dropDataVolume`.
+Where ksproxy keeps things and how it writes them: `expandHome`, `configDir`, `projectsDir`, `inventoryPath`, `rootStateDir`, `listenDir`, `stateDir` (which `STATE_FOLDER` can move, see below), `sessionDir`, `logDir`, `auditLogPath`, `socketDir`, `socketPath`, `reviewSocketPath` (the socket `REVIEW_SOCKET_NAME` in the socket folder), `callSocketPath` (the socket `CALL_SOCKET_NAME`, `call-sock`, of the brokered kinds), `sshBin`, `kubectlBin`, `mongoshBin`, `ensureDir` and `writeFileAtomic`, and two path helpers that `src/tools.js` uses for the output of every kind and the local mechanics use for their checks: `isCaseInsensitive` and `dropDataVolume`.
 
 Projects: `PROJECT_KEY` is `KSPROXY_PROJECT`, the key of the `env` object that names the project of a command. `projectOf` reads it, `withProject` sets it, `PROJECT_RE` is the name rule and `PROJECT_RULE` the error text, `--project: a project name is 1 to 24 characters: lower-case letters, digits, "-" and "_", starting with a letter or a digit`. `PROJECT_DEFAULT` is `default`, the name that means the default inventory wherever `--project` is taken: `takeProject` in `src/cli.js` turns it into no project, and so do `projectOf` and `withProject` here, so no path is ever built on `projects/default.json` or `p/default`. `otherInventories` in `src/projects.js` still reads `projects/default.json`, only for the secret files and the ports it names. `listenDir` is the folder of the network listener and of its token, `listen` in the root state folder: there is one token for every project. `initCommand`, `startCommand` and `checkCommand` are the commands a message tells the user to run. `stateDir` and `inventoryPath` follow the project, so every path built on `stateDir` (the session, log and socket folders, the sockets, the working folders of the command engine) follows it too. `rootStateDir` and `configDir` never do: the guards that keep ksproxy's own files out of reach use them, in `src/kinds/local/folder.js`, `src/kinds/command/index.js` and the scrub of `src/tools.js`, so that no project reaches the files of another one or of the default session.
 
@@ -3934,9 +4702,13 @@ flowchart TD
 
 #### stateDir and inventoryPath, with and without a project
 
+`STATE_FOLDER` is a symbol, `Symbol('state folder')`, used as a key of env: the state folder a run is given in place of its own. Only `ksproxy doctor` sets it, on its own copy of env, to a temporary folder inside the root state folder (see `src/doctor.js`), and `reapDoctorFolders` on the copy it gives the kinds for a folder that a killed doctor left (see `src/doctor-folder.js`). A symbol is not an environment variable: no user can set it, a copy of env made with a spread keeps it, and neither `Object.keys`, `JSON.stringify` nor the environment of a child process holds it. Every folder built on `stateDir` follows it (the session, log and socket folders, the sockets, the working folders of the command engine); `rootStateDir`, `listenDir` and `configDir` never do, so the guards of the local and command kinds keep the real folders.
+
 ```mermaid
 flowchart TD
-    T1["stateDir of env"] --> T2["projectOf of env, a throw goes on to the caller"]
+    T1["stateDir of env"] --> T0{"env holds a folder under the key STATE_FOLDER?"}
+    T0 -->|"yes"| T6["OK: that folder, the project plays no part"]
+    T0 -->|"no"| T2["projectOf of env, a throw goes on to the caller"]
     T2 --> T3{"a project?"}
     T3 -->|"no"| T4["OK: rootStateDir"]
     T3 -->|"yes"| T5["OK: rootStateDir/p/NAME"]
@@ -4500,7 +5272,9 @@ flowchart TD
 
 Runs `ksproxy start`: `start` sets up the session around the run drawn in Part 1 (diagrams 2a to 2d, 3, 5 and 8), with the helpers `bounded`, `emptyDirectory`, `fileSize`, `startFollower`, `ensureStateDir` for the state folder of the default or of a project, and `credentialVariables`, `withoutVariables` and `readSecrets` for the credentials. The call service of the brokered kinds (`startCallServer` of `src/broker.js`, with `answerCall` of `src/tools.js` as its handler) is drawn in 2d.2b, its closing in 3b. `logKind` gives the log label of a kind from its key (`kindByKey` of the key, then its label); every log line of a lifecycle event uses it. `chooseTargets`, `credentialVariables` and `withoutVariables` are exported for `startMany` in `src/start-many.js`, which runs the picker before any session opens and builds the env of its listener without any credential. `withOutputLimit` adds the `maxOutputKiB` of the inventory entry to the record of each opened target that has one (diagram 2d.2): the session file carries it for `ksproxy mcp`, and the call service uses the record in memory. A raised limit prints no line in the terminal: no setting of a target has a WARN line of its own, and settings such as read-write are named only in the opening line that a kind writes.
 
-The run walks `KINDS` and names no kind: what is particular to a kind sits in its object (the "The session" diagrams of `src/kinds/ssh/index.js`, `src/kinds/kubernetes/index.js` and `src/kinds/local/index.js`). The core keeps the skeleton: the stop checks, the empty-allow warning, the order of the lines, the guard that closes a target opened during a stop, the review service, the files, the follower and the health loop. `closeOne` closes one opened target through its kind's `close`, bounded by `limits[closeLimit]` and with the kind's `onCloseTimeout` past it; the time limits keep their names `sshCloseMs` and `kubeCloseMs`. `closeStaleSockets` lives in `src/kinds/ssh/master.js` and is no longer exported from here.
+The run walks `KINDS` and names no kind: what is particular to a kind sits in its object (the "The session" diagrams of `src/kinds/ssh/index.js`, `src/kinds/kubernetes/index.js` and `src/kinds/local/index.js`). The core keeps the skeleton: the stop checks, the empty-allow warning, the order of the lines, the guard that closes a target opened during a stop, the review service, the files, the follower and the health loop. `closeOne` closes one opened target through `closeTarget`: its kind's `close`, bounded by `limits[closeLimit]` and with the kind's `onCloseTimeout` past it; the time limits keep their names `sshCloseMs` and `kubeCloseMs`. `closeStaleSockets` lives in `src/kinds/ssh/master.js` and is no longer exported from here. Before it reaps its own leftovers, the run calls `reapDoctorFolders` of `src/doctor-folder.js` and prints its lines (diagram 2a.2): it prints nothing when no killed doctor left a folder.
+
+Three steps of the run are functions of their own, so that `ksproxy doctor` (`src/doctor.js`) opens and closes a target with the very code of `start`: `prepareTargets` checks the socket paths of a selection (diagram 2a.3), `openTarget` opens one selected target and prints its lines (diagrams 2b and 2b, continued), and `closeTarget` closes one. `start` calls them where the same code stood before, with its own `lifecycle`, its `openGuarded` and an `onOpened` that adds the target to the opened list and keeps its secrets, so its lines, its audit entries and their order are as before.
 
 ```mermaid
 flowchart TD
@@ -4715,10 +5489,49 @@ flowchart TD
     C19 -->|"no"| C20["OK: the picked targets of each kind"]
 ```
 
-### openGuarded and closeOne
+### openTarget
+
+This diagram shows how one selected target is opened, for `start` and for `ksproxy doctor`. The caller gives `held`, the used `ports`, the `context` of `open` without the secrets, `lifecycle` that prints one entry, `open` and `onOpened`.
 
 ```mermaid
 flowchart TD
+    O1["openTarget of kind, target and the caller's parts"] --> O2{"allow is a list and empty?"}
+    O2 -->|"yes"| O3["lifecycle: target_warn EMPTY_ALLOW"]
+    O2 -->|"no"| O4["lifecycle: a target_warn for each warning of ruleWarnings of the kind, else of allowWarnings"]
+    O3 --> O4
+    O4 --> O5["lifecycle: target_opening with openingMessage"]
+    O5 --> O6{"portProblem gives a text?"}
+    O6 -->|"yes"| O7["lifecycle: target_skipped with it, gives skipped and the text"]
+    O6 -->|"no"| O8{"readSecrets gives an error?"}
+    O8 -->|"yes"| O9["lifecycle: target_skipped with it, gives skipped and the text"]
+    O8 -->|"no"| O10["open of the caller with the call: kind.open of the target and the context with the secrets, and the secrets, always awaited"]
+    O10 --> O11{"the result?"}
+    O11 -->|"late: the caller closed a target opened during a stop"| O12["gives late"]
+    O11 -->|"not ok"| O13["lifecycle: target_skipped with its error, gives skipped and the error"]
+    O11 -->|"ok"| O14["the opened entry: kind key, target and the extras of open, to onOpened with the secrets"]
+    O14 --> O15{"a warn from open?"}
+    O15 -->|"no"| O16["lifecycle: target_up, without a message"]
+    O15 -->|"yes"| O17["lifecycle: target_warn with it"]
+    O16 --> O18["lifecycle: a target_warn for each note, for each name in short with SHORT_SECRET_WHY, for each name in shortForms with SHORT_FORM_WHY"]
+    O17 --> O18
+    O18 --> O19["gives the opened entry and its secrets"]
+```
+
+In `start`, `open` is `openGuarded` with `closeOne` for a kind that has `close`, `onOpened` adds the entry to the opened list and keeps the secrets by kind and name, and `lifecycle` records the entry in the audit log and prints it; a late result leaves the kind. Every entry carries the kind's label and the target's name.
+
+### prepareTargets, openGuarded, closeOne and closeTarget
+
+```mermaid
+flowchart TD
+    P1["prepareTargets of selection and env"] --> P2["prepare of each kind in list order that has it, with the selected targets of that kind and env, else an empty map"]
+    P2 --> P3{"a selected target has a review?"}
+    P3 -->|"yes"| P4["reviewSocketPath of env"]
+    P3 -->|"no"| P5{"a target of a brokered kind selected?"}
+    P4 --> P5
+    P5 -->|"yes"| P6["callSocketPath of env"]
+    P5 -->|"no"| P7["OK: the prepared data by kind key and target name"]
+    P6 --> P7
+    P2 -->|"a path over its limit throws, in prepare or in either socket path"| P8["THROW: the error, start prints its message and gives 1"]
     G1["openGuarded of open and, when the kind has close, a close function"] --> G2["remember the attempt as pending"]
     G2 --> G3["open, always awaited"]
     G3 --> G4{"a close function, ok, but stopping by now?"}
@@ -4726,7 +5539,7 @@ flowchart TD
     G4 -->|"no"| G6["the open result"]
     G5 --> G7["pending cleared"]
     G6 --> G7
-    C1["closeOne of a kind and an opened target"] --> C2["bounded: close of the kind, at most the number in limits under its closeLimit, else its closeMs"]
+    C1["closeOne of a kind and an opened target: closeTarget with the env and the limits of the run"] --> C2["closeTarget: bounded, close of the kind, at most the number in limits under its closeLimit, else its closeMs"]
     C2 --> C3{"the limit passed?"}
     C3 -->|"yes"| C4["onCloseTimeout of the kind when it has one: SIGKILL of the cluster proxy"]
     C3 -->|"no"| C5["done"]
@@ -4810,7 +5623,7 @@ flowchart TD
 
 ## src/start-many.js
 
-Runs several projects in one `ksproxy start`, and the network listener that serves them (`ksproxy start --project shop,ops --all --listen HOST:PORT`). `startMany` checks everything before anything opens (`checkProjects`, `checkListen`, `chooseAll`), runs the `start` of `src/start.js` once per project in this process, each with a stand-in process from `wrapProcess` whose two `LineStream`s put `[NAME] ` before every line, starts the listener once every session is ready, and stops them together. `nameOf` gives the name of a project, `default` for null. `servedEnvs` builds the env of each project for the listener, and `projectUrl` the URL the terminal prints. `RELAYED` lists the events of the real process that go to every session; `ANOTHER_STOPPED` and `NO_LISTENER` are the close reasons `startMany` gives; `LISTEN` is the prefix of its own lines; `DAY_MS` is the default time between two expiry warnings. With one project the prefix is empty, so its lines are as they were; `cli.js` runs a start with one project and no `--listen` without `startMany` at all.
+Runs several projects in one `ksproxy start`, and the network listener that serves them (`ksproxy start --project shop,ops --all --listen HOST:PORT`). `startMany` checks everything before anything opens (`checkProjects`, `checkListen`, `chooseAll`), runs the `start` of `src/start.js` once per project in this process, each with a stand-in process from `wrapProcess` whose two `LineStream`s put `[NAME] ` before every line, starts the listener once every session is ready, and stops them together. `nameOf` gives the name of a project, `default` for null. Each pre-check is a function of its own, so that `ksproxy doctor` runs every one of them and reports each, where `startMany` stops at the first failure: `loadProject` (1), `runningSession` (2), `parseAddresses` (3), `readTls` (4), `listenerProblem` (5) and `tokenProblem` (6 and 7); `checkProjects` and `checkListen` call them in order and give the same results and texts as before. `servedEnvs` builds the env of each project for the listener, and `projectUrl` the URL the terminal prints. `RELAYED` lists the events of the real process that go to every session; `ANOTHER_STOPPED` and `NO_LISTENER` are the close reasons `startMany` gives; `LISTEN` is the prefix of its own lines; `DAY_MS` is the default time between two expiry warnings. With one project the prefix is empty, so its lines are as they were; `cli.js` runs a start with one project and no `--listen` without `startMany` at all.
 
 ### The pre-checks, in order
 
@@ -4818,11 +5631,11 @@ This diagram shows the checks that run before any session opens. The first failu
 
 ```mermaid
 flowchart TD
-    A1["startMany of plan, env without a project, host with the real process: now is host.now, else the clock,<br/>limits.warnMs is DAY_MS unless host.limits names it, pick is host.checkbox, else the checkbox picker"] --> A2["checkProjects, 1: loadInventory of each project in order, with its own initCommand"]
+    A1["startMany of plan, env without a project, host with the real process: now is host.now, else the clock,<br/>limits.warnMs is DAY_MS unless host.limits names it, pick is host.checkbox, else the checkbox picker"] --> A2["checkProjects, 1: loadProject of each project in order, loadInventory with its own initCommand"]
     A2 --> A3{"thrown?"}
-    A3 -->|"an InventoryError"| X1["print its message, 1"]
+    A3 -->|"an InventoryError: loadProject gives its message as the error"| X1["print its message, 1"]
     A3 -->|"another error, such as a project name that breaks the rule"| X2["rethrown: startMany rejects, runCli prints ksproxy: MESSAGE, 1"]
-    A3 -->|"no"| A4{"checkProjects, 2: liveSession of the session folder of a listed project, in order?"}
+    A3 -->|"no"| A4{"checkProjects, 2: runningSession, liveSession of the session folder of a listed project, in order?"}
     A4 -->|"yes"| X3["print PREFIX a session is already running, pid N, the text of start, 1"]
     A4 -->|"no"| A5{"a --listen value?"}
     A5 -->|"no"| A6["no addresses and no TLS"]
@@ -4841,19 +5654,19 @@ PREFIX is `[NAME] ` with several projects, `[default] ` for the default, and not
 
 ```mermaid
 flowchart TD
-    L1["checkListen of plan, env, now, terminal"] --> L2{"3: each --listen value, parseListen with the interfaces of this machine, throws?"}
+    L1["checkListen of plan, env, now, terminal"] --> L2{"3, parseAddresses: each --listen value, parseListen with the interfaces of this machine, throws?"}
     L2 -->|"yes"| X1["ERROR: its message, such as --listen: HOST is not a loopback or private address of this machine"]
-    L2 -->|"no"| L3{"4: TLS files given?"}
+    L2 -->|"no"| L3{"4, readTls of the two file names: TLS files given?"}
     L3 -->|"no"| L6["tls null"]
     L3 -->|"yes"| L4{"the cert file, then the key file: can it be read?"}
     L4 -->|"no"| X2["ERROR: --tls-cert: cannot read FILE, or --tls-key: cannot read FILE"]
     L4 -->|"yes"| L5["tls: both files as buffers, read once here and kept in memory"]
     L5 --> L10{"createSecureContext of the cert and the key throws?"}
     L10 -->|"yes: not PEM, or a key of another certificate"| X5["ERROR: --tls-cert and --tls-key cannot be used together: MESSAGE"]
-    L10 -->|"no"| L7{"5: liveListener of env, a live pid in listen.json?"}
+    L10 -->|"no"| L7{"5, listenerProblem: liveListener of env, a live pid in listen.json?"}
     L6 --> L7
     L7 -->|"yes"| X3["ERROR: another ksproxy start is listening, pid N"]
-    L7 -->|"no"| L11["tokenState of env at now"]
+    L7 -->|"no"| L11["tokenProblem: tokenState of env at now"]
     L11 --> L8{"6: no --new-token, and the state is unreadable?"}
     L8 -->|"yes"| X4["ERROR: cannot read FILE: start with --new-token to replace it"]
     L8 -->|"no"| L12{"7: a new token would be made, --new-token or a state that is not ok,<br/>and terminal is false: stdout is a file or a pipe?"}
@@ -5713,6 +6526,17 @@ flowchart TD
     M1["downMessage and backMessage"] --> M2["the call service is not answering, the call service is back"]
 ```
 
+### doctor
+
+What `ksproxy doctor` asks of an opened command target, `{ kind, target, program }`. The program is looked up again as `open` does; nothing is run, and the environment secrets are not read.
+
+```mermaid
+flowchart TD
+    D1["doctor of the opened target and the context env"] --> D2{"resolveProgram of the program and env gives an error?"}
+    D2 -->|"no"| D3["OK: ok true, detail program found"]
+    D2 -->|"yes"| D4["ok false, detail that error,<br/>control characters made spaces, at most 300 characters"]
+```
+
 ### perform, the tool and the notes
 
 ```mermaid
@@ -5733,6 +6557,70 @@ flowchart TD
 | Short reason | Where |
 | --- | --- |
 | `repeats a fixed option` | `decideCommand`: a word that starts with `-` equals one of the target's fixed arguments |
+
+## src/kinds/engines/doctor.js
+
+How the answer of a doctor check is made. A kind runs its one fixed, read-only request through its own engine (`send`, `runClient` or `exchange`) and gives the result to one function here, which makes `{ ok, detail }`. A detail is short and plain, and never holds a secret value: the texts it can hold are fixed by this file, or are the one name a good answer carries, which `shown` cleans and hides. `DOCTOR_MAX_BYTES` (16384) is the most a check reads of the answer. It imports `hideSecrets` of the http engine and `clip`.
+
+### shown, hiddenOf, answer, reasonOf and stopped
+
+```mermaid
+flowchart TD
+    S1["shown of a text and the hidden texts"] --> S2["hideSecrets: every hidden text becomes hidden in brackets, the longest first"]
+    S2 --> S3["each control character and each run of white space becomes one space, the ends are trimmed"]
+    S3 --> S4["OK: the text cut at 160 characters"]
+    H1["hiddenOf of secrets and forms"] --> H2["OK: every secret value, then the forms the kind hides with them"]
+    A1["answer of hidden"] --> A2["OK: a function of a flag and a text that gives ok and shown of the text"]
+    R1["reasonOf of a text"] --> R2{"the text tells of a refused login?"}
+    R2 -->|"yes"| R3["OK: authentication failed"]
+    R2 -->|"no"| R4{"the word refused?"}
+    R4 -->|"yes"| R5["OK: connection refused"]
+    R4 -->|"no"| R6{"the text tells of a connection that could not be made?"}
+    R6 -->|"yes"| R7["OK: could not connect"]
+    R6 -->|"no"| R8["OK: null, no short reason"]
+    T1["stopped of the signal"] --> T2{"the signal aborted, so Ctrl-C?"}
+    T2 -->|"yes"| T3["OK: stopped"]
+    T2 -->|"no"| T4["OK: timed out"]
+```
+
+### httpVerdict
+
+```mermaid
+flowchart TD
+    V1["httpVerdict of the result of send, the request, describe, hidden and the signal"] --> V2{"timedOut?"}
+    V2 -->|"yes"| V3["FAIL: stopped or timed out"]
+    V2 -->|"no"| V4{"exit code not 0?"}
+    V4 -->|"yes"| V5{"a status line in the output?"}
+    V5 -->|"no, the service was not reached"| V6["FAIL: could not connect"]
+    V5 -->|"yes"| V7["FAIL: HTTP status from the request, with authentication failed added for 401 and 403. Never the body"]
+    V4 -->|"no"| V8["describe of the JSON body after the head, null when it does not parse or throws"]
+    V8 --> V9{"a detail?"}
+    V9 -->|"no"| V10["FAIL: HTTP status from the request, but the answer was not as expected"]
+    V9 -->|"yes"| V11["OK: the detail"]
+```
+
+### clientVerdict and respVerdict
+
+```mermaid
+flowchart TD
+    C1["clientVerdict of the result of runClient, name, describe, hidden and the signal"] --> C2{"timedOut?"}
+    C2 -->|"yes"| C3["FAIL: stopped or timed out"]
+    C2 -->|"no"| C4{"stderr starts with could not start the program?"}
+    C4 -->|"yes"| C5["FAIL: NAME could not be started"]
+    C4 -->|"no"| C6{"exit code not 0?"}
+    C6 -->|"yes"| C7["FAIL: reasonOf of stderr, else NAME exited with code N. Never the output"]
+    C6 -->|"no"| C8["describe of stdout, null when it throws"]
+    C8 --> C9{"a detail?"}
+    C9 -->|"no"| C10["FAIL: NAME gave an answer that was not as expected"]
+    C9 -->|"yes"| C11["OK: the detail"]
+    P1["respVerdict of the result of exchange, hidden and the signal"] --> P2{"timedOut?"}
+    P2 -->|"yes"| P3["FAIL: stopped or timed out"]
+    P2 -->|"no"| P4{"exit code 0?"}
+    P4 -->|"yes"| P5{"the reply is PONG?"}
+    P5 -->|"yes"| P6["OK: PONG"]
+    P5 -->|"no"| P7["FAIL: the server did not answer PONG"]
+    P4 -->|"no"| P8["FAIL: reasonOf of stderr and stdout, else the server answered with an error. Never the server text"]
+```
 
 ## src/kinds/engines/http-service.js
 
@@ -5839,6 +6727,18 @@ flowchart TD
     T1["tool: name, nameKey target, detailKey request, detailShape object"] --> T2["auditedDetail, detailText and checkInput of the custom http kind, the input schema of http_request,<br/>the name and the description of the kind"]
 ```
 
+### doctor
+
+The doctor check of the two http kinds. The kind's spec gives `doctorPath` and `doctorDescribe`; the request is always GET of that path, never a rule or anything of the agent.
+
+```mermaid
+flowchart TD
+    D1["doctor of opened and the context"] --> D2["readRequest of GET and the path of the spec, with pathOptions"]
+    D2 --> D3["send to the base URL with the headers of the target, the time limit of the context, 16 KiB at most and the signal"]
+    D3 --> D4["httpVerdict with GET and the path as the request, the describe of the spec, and the hidden texts: the secret values and the base64 forms of the credential"]
+    D4 --> D5["OK or FAIL: ok and a short detail"]
+```
+
 ## src/kinds/elasticsearch/index.js
 
 The `elasticsearch` kind: key `elasticsearch`, flag `es`, label `es`, tool `elasticsearch_request`, built by `httpServiceKind` with `apiKey` on, so an entry may name `userEnv` with `passwordEnv`, or `apiKeyEnv` (sent as `authorization: ApiKey VALUE`), or neither. `fixedRefusal` runs in `decide` after the reader and before any rule, so no rule, no `...`, no `regex(...)`, no reviewer and no `ksproxy check` can allow what it refuses. Segments are compared with `plainSegment`. `refused` builds the answer: the reason is a sentence that says what is refused and ends with `is refused for every elasticsearch target, whatever the rules say.`, and the short text is for the log.
@@ -5927,6 +6827,10 @@ flowchart TD
 | `body too deep` | a body nested more than 32 levels |
 | `body in query refused` | a query name `source` or `source_content_type`, in any letter case |
 
+### doctor
+
+The check is `GET /_cluster/health`. A good answer is a JSON body whose status is 1 to 16 lower case letters, and the detail is `cluster` and the status, for example `cluster green`. A red cluster still answers, so it is OK. Any other body is a failure.
+
 ## src/kinds/rabbitmq/index.js
 
 The `rabbitmq` kind: key `rabbitmq`, flag `mq`, label `mq`, tool `rabbitmq_request`, built by `httpServiceKind` without `apiKey`, so an entry names `userEnv` with `passwordEnv`, or neither. It speaks the management HTTP API only. `fixedRefusal` runs in `decide` after the reader and before any rule, so no rule, no `...`, no `regex(...)`, no reviewer and no `ksproxy check` can allow what it refuses. Segments are compared with `plainSegment`. `refused` builds the answer as in the elasticsearch kind, with `rabbitmq` in the sentence. The first segment after `api` is the area. The kind sets `vhostSegment`, so the default virtual host `/` is addressed as the whole segment `%2F` or `%2f`, as in `GET /api/queues/%2F/orders`, and its word in the rules is `/%2F`; `vhostNote` tells the agent so. `plainSegment` reads that segment as a lone slash, which is never `api`, an area, `get`, `contents` or `publish`, so it neither hides nor sets off a fixed refusal: `POST /api/queues/%2F/q/get` is still a queue get, and `/%2F/api` is not an api path.
@@ -5962,6 +6866,10 @@ flowchart TD
 | `queue get refused` | a path under `queues` that ends in `get`, any method |
 | `queue purge refused` | DELETE on a path under `queues` that ends in `contents` |
 | `publish refused` | a path under `exchanges` that ends in `publish`, any method |
+
+### doctor
+
+The check is `GET /api/whoami`. A good answer is a JSON body with a name that is a text that is not empty, and the detail is `user` and the name. When the name is the user name of the credential, `shown` hides it, so the detail is `user` and hidden in brackets. Any other body is a failure.
 
 ## src/kinds/engines/resp.js
 
@@ -6334,6 +7242,15 @@ flowchart TD
     K16["agentSection"] --> K17["the heading with the target name and, only when there is a description, a dash and the description, the tool and an example, the allowed commands, how rules and letter case work unless allow is any,<br/>the word characters, the fixed refusals, how a reply is shown, REVIEWED when reviewed. Never the host"]
 ```
 
+### doctor
+
+```mermaid
+flowchart TD
+    D1["doctor of opened and the context"] --> D2["exchange with the host, port, tls and db of the target, the user and the password from the secrets only when the target names them, the one word PING, 16 KiB at most and the signal"]
+    D2 --> D3["respVerdict with the secret values and their escaped forms hidden"]
+    D3 --> D4["OK: PONG, or FAIL: authentication failed, the server answered with an error, the server did not answer PONG, a connection reason, timed out or stopped"]
+```
+
 ## src/kinds/kafka/index.js
 
 The `kafka` kind: the Kafka command-line clients the user installed, run by `ksproxy start` through the command engine. It is brokered: `perform` runs `runClient`. Its names are `kafka` for the key, the flag and the word, `kfk` for the label; its tool is `kafka_exec` with `command` as a string. The first word of a call picks the client program from a fixed table, and the user fixes the server address and the client configuration file: the agent never names a program, a path, a server or a file. The kind imports `resolveProgram` and `matchCommandRule` from the command kind, `runClient` from the command engine, and `decide`, `tokenizeSshCommand`, `describeAllow`, `checkAllow`, `checkReview` and `absolutePath` from the core helpers.
@@ -6510,6 +7427,17 @@ flowchart TD
 | `writes are off` | a write flag while the target has writes off |
 | `write needs a rule` | a write flag with writes on and no rule that matches |
 | `client not found` | the program of the first word was not found when the target opened |
+
+### doctor
+
+```mermaid
+flowchart TD
+    D1["doctor of opened and the context"] --> D2{"open found kafka-topics?"}
+    D2 -->|"no"| D3["FAIL: kafka-topics was not found"]
+    D2 -->|"yes"| D4["runClient with kafka-topics, the bootstrap servers, the client configuration when there is one, and the one word --list, 16 KiB at most and the signal"]
+    D4 --> D5["clientVerdict named kafka-topics: the detail counts the lines that are not empty"]
+    D5 --> D6["OK: N topics, or 1 topic, or FAIL: authentication failed, connection refused, could not connect, exited with code N, could not be started, timed out or stopped"]
+```
 
 ## src/kinds/mongodb/document.js
 
@@ -6896,6 +7824,17 @@ flowchart TD
     N10 -->|"no"| N12["nothing more"]
 ```
 
+### doctorMongo
+
+```mermaid
+flowchart TD
+    D1["doctorMongo of opened and the context"] --> D2["runClient with the program that open resolved and the fixed client arguments, the connection string, the database and the document ping 1 in the environment,<br/>HOME in the working folder of the call, removed when it ends, 16 KiB at most and the signal"]
+    D2 --> D3["clientVerdict named mongosh, the secret values and the password parts hidden"]
+    D3 --> D4{"exit code 0 and the JSON output has ok 1?"}
+    D4 -->|"yes"| D5["OK: ping answered"]
+    D4 -->|"no"| D6["FAIL: authentication failed, connection refused, could not connect, exited with code N, could not be started, an answer that was not as expected, timed out or stopped"]
+```
+
 ## src/kinds/engines/sql.js
 
 The SQL reader. It stands between an untrusted agent and a database client that can run programs on this machine, so a statement it accepts is exactly one statement of plain SQL, split into words. `dialect` is `postgres` or `mysql`. `MAX_STATEMENT_BYTES` is 16384. In a rule, `LITERAL_STAR` (backslash star) is the SQL star and `REST` (three dots) is the rest; `STAR_WARNING` is the text of the bare-star warning and `NAME_HOLE_WARNING` that of a star where only a name can stand. A star in a word rule is one value: a number or one single-quoted string. Quoted strings and names keep their quotes, so `'x'` and `x` are different words.
@@ -7247,6 +8186,16 @@ The statement after a review is the query as sent, the same text the reader read
 | Short reason | When it is given |
 | --- | --- |
 | `read-only target` | `writesData` on a target that does not say `"readOnly": false` |
+
+### doctor
+
+```mermaid
+flowchart TD
+    D1["doctor of opened and the context"] --> D2["the invocation of the kind for the statement select 1, with the password from the secrets and the time limit of the context"]
+    D2 --> D3["runClient with the program that open resolved, 16 KiB at most and the signal"]
+    D3 --> D4["clientVerdict named for the kind, with the detail select 1 answered for any exit code 0, and the secret values hidden"]
+    D4 --> D5["OK: select 1 answered, or FAIL: authentication failed, connection refused, could not connect, exited with code N, could not be started, timed out or stopped"]
+```
 
 ## src/kinds/postgres/index.js
 

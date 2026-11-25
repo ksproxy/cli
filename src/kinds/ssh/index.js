@@ -135,6 +135,11 @@ export default {
     const r = await openMaster({ socket, host: t.host }, env);
     return r.ok ? { ok: true, extras: { socket } } : r;
   },
+  // The check of ksproxy doctor: the control connection that open made is still alive. Nothing runs on the server.
+  async doctor(opened, { env }) {
+    const alive = await checkMaster({ socket: opened.socket, host: opened.target.host }, env);
+    return alive ? { ok: true, detail: 'connected' } : { ok: false, detail: 'the connection is gone' };
+  },
   closeLimit: 'sshCloseMs',
   closeMs: 15000,
   close(o, { env }) {

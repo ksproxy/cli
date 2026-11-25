@@ -1,21 +1,40 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  AllowError, decide, describeAllow, isRegexRule, matchRuleDetail, regexSource, tokenizeSshCommand,
+  AllowError, allowWarnings, decide, describeAllow, isRegexRule, matchRuleDetail, regexSource, tokenizeSshCommand,
 } from '../../allowlist.js';
 import {
   InventoryError, absolutePath, checkAllow, checkKeys, checkReview,
 } from '../../checks.js';
 import { minimalEnv } from '../../exec.js';
 import { checkCommand } from '../../paths.js';
+import { clip } from '../../text.js';
 import {
-  cleanPath, localFolderProblem, localScope, looksSecret, reviewProblem, sessionProtected, wildcardProblem,
+  cleanPath, localFolderProblem, localScope, looksSecret, pathsOf, reviewProblem, sessionProtected, wildcardProblem,
 } from './folder.js';
+import {
+  BARE_PROGRAM, REFUSED_OPTIONS, actingPrograms, listedPathsProblem, programsOf, programsProblem,
+} from './scope.js';
 
-const LOCAL_KEYS = ['name', 'cwd', 'description', 'allow', 'review', 'protect'];
+const LOCAL_KEYS = ['name', 'cwd', 'description', 'allow', 'review', 'protect', 'paths', 'programs'];
 const MAX_PROTECT = 50;
+const MAX_PROGRAMS = 50;
 const MAX_PROTECT_BYTES = 512;
 const CONTROL_CHAR = /[\u0000-\u001f\u007f]/;
+const CONTROL_RUNS = /[\u0000-\u001f\u007f]+/g;
+
+// The parts of one protect or paths entry, empty and "." parts dropped; at names the entry in the errors.
+function entryParts(item, at) {
+  if (typeof item !== 'string' || item === '' || Buffer.byteLength(item) > MAX_PROTECT_BYTES || CONTROL_CHAR.test(item)) {
+    throw new InventoryError(`${at}: must be a path of 1 to ${MAX_PROTECT_BYTES} bytes without control characters`);
+  }
+  if (item.startsWith('/') || item.startsWith('~')) {
+    throw new InventoryError(`${at}: must be relative to the folder, not an absolute path or one that starts with "~"`);
+  }
+  const parts = item.split('/').filter((part) => part !== '' && part !== '.');
+  if (parts.includes('..')) throw new InventoryError(`${at}: may not contain ".."`);
+  return parts;
+}
 
 function checkProtect(entry, where) {
   const list = entry.protect;
@@ -26,20 +45,55 @@ function checkProtect(entry, where) {
   const out = [];
   list.forEach((item, j) => {
     const at = `${where}: protect[${j}]`;
-    if (typeof item !== 'string' || item === '' || Buffer.byteLength(item) > MAX_PROTECT_BYTES || CONTROL_CHAR.test(item)) {
-      throw new InventoryError(`${at}: must be a path of 1 to ${MAX_PROTECT_BYTES} bytes without control characters`);
-    }
-    if (item.startsWith('/') || item.startsWith('~')) {
-      throw new InventoryError(`${at}: must be relative to the folder, not an absolute path or one that starts with "~"`);
-    }
-    const parts = item.split('/').filter((part) => part !== '' && part !== '.');
-    if (parts.includes('..')) throw new InventoryError(`${at}: may not contain ".."`);
+    const parts = entryParts(item, at);
     if (parts.length === 0) throw new InventoryError(`${at}: names the folder itself; list a file or folder inside it`);
     const clean = parts.join('/');
     if (out.includes(clean)) throw new InventoryError(`${at}: ${clean} is listed twice`);
     out.push(clean);
   });
   return { protect: out };
+}
+
+// The paths a local target's commands may name: cleaned like protect, "." for the whole folder, and ** only as a whole
+// part.
+function checkPaths(entry, where) {
+  const list = entry.paths;
+  if (list === undefined) return {};
+  if (!Array.isArray(list) || list.length === 0 || list.length > MAX_PROTECT) {
+    throw new InventoryError(`${where}: paths: must be a list of 1 to ${MAX_PROTECT} paths or patterns inside the folder`);
+  }
+  const out = [];
+  list.forEach((item, j) => {
+    const at = `${where}: paths[${j}]`;
+    const parts = entryParts(item, at);
+    if (parts.some((part) => part.includes('**') && part !== '**')) {
+      throw new InventoryError(`${at}: "**" must be a whole part, as in docs/**/*.md`);
+    }
+    const clean = parts.length === 0 ? '.' : parts.join('/');
+    if (out.includes(clean)) throw new InventoryError(`${at}: ${clean} is listed twice`);
+    out.push(clean);
+  });
+  return { paths: out };
+}
+
+// The programs that may run with any arguments inside paths: bare names without repeats, and only with paths.
+function checkPrograms(entry, where) {
+  const list = entry.programs;
+  if (list === undefined) return {};
+  if (!Array.isArray(list) || list.length === 0 || list.length > MAX_PROGRAMS) {
+    throw new InventoryError(`${where}: programs: must be a list of 1 to ${MAX_PROGRAMS} program names, for example ["cat", "grep"]`);
+  }
+  list.forEach((name, j) => {
+    const at = `${where}: programs[${j}]`;
+    if (typeof name !== 'string' || !BARE_PROGRAM.test(name)) {
+      throw new InventoryError(`${at}: must be a bare program name: letters, digits and _ . + -, not starting with "-", and no "/"`);
+    }
+    if (list.indexOf(name) !== j) throw new InventoryError(`${at}: ${name} is listed twice`);
+  });
+  if (entry.paths === undefined) {
+    throw new InventoryError(`${where}: programs: needs "paths", the files and folders its commands may name`);
+  }
+  return { programs: [...list] };
 }
 
 function folderProblem(cwd, env, protectedList) {
@@ -55,6 +109,12 @@ function folderProblem(cwd, env, protectedList) {
 
 const MAX_NAMED = 3;
 
+// At most MAX_NAMED of the names, then "and N more".
+function named(names) {
+  const more = names.length > MAX_NAMED ? ` and ${names.length - MAX_NAMED} more` : '';
+  return `${names.slice(0, MAX_NAMED).join(', ')}${more}`;
+}
+
 function looseSecrets(target) {
   let names;
   try {
@@ -64,6 +124,31 @@ function looseSecrets(target) {
   }
   const listed = (target.protect ?? []).map((entry) => entry.toLowerCase());
   return names.filter((name) => looksSecret(name) && !listed.includes(name.toLowerCase())).sort();
+}
+
+// The options always refused for a listed program, by program, and the programs that refuse an argument with ":".
+function refusedOptionsText() {
+  const options = Object.entries(REFUSED_OPTIONS)
+    .map(([name, rules]) => [name, [...rules.exact, ...rules.short.map((s) => `-${s}`), ...rules.long]])
+    .filter(([, words]) => words.length > 0)
+    .map(([name, words]) => `${name} ${words.join(', ')}`);
+  const colon = Object.keys(REFUSED_OPTIONS).filter((name) => REFUSED_OPTIONS[name].colon);
+  return `${options.join('; ')}. ${colon.slice(0, -1).join(', ')} and ${colon.at(-1)} refuse every argument that holds \`:\`, which they can read as a remote archive (\`HOST:FILE\`)`;
+}
+
+// The lines of AGENT.md for a target with paths: the limit on wildcards, then the programs list when it has one.
+function pathsNotes(target) {
+  const shown = target.paths.join(', ');
+  const lines = [`- Every argument that a wildcard matches and that is a path (it contains \`/\`, starts with \`.\` or names an existing file or folder) must also lie inside one of these paths of the folder: ${shown}.`];
+  const listed = programsOf(target, pathsOf(target));
+  if (listed.length === 0) return lines;
+  return [
+    ...lines,
+    `- Besides the commands above, these programs may run with any flags and arguments: ${listed.join(', ')}. Name the program exactly as listed, never as a path (\`./run.sh\`, \`/bin/cat\`). A command of these programs that a check refuses is never sent to a reviewer.`,
+    `- For these programs an argument is a path when it contains \`/\`, starts with \`.\` or names an existing file or folder of the target's folder; a part after \`=\`, \`:\`, \`@\`, \`,\`, \`+\` or \`%\` counts too. Every path must be a plain relative path (letters, digits and \`_ . / -\`), pass the checks above, and lie inside one of these paths of the folder: ${shown}. A folder covers everything below it; \`*\` matches any characters inside one part of a path, names that start with a dot included, \`**\` any number of parts, and \`.\` the whole folder. Other words, such as a search word, are not checked.`,
+    '- Give a path as its own word (`-o out/x`). The value after `=` of a long flag (`--output=out/x`) is checked as a path, and a value glued to a short flag (`-oout/x`) is checked whole, with every tail of the flag, so it is often refused. A word with a `/` is a path, so write a sed script with another separator (`s,a,b,`). Every word after `--` is checked whole and also as a flag would be, since `--` can be the value of the flag before it.',
+    `- These options are always refused, also inside a group of short flags or shortened: ${refusedOptionsText()}. A sed script read from a file (\`-f\`, \`--file\`) is refused, and so is a sed script that uses the commands e, w, W, r or R or the s flags e or w.`,
+  ];
 }
 
 const REGEX_PROGRAM = /^\^?((?:[A-Za-z0-9_/-]|\\\.)+)(?: |\$?$)/;
@@ -98,6 +183,27 @@ function checkRegexRules(allow, where) {
   });
 }
 
+// The problem of one listed rule with the tokens: undefined when it does not match, null when it allows them. With
+// paths, every argument of its wildcards that is a path must also lie inside paths.
+function ruleProblem(tokens, rule, target, env, scope, paths) {
+  const detail = matchRuleDetail(tokens, rule);
+  if (detail === null) return undefined;
+  const problem = detail.regex
+    ? regexProblem(tokens, rule, target, env, scope)
+    : wildcardProblem(detail, target, env, scope);
+  return problem ?? listedPathsProblem(detail.regex ? tokens.slice(1) : [...detail.star, ...detail.rest], paths, scope);
+}
+
+// On a target with programs, the refusal of a command that no rule allows and whose program is not listed names both.
+function unlisted(refusal, program, listed, usable) {
+  if (listed.length === 0 || !['allowlist is empty', 'not on allowlist'].includes(refusal.short)) return refusal;
+  return {
+    ...refusal,
+    reason: `not on the allowlist for this target. Allowed: ${describeAllow(usable)}; the program ${program} is not one of its programs: ${listed.join(', ')}`,
+    short: 'not on allowlist',
+  };
+}
+
 function decideLocal(target, input, env = process.env, platform = process.platform) {
   if (!Array.isArray(target.allow)) {
     return { allowed: false, reason: 'this local target has no usable allowlist', short: 'allowlist is empty' };
@@ -112,26 +218,33 @@ function decideLocal(target, input, env = process.env, platform = process.platfo
   }
   const usable = target.allow.filter(usableRule);
   const scope = localScope(target, env, platform);
+  const paths = pathsOf(target);
+  const listed = programsOf(target, paths);
   try {
     const tokens = tokenizeSshCommand(input);
     let first = null;
     let preferred = null;
-    for (const rule of usable) {
-      const detail = matchRuleDetail(tokens, rule);
-      if (detail === null) continue;
-      const problem = detail.regex
-        ? regexProblem(tokens, rule, target, env, scope)
-        : wildcardProblem(detail, target, env, scope);
-      if (problem === null) return { allowed: true, rule, argv: tokens };
+    const remember = (problem) => {
       first ??= problem;
       if (problem.short !== 'not a plain argument') preferred ??= problem;
+    };
+    for (const rule of usable) {
+      const problem = ruleProblem(tokens, rule, target, env, scope, paths);
+      if (problem === null) return { allowed: true, rule, argv: tokens };
+      if (problem !== undefined) remember(problem);
+    }
+    // The programs list comes after every rule, and only for a program word that it holds exactly.
+    if (listed.includes(tokens[0])) {
+      const problem = programsProblem(tokens, paths, target, env, scope);
+      if (problem === null) return { allowed: true, rule: `programs: ${tokens[0]}`, argv: tokens };
+      remember(problem);
     }
     const shown = preferred ?? first;
     if (shown !== null) return { allowed: false, reason: shown.reason, short: shown.short };
     if (usable.length === 0 && target.allow.length > 0) {
       return { allowed: false, reason: 'not on the allowlist for this target', short: 'not on allowlist' };
     }
-    const refusal = decide(tokens, usable);
+    const refusal = unlisted(decide(tokens, usable), tokens[0], listed, usable);
     if (target.review !== true) return refusal;
     const problem = reviewProblem(tokens, target, env, scope);
     return problem === null ? { ...refusal, argv: tokens } : { ...refusal, notReviewed: problem.reason };
@@ -172,7 +285,16 @@ export default {
       allow,
       ...checkReview(entry, where, reviewers, allow, { programs: true }),
       ...checkProtect(entry, where),
+      ...checkPaths(entry, where),
+      ...checkPrograms(entry, where),
     };
+  },
+  // The warnings of the rules, then one line that names the programs of the list that can act as the owner.
+  ruleWarnings(target) {
+    const warnings = allowWarnings(target.allow);
+    const acting = actingPrograms(target.programs ?? []);
+    if (acting.length === 0) return warnings;
+    return [...warnings, `programs that can act as you: ${acting.join(', ')}; the agent can use them with your whole account`];
   },
   openingMessage(t) {
     return t.cwd;
@@ -183,14 +305,22 @@ export default {
     if (secretFilesProblem) return { ok: false, error: secretFilesProblem };
     const problem = folderProblem(t.cwd, env, secretFiles);
     if (problem !== null) return { ok: false, error: problem };
+    const notes = [];
+    if (t.programs !== undefined) {
+      notes.push(`programs ${t.programs.join(', ')} may run with any arguments inside ${t.paths.join(', ')}`);
+    }
     const loose = looseSecrets(t);
-    if (loose.length === 0) return { ok: true, extras: {} };
-    const more = loose.length > MAX_NAMED ? ` and ${loose.length - MAX_NAMED} more` : '';
-    return {
-      ok: true,
-      extras: {},
-      notes: [`holds ${loose.slice(0, MAX_NAMED).join(', ')}${more}: list them in "protect" to also refuse commands given the whole folder`],
-    };
+    if (loose.length > 0) {
+      notes.push(`holds ${named(loose)}: list them in "protect" to also refuse commands given the whole folder`);
+    }
+    return notes.length === 0 ? { ok: true, extras: {} } : { ok: true, extras: {}, notes };
+  },
+  // The check of ksproxy doctor: the folder checks of open, again. The list of other files' secrets is not known here.
+  doctor(opened, { env }) {
+    const problem = folderProblem(opened.target.cwd, env, []);
+    return problem === null
+      ? { ok: true, detail: 'folder checks passed' }
+      : { ok: false, detail: clip(problem.replace(CONTROL_RUNS, ' '), 300) };
   },
   // path is cleaned over every selected local folder, the skipped ones included.
   record(o, {
@@ -207,6 +337,8 @@ export default {
       state: 'up',
       ...(reviewed ? { review: true } : {}),
       ...(o.target.protect ? { protect: o.target.protect } : {}),
+      ...(o.target.paths ? { paths: o.target.paths } : {}),
+      ...(o.target.programs ? { listedPrograms: o.target.programs } : {}),
       ...(reviewed ? { programs: o.target.review.programs } : {}),
     };
   },
@@ -246,10 +378,13 @@ export default {
     if (secretFilesProblem) return { refusal: secretFilesProblem };
     const problem = localFolderProblem(target.cwd, env, secretFiles);
     if (problem !== null) return { refusal: problem };
+    // The session names the programs list listedPrograms, since its programs are those the reviewer may approve.
+    const { programs, ...rest } = target;
     return {
       target: {
-        ...target,
+        ...rest,
         protected: secretFiles,
+        ...(programs ? { listedPrograms: programs } : {}),
         ...(target.review ? { review: true, programs: target.review.programs } : {}),
       },
     };
@@ -271,8 +406,10 @@ export default {
     if (target.state !== 'up') {
       lines.push(`- The folder is not available (\`${target.state}\`): calls may fail until the user fixes it.`);
     }
+    if (Array.isArray(target.paths)) lines.push(...pathsNotes(target));
     if (target.review === true) {
-      lines.push(`- A command that is not on this list is reviewed before it runs and may be refused. Only these programs can be reviewed: ${target.programs.join(', ')}. Flags must be simple (\`-x\`, \`--word\`), with any value as a separate argument.`);
+      const inside = Array.isArray(target.paths) ? ` Every path of a reviewed command must also lie inside these paths of the folder: ${target.paths.join(', ')}.` : '';
+      lines.push(`- A command that is not on this list is reviewed before it runs and may be refused. Only these programs can be reviewed: ${target.programs.join(', ')}. Flags must be simple (\`-x\`, \`--word\`), with any value as a separate argument.${inside}`);
     }
     return lines.join('\n');
   },

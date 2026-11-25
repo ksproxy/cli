@@ -158,12 +158,15 @@ const LIFECYCLE_STATUS = {
   session_start: 'READY',
   session_closing: 'CLOSING',
   session_end: 'CLOSED',
+  doctor_ok: 'OK',
+  doctor_fail: 'FAIL',
 };
 const GREEN = '32';
 const YELLOW = '33';
 const RED = '31';
 const STATUS_COLOR = {
   ok: GREEN,
+  OK: GREEN,
   UP: GREEN,
   READY: GREEN,
   REVIEW: GREEN,
@@ -173,6 +176,7 @@ const STATUS_COLOR = {
   SKIPPED: YELLOW,
   DENIED: RED,
   DOWN: RED,
+  FAIL: RED,
 };
 
 function statusColor(status) {

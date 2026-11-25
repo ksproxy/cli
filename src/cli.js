@@ -4,6 +4,7 @@ import {
   clock, formatLogLine, logOptionsFor, readAuditEntries, rotatedLogs, sanitizeForTerminal,
 } from './audit.js';
 import { allowWarnings } from './allowlist.js';
+import { doctor } from './doctor.js';
 import { InventoryError, loadInventory, sampleInventory } from './inventory.js';
 import { KINDS, kindByFlag, kindByKey } from './kinds/index.js';
 import { listenerLines } from './listen-status.js';
@@ -29,6 +30,11 @@ const DESCRIPTION_INDENT = ' '.repeat(44);
 // The two lines of the usage that name what start can do beyond one project: several projects, and the listener.
 const START_MANY_USAGE = `${'  start ... --project a,b'.padEnd(DESCRIPTION_INDENT.length)}run several projects in one start`;
 const START_LISTEN_USAGE = '  start ... --listen HOST:PORT [--new-token] [--tls-cert FILE --tls-key FILE]';
+// The doctor line: the arguments of start, and target names as plain words.
+const DOCTOR_USAGE = `${'  doctor ... [NAME...]'.padEnd(DESCRIPTION_INDENT.length)}check each target start ... would open, then close it`;
+// The commands that take the arguments of start, a list of projects among them.
+const START_LIKE = ['start', 'doctor'];
+const NAMES_OF_ONE = 'target names belong to one project; use them with a single --project';
 
 // The start line of the usage, from the list of kinds: the flag of each kind that is not brokered, then --all and
 // --verbose, then the flags of the brokered kinds and --project on lines of their own, wrapped at USAGE_WIDTH.
@@ -63,6 +69,7 @@ ${DESCRIPTION_INDENT}pick targets, open them, stay in the foreground
 ${START_MANY_USAGE}
 ${START_LISTEN_USAGE}
 ${DESCRIPTION_INDENT}serve its projects over HTTP on the local network
+${DOCTOR_USAGE}
   status ${PROJECT_USAGE}                   show every live session and each target's state
   log [-n N] [--denied] [--json] [--from ADDRESS] ${PROJECT_USAGE}
 ${DESCRIPTION_INDENT}show the last N log entries (default 50)
@@ -137,11 +144,14 @@ const VALUE_FLAG = /^(--listen|--tls-cert|--tls-key)(?:=(.*))?$/;
 
 // The arguments of start: options, the object start takes as before, and for the listener the --listen values, whether
 // --new-token was given, and the TLS files or null. count is the number of projects: a kind flag names targets of one.
-function parseStartArgs(args, count) {
+// command is start or doctor: doctor takes the same arguments, and a word that does not start with a dash is a target
+// name for it, kept in names; start refuses such a word as before.
+function parseStartArgs(args, count, command = 'start') {
   const options = {
     ...Object.fromEntries(KINDS.map((kind) => [kind.flag, null])), all: false, verbose: false,
   };
   const listen = [];
+  const plain = [];
   const files = { '--tls-cert': null, '--tls-key': null };
   let newToken = false;
   const flagPattern = new RegExp(`^(--(?:${KINDS.map((kind) => kind.flag).join('|')}))(?:=(.*))?$`);
@@ -178,7 +188,11 @@ function parseStartArgs(args, count) {
       continue;
     }
     const match = flagPattern.exec(arg);
-    if (!match) return { error: `unknown option for start: ${arg}` };
+    if (!match && command === 'doctor' && !arg.startsWith('-')) {
+      plain.push(arg);
+      continue;
+    }
+    if (!match) return { error: `unknown option for ${command}: ${arg}` };
     let value = match[2];
     if (value === undefined) {
       i += 1;
@@ -196,8 +210,9 @@ function parseStartArgs(args, count) {
   if ((cert === null) !== (key === null)) return { error: '--tls-cert and --tls-key go together' };
   const named = count > 1 ? KINDS.find((kind) => options[kind.flag] !== null) : undefined;
   if (named !== undefined) return { error: `--${named.flag} names targets of one project; use it with a single --project` };
+  if (count > 1 && plain.length > 0) return { error: NAMES_OF_ONE };
   return {
-    options, listen, newToken, tls: cert === null ? null : { cert, key },
+    options, listen, newToken, tls: cert === null ? null : { cert, key }, names: plain,
   };
 }
 
@@ -441,7 +456,7 @@ export async function main(argv, env = process.env, host = {}) {
     return 0;
   }
   if (command === 'token') return token(args, withProject(env, null), ctx);
-  const taken = takeProject(args, { beforeKind: command === 'check', list: command === 'start', env });
+  const taken = takeProject(args, { beforeKind: command === 'check', list: START_LIKE.includes(command), env });
   if (taken.error) return usageError(ctx, taken.error);
   const projectEnv = withProject(env, taken.project);
   switch (command) {
@@ -453,6 +468,11 @@ export async function main(argv, env = process.env, host = {}) {
       // One project without --listen runs exactly as before; anything more runs through startMany.
       if (taken.projects.length === 1 && parsed.listen.length === 0) return start(parsed.options, projectEnv, host);
       return startMany({ projects: taken.projects, ...parsed }, withProject(env, null), { ...host, process: proc });
+    }
+    case 'doctor': {
+      const parsed = parseStartArgs(taken.rest, taken.projects.length, command);
+      if (parsed.error) return usageError(ctx, parsed.error);
+      return doctor({ projects: taken.projects, ...parsed }, withProject(env, null), { ...host, process: proc });
     }
     case 'status':
       return status(projectEnv, ctx);

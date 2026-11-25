@@ -6,7 +6,7 @@ import {
 import { minimalEnv } from '../../exec.js';
 import { kubectlBin, socketPath } from '../../paths.js';
 import {
-  READ_VERBS, closeCluster, hardRefusalDetail, kubeconfigText, kubectlArgs, openCluster, portListening, reapStaleProxies,
+  READ_VERBS, closeCluster, hardRefusalDetail, kubeconfigText, kubectlArgs, openCluster, portListening, reapStaleProxies, versionCheck,
 } from './cluster.js';
 import { REVIEWED } from '../shared.js';
 
@@ -132,6 +132,10 @@ export default {
     const r = await openCluster(t, { sessionDir }, env);
     if (!r.ok) return r;
     return { ok: true, extras: { handle: r }, ...(r.state === 'up' ? {} : { warn: downMessage(t, r.state) }) };
+  },
+  // The check of ksproxy doctor: GET /version through the proxy that open started.
+  doctor(opened, { timeoutMs, signal }) {
+    return versionCheck(opened.target.proxyPort, { timeoutMs, signal });
   },
   closeLimit: 'kubeCloseMs',
   closeMs: 20000,

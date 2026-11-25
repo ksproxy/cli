@@ -89,7 +89,7 @@ export function wrapProcess(real, prefix) {
   return proc;
 }
 
-const nameOf = (project) => project ?? PROJECT_DEFAULT;
+export const nameOf = (project) => project ?? PROJECT_DEFAULT;
 
 // The URL of a project that the terminal prints: /mcp for the default, /p/NAME/mcp for a project, on the first bound
 // HOST:PORT that has no zone. Only a link-local IPv6 address has one, as parseListen requires; when every address is
@@ -106,20 +106,33 @@ export function servedEnvs(projects, inventories, env) {
   return new Map(projects.map((project) => [project, withProject(bare, project)]));
 }
 
+// Pre-check 1 for one project: its inventory loads. Gives { inventory } or { error } for an InventoryError; any other
+// error, such as a project name that breaks the rule, is thrown.
+export function loadProject(project, env) {
+  const own = withProject(env, project);
+  try {
+    return { inventory: loadInventory(inventoryPath(own), initCommand(own)) };
+  } catch (err) {
+    if (err instanceof InventoryError) return { error: err.message };
+    throw err;
+  }
+}
+
+// Pre-check 2 for one project: its live session, or null.
+export function runningSession(project, env) {
+  return liveSession(sessionDir(withProject(env, project)));
+}
+
 // Pre-checks 1 and 2: every inventory loads, then no project has a live session. Gives the inventories or { error }.
 function checkProjects(projects, env, label) {
   const inventories = [];
   for (const project of projects) {
-    const own = withProject(env, project);
-    try {
-      inventories.push(loadInventory(inventoryPath(own), initCommand(own)));
-    } catch (err) {
-      if (err instanceof InventoryError) return { error: err.message };
-      throw err;
-    }
+    const loaded = loadProject(project, env);
+    if (loaded.error !== undefined) return loaded;
+    inventories.push(loaded.inventory);
   }
   for (const project of projects) {
-    const live = liveSession(sessionDir(withProject(env, project)));
+    const live = runningSession(project, env);
     if (live !== null) {
       return { error: `${label(project)}a session is already running (pid ${live.pid}); stop it with Ctrl-C in its terminal` };
     }
@@ -127,42 +140,62 @@ function checkProjects(projects, env, label) {
   return { inventories };
 }
 
-// Pre-checks 3 to 7, with --listen only: the addresses parse, the TLS files are read into memory and make a TLS
-// context together, no other listener is live, the token file can be read unless --new-token replaces it, and a new
-// token is made only when stdout is a terminal. Gives the addresses and TLS, or { error }.
-function checkListen(plan, env, now, terminal) {
+// Pre-check 3: each --listen value parses. Gives { addresses } or { error } for the first that does not.
+export function parseAddresses(listen) {
   const addresses = [];
-  for (const text of plan.listen) {
+  for (const text of listen) {
     try {
       addresses.push(parseListen(text));
     } catch (err) {
       return { error: err.message };
     }
   }
-  let tls = null;
-  if (plan.tls !== null) {
-    tls = {};
-    for (const [key, flag] of [['cert', '--tls-cert'], ['key', '--tls-key']]) {
-      try {
-        tls[key] = fs.readFileSync(plan.tls[key]);
-      } catch {
-        return { error: `${flag}: cannot read ${plan.tls[key]}` };
-      }
-    }
+  return { addresses };
+}
+
+// Pre-check 4: the TLS files, null or the two file names, are read into memory and make a TLS context together.
+// Gives { tls }, null without files, or { error }.
+export function readTls(files) {
+  if (files === null) return { tls: null };
+  const tls = {};
+  for (const [key, flag] of [['cert', '--tls-cert'], ['key', '--tls-key']]) {
     try {
-      createSecureContext({ cert: tls.cert, key: tls.key });
-    } catch (err) {
-      return { error: `--tls-cert and --tls-key cannot be used together: ${err.message}` };
+      tls[key] = fs.readFileSync(files[key]);
+    } catch {
+      return { error: `${flag}: cannot read ${files[key]}` };
     }
   }
-  const pid = liveListener(env);
-  if (pid !== null) return { error: `another ksproxy start is listening (pid ${pid})` };
-  const { state } = tokenState(env, now());
-  if (!plan.newToken && state === 'unreadable') {
-    return { error: `cannot read ${tokenPath(env)}: start with --new-token to replace it` };
+  try {
+    createSecureContext({ cert: tls.cert, key: tls.key });
+  } catch (err) {
+    return { error: `--tls-cert and --tls-key cannot be used together: ${err.message}` };
   }
-  if ((plan.newToken || state !== 'ok') && !terminal) return { error: NO_TERMINAL_START };
-  return { addresses, tls };
+  return { tls };
+}
+
+// Pre-check 5: the text when another listener is live, else null.
+export function listenerProblem(env) {
+  const pid = liveListener(env);
+  return pid === null ? null : `another ksproxy start is listening (pid ${pid})`;
+}
+
+// Pre-checks 6 and 7: the token file can be read unless --new-token replaces it, and a new token is made only when
+// stdout is a terminal. The text of the first that fails, else null.
+export function tokenProblem(plan, env, now, terminal) {
+  const { state } = tokenState(env, now());
+  if (!plan.newToken && state === 'unreadable') return `cannot read ${tokenPath(env)}: start with --new-token to replace it`;
+  if ((plan.newToken || state !== 'ok') && !terminal) return NO_TERMINAL_START;
+  return null;
+}
+
+// Pre-checks 3 to 7, with --listen only, in order; the first failure stops. Gives the addresses and TLS, or { error }.
+function checkListen(plan, env, now, terminal) {
+  const parsed = parseAddresses(plan.listen);
+  if (parsed.error !== undefined) return parsed;
+  const read = readTls(plan.tls);
+  if (read.error !== undefined) return read;
+  const problem = listenerProblem(env) ?? tokenProblem(plan, env, now, terminal);
+  return problem === null ? { addresses: parsed.addresses, tls: read.tls } : { error: problem };
 }
 
 // Pre-check 7: the options each start gets. --all or kind flags go to every start as given. Else the picker runs here,

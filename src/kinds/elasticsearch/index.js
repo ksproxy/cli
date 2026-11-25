@@ -116,6 +116,8 @@ export default httpServiceKind({
     description: 'logs, read only',
     allow: ['GET /_cluster/health', 'GET /_cat/...', 'GET /logs-*/_search', 'POST /*/_search +body', 'GET /*/_mapping'],
   }],
+  doctorPath: '/_cluster/health',
+  doctorDescribe: (body) => (typeof body.status === 'string' && /^[a-z]{1,16}$/.test(body.status) ? `cluster ${body.status}` : null),
   toolName: 'elasticsearch_request',
   toolBullet: '- `elasticsearch_request { target, method, path, query?, body?, timeout_seconds? }` - send one request to an Elasticsearch target.',
   toolDescription: 'Send one request to an Elasticsearch target the user opened. The user fixed the host and the credential; give the method and the path, and optionally a query and a JSON body. Each request is checked against the target\'s allowlist and logged.',

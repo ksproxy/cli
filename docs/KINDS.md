@@ -126,6 +126,7 @@ The core runs `checkCommon` first (the name, a duplicate name, the description),
 | `state(sessionTarget, env)` | yes, and none for a brokered kind | a target of `session.json` | A promise of `'up'`, or any other string. Used by `list_targets`, `ksproxy status` and the health check. |
 | `downMessage(sessionTarget, state)` | yes | the target, the state that is not `up` | The text of the `DOWN` line. |
 | `backMessage` | yes | string | The text of the `UP` line when the target is back. |
+| `doctor(opened, ctx)` | no | the opened entry, `{ env, secrets, timeoutMs, signal }` | A promise of `{ ok, detail }`: `ok` a boolean, `detail` a short text. The one fixed, read-only check of `ksproxy doctor` for an opened target; see "The doctor hook" below. |
 
 Notes on these functions:
 
@@ -137,6 +138,18 @@ Notes on these functions:
 The core keeps what is the same for every kind: the stop checks, the warning for an empty allow list, the order of the log lines (`target_warn`, `target_opening`, then `target_up`, `target_warn` or `target_skipped`, then the notes, then a `target_warn` for each secret shorter than 8 characters), the review service, `AGENT.md`, `mcp.json` and `session.json` (written last), the follower and the health loop.
 
 The core also keeps the ports apart. Before any target opens, `start` reads every other inventory file (the default `inventory.json` and each `projects/NAME.json`) as JSON and the session file of every other live session, and collects the `ports` of each kind that has them (`usedPorts` in `src/projects.js`). A target of a kind with `ports` is then `SKIPPED` after its `OPENING` line, and `open` is not called, when one of its ports is named there (`port N is also used by project ops; give each project its own port`, or `the default inventory` in place of `project ops`), or when another inventory file cannot be read or is not JSON (`cannot read <file> to check its ports`).
+
+#### The doctor hook
+
+`ksproxy doctor` (`src/doctor.js`) opens each target that `start` would open with the same arguments, through the same code (`openTarget` of `src/start.js`), checks it, and closes it again, one target after another. The check is `await kind.doctor(opened, ctx)`, called only after `open` succeeded and before the target is closed:
+
+- `opened` is the entry `start` keeps for an opened target: `{ kind: <key>, target, ...extras }`, with the `extras` that `open` returned.
+- `ctx` is `{ env, secrets, timeoutMs, signal }`. `env` is the environment `start` would give the kind, without any credential variable; its state folder is a temporary one (the sockets of the target are there), while the root state and configuration folders are the real ones. `secrets` holds the target's secret values as `open` got them. `timeoutMs` is 30000. `signal` is an `AbortSignal` that fires at Ctrl-C or when the time limit passes.
+- It returns a promise of `{ ok: boolean, detail: string }`. `ok: true` gives an `OK` line, `ok: false` a `FAIL` line, both with `detail`. Keep the detail short: it is cut at 200 characters, and every secret value of the target, and every form of one that `hiddenForms` gives, is replaced by `[hidden]` before it is shown.
+- A hook that throws, or gives anything but a boolean `ok` and a text `detail`, gives `FAIL` with `the check failed`. A hook that has not answered when the time limit passes gives `FAIL` with `the check did not finish within 30 seconds`.
+- A kind without `doctor` is `OK` with the detail `opened` once it opens.
+
+The check is fixed by the kind and read-only: the lightest request that proves the credential works (for example `GET /version` through the opened cluster proxy, or `select 1`). It is never taken from the target's rules, never sent to a reviewer, and it changes nothing on the target. It goes through the kind's own engine, the same way `perform` reaches the service. `ksproxy doctor` writes nothing to the audit log, and no agent can reach a target while it is open for a check.
 
 ### A call
 
@@ -152,7 +165,7 @@ The core also keeps the ports apart. Before any target opens, `start` reads ever
 | `forCheck(target, ctx)` | no | the inventory target, `{ env, secretFiles, secretFilesProblem }`, as for `open` | `{ target }` (the target as `decide` needs it) or `{ refusal }` (a text that `ksproxy check` prints as `REFUSED: ...`). |
 | `checkExtra(target, decision)` | no | the inventory target, an allowed decision | An array of extra lines for `ksproxy check`. |
 | `checkInput(words)` | no | the words after the name on `ksproxy check` | The call as the tool would get it. Without it the words are the call (an array) or joined by spaces (a string). `http` makes `METHOD PATH [+body]` into `{ method, path, body? }`. |
-| `ruleWarnings(target)` | no | the inventory target | An array of warning texts, each `allow[N]: ...`. `ksproxy start` and `ksproxy check` print these instead of `allowWarnings(target.allow)` (the warning for a `regex(...)` rule that can be very slow). The two SQL kinds use it to add the warning for a bare `*` and for a regex rule that can match more than one word. |
+| `ruleWarnings(target)` | no | the inventory target | An array of warning texts, usually `allow[N]: ...`. `ksproxy start` and `ksproxy check` print these instead of `allowWarnings(target.allow)` (the warning for a `regex(...)` rule that can be very slow). The two SQL kinds use it to add the warning for a bare `*` and for a regex rule that can match more than one word. The local kind adds one line that names the programs of its `programs` list that can act as you. |
 
 A decision is an object. An allowed one has `allowed: true` and `rule`. A refused one has `allowed: false`, `reason` and `short` (the short text for the log). A refused decision may carry:
 

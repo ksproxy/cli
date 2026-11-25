@@ -261,6 +261,13 @@ export default {
     const resolved = resolveProgram(target.program, env);
     return resolved.error === undefined ? { ok: true, extras: { program: resolved.program } } : { ok: false, error: resolved.error };
   },
+  // The check of ksproxy doctor: the program is found as open finds it. Nothing runs.
+  doctor(opened, { env }) {
+    const resolved = resolveProgram(opened.target.program, env);
+    return resolved.error === undefined
+      ? { ok: true, detail: 'program found' }
+      : { ok: false, detail: clip(resolved.error.replace(/[\u0000-\u001f\u007f]+/g, ' '), 300) };
+  },
   record(opened, { reviewed }) {
     const { target } = opened;
     return {

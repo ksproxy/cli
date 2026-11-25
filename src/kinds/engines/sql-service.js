@@ -5,6 +5,7 @@ import {
 import { REVIEWED } from '../shared.js';
 import { resolveProgram } from '../command/index.js';
 import { runClient } from './command.js';
+import { DOCTOR_MAX_BYTES, clientVerdict, hiddenOf } from './doctor.js';
 import { matchStatementRule, readStatement, splitRule, sqlRuleWarnings } from './sql.js';
 
 // What postgres and mysql share: the inventory fields, the session, the decision and running the client. A kind
@@ -162,6 +163,21 @@ export function sqlServiceKind(spec) {
       } = spec.invocation(target, input, { password: secrets[target.passwordEnv], timeoutMs });
       return runClient({
         program: target.program, fixedArgs, words, env, childEnv, folderPaths, timeoutMs, maxBytes, signal,
+      });
+    },
+    // The doctor check: select 1 through the same client and invocation as a call, on the program open resolved.
+    async doctor(opened, {
+      env, secrets, timeoutMs, signal,
+    }) {
+      const { target } = opened;
+      const {
+        fixedArgs, words, childEnv, folderPaths,
+      } = spec.invocation(target, 'select 1', { password: secrets[target.passwordEnv], timeoutMs });
+      const result = await runClient({
+        program: opened.program, fixedArgs, words, env, childEnv, folderPaths, timeoutMs, maxBytes: DOCTOR_MAX_BYTES, signal,
+      });
+      return clientVerdict(result, {
+        name: spec.word, describe: () => 'select 1 answered', hidden: hiddenOf(secrets), signal,
       });
     },
     toolBullet: `- \`${spec.tool.name} { target, query, timeout_seconds? }\` - run one allowlisted SQL statement on a ${spec.title} target.`,

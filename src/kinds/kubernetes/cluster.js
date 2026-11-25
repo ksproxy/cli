@@ -258,6 +258,50 @@ export function probeVersion(port, timeoutMs = 4000) {
   });
 }
 
+const VERSION_LIMIT = 65536;
+const CONTROL_RUN = /[\u0000-\u001f\u007f]+/g;
+
+// The doctor answer for a reply of GET /version: the status and the body text.
+function versionAnswer(status, text) {
+  if (status === 401 || status === 403) return { ok: false, detail: `the cluster rejected the credential (HTTP ${status})` };
+  if (status !== 200) return { ok: false, detail: `the cluster answered HTTP ${status}` };
+  let gitVersion;
+  try {
+    gitVersion = JSON.parse(text).gitVersion;
+  } catch {
+    gitVersion = undefined;
+  }
+  if (typeof gitVersion !== 'string' || gitVersion === '') return { ok: false, detail: 'the cluster gave an answer that is not a version' };
+  return { ok: true, detail: `server ${clip(gitVersion.replace(CONTROL_RUN, ' '), 64)}` };
+}
+
+// The doctor check: GET /version through the local proxy, nothing else. Never rejects.
+export function versionCheck(port, { timeoutMs = 30000, signal } = {}) {
+  return new Promise((resolve) => {
+    const stop = AbortSignal.any(signal === undefined ? [AbortSignal.timeout(timeoutMs)] : [signal, AbortSignal.timeout(timeoutMs)]);
+    const fail = (detail) => resolve({ ok: false, detail });
+    const lost = () => fail(stop.aborted ? 'no answer in time, or the check was stopped' : 'the proxy is not answering');
+    const req = http.get({
+      host: '127.0.0.1', port, path: '/version', signal: stop,
+    }, (res) => {
+      const chunks = [];
+      let size = 0;
+      res.on('data', (chunk) => {
+        size += chunk.length;
+        if (size > VERSION_LIMIT) {
+          req.destroy();
+          fail('the cluster gave an answer that is too long');
+        } else {
+          chunks.push(chunk);
+        }
+      });
+      res.on('end', () => resolve(versionAnswer(res.statusCode, Buffer.concat(chunks).toString('utf8'))));
+      res.on('error', lost);
+    });
+    req.on('error', lost);
+  });
+}
+
 function waitForExit(child, ms) {
   return new Promise((resolve) => {
     const timer = setTimeout(resolve, ms);

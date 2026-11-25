@@ -7,6 +7,7 @@ import {
 } from './audit.js';
 import { agentMdText, mcpConfig } from './agent-md.js';
 import { allowWarnings } from './allowlist.js';
+import { reapDoctorFolders } from './doctor-folder.js';
 import { InventoryError, loadInventory } from './inventory.js';
 import {
   auditLogPath, callSocketPath, ensureDir, initCommand, inventoryPath, logDir as logDirOf, projectOf, reviewSocketPath,
@@ -320,6 +321,78 @@ function shortFormSources(kind, target, secrets, skip) {
   }
 }
 
+// The socket paths of a selection, checked kind by kind in list order through prepare, then the review socket when a
+// selected target has a review, then the call socket when a brokered target is selected. Gives what each kind
+// prepared, by kind key and target name; the first path over its limit throws.
+export function prepareTargets(selection, env) {
+  const prepared = new Map();
+  for (const kind of KINDS) {
+    prepared.set(kind.key, kind.prepare === undefined ? new Map() : kind.prepare(selection[kind.key], { env }));
+  }
+  if (KINDS.some((kind) => selection[kind.key].some((t) => t.review))) reviewSocketPath(env);
+  if (KINDS.some((kind) => kind.brokered === true && selection[kind.key].length > 0)) callSocketPath(env);
+  return prepared;
+}
+
+// One opened target of a kind that has close, bounded by the kind's closeMs unless limits names the kind's closeLimit,
+// with the kind's onCloseTimeout past it.
+export function closeTarget(kind, o, env, limits) {
+  return bounded(
+    kind.close(o, { env }),
+    limits[kind.closeLimit] ?? kind.closeMs,
+    kind.onCloseTimeout === undefined ? undefined : () => kind.onCloseTimeout(o),
+  );
+}
+
+// Opens one selected target as start opens it, and prints start's lines for it through lifecycle, which gets one
+// entry at a time: the warnings of its rules, OPENING, then SKIPPED for a port another file names or for a secret that
+// cannot be read, else open. open(call, secrets) gets the call of the kind's open with the context and the target's
+// secrets, and the secrets themselves; it gives the result of open, or { late } when it closed a target that opened
+// during a stop. An opened target goes to onOpened with its secrets, then UP or the WARN of open, the notes and the
+// short secrets follow; a failed open is SKIPPED with its error. Gives { opened, secrets }, { skipped } with the text
+// of the SKIPPED line, or { late }.
+export async function openTarget(kind, t, {
+  held, ports, context, lifecycle, open, onOpened,
+}) {
+  const line = (event, message) => lifecycle({
+    event, kind: kind.label, target: t.name, message,
+  });
+  // A local target with a programs list runs commands without a rule, so an empty allow list refuses nothing there.
+  if (Array.isArray(t.allow) && t.allow.length === 0 && t.programs === undefined) line('target_warn', EMPTY_ALLOW);
+  for (const warning of kind.ruleWarnings === undefined ? allowWarnings(t.allow) : kind.ruleWarnings(t)) {
+    line('target_warn', warning);
+  }
+  line('target_opening', kind.openingMessage(t));
+  const blocked = portProblem(kind, t, ports);
+  if (blocked !== null) {
+    line('target_skipped', blocked);
+    return { skipped: blocked };
+  }
+  const secrets = readSecrets(kind, t, held);
+  if (secrets.error !== undefined) {
+    line('target_skipped', secrets.error);
+    return { skipped: secrets.error };
+  }
+  // The result of open is always awaited.
+  const r = await open(() => kind.open(t, { ...context, secrets: secrets.secrets }), secrets.secrets);
+  if (r.late) return { late: true };
+  if (!r.ok) {
+    line('target_skipped', r.error);
+    return { skipped: r.error };
+  }
+  const opened = { kind: kind.key, target: t, ...r.extras };
+  onOpened(opened, secrets.secrets);
+  if (r.warn === undefined) {
+    lifecycle({ event: 'target_up', kind: kind.label, target: t.name });
+  } else {
+    line('target_warn', r.warn);
+  }
+  for (const note of r.notes ?? []) line('target_warn', note);
+  for (const source of secrets.short) line('target_warn', `${source} ${SHORT_SECRET_WHY}`);
+  for (const source of secrets.shortForms) line('target_warn', `${source} ${SHORT_FORM_WHY}`);
+  return { opened, secrets: secrets.secrets };
+}
+
 // The state folder of this run, mode 0700. For a project it is root/p/NAME, and the root and root/p are made private
 // too, whoever made them first: ensureDir sets the mode of the last folder only.
 function ensureStateDir(env, project) {
@@ -446,11 +519,7 @@ export async function start(options, startEnv = process.env, host = {}) {
   };
 
   // One opened target of a kind that has close, bounded by the kind's closeMs unless host.limits names the kind's closeLimit.
-  const closeOne = (kind, o) => bounded(
-    kind.close(o, { env }),
-    limits[kind.closeLimit] ?? kind.closeMs,
-    kind.onCloseTimeout === undefined ? undefined : () => kind.onCloseTimeout(o),
-  );
+  const closeOne = (kind, o) => closeTarget(kind, o, env, limits);
 
   const cleanup = () => {
     if (cleanupPromise) return cleanupPromise;
@@ -610,6 +679,8 @@ export async function start(options, startEnv = process.env, host = {}) {
     }
     owns = true;
     clearSession(sessionDir);
+    // What a killed ksproxy doctor left in the root state folder goes first, with the lines of the kinds, as below.
+    for (const line of await reapDoctorFolders(env, proc.pid)) say(line);
     // What a killed run left is cleaned in reverse list order: the cluster proxies are stopped before the sockets are closed.
     for (const kind of [...KINDS].reverse()) {
       if (kind.reapStale === undefined) continue;
@@ -645,13 +716,9 @@ export async function start(options, startEnv = process.env, host = {}) {
     rotateAudit(auditFile, limits.logBytes);
 
     // Socket paths are checked kind by kind in list order, then the review socket; the first error stops.
-    const prepared = new Map();
+    let prepared;
     try {
-      for (const kind of KINDS) {
-        prepared.set(kind.key, kind.prepare === undefined ? new Map() : kind.prepare(selection[kind.key], { env }));
-      }
-      if (KINDS.some((kind) => selection[kind.key].some((t) => t.review))) reviewSocketPath(env);
-      if (KINDS.some((kind) => kind.brokered === true && selection[kind.key].length > 0)) callSocketPath(env);
+      prepared = prepareTargets(selection, env);
     } catch (err) {
       say(err.message);
       return 1;
@@ -661,72 +728,24 @@ export async function start(options, startEnv = process.env, host = {}) {
       for (const kind of KINDS) {
         for (const t of selection[kind.key]) {
           if (stopping) break;
-          if (Array.isArray(t.allow) && t.allow.length === 0) {
-            lifecycle({
-              event: 'target_warn', kind: kind.label, target: t.name, message: EMPTY_ALLOW,
-            });
-          }
-          for (const warning of kind.ruleWarnings === undefined ? allowWarnings(t.allow) : kind.ruleWarnings(t)) {
-            lifecycle({
-              event: 'target_warn', kind: kind.label, target: t.name, message: warning,
-            });
-          }
-          lifecycle({
-            event: 'target_opening', kind: kind.label, target: t.name, message: kind.openingMessage(t),
+          // A kind with close is closed again when a stop arrived while it opened.
+          const result = await openTarget(kind, t, {
+            held,
+            ports,
+            context: {
+              env, sessionDir, secretFiles, secretFilesProblem, prepared: prepared.get(kind.key).get(t.name),
+            },
+            lifecycle,
+            open: (call) => openGuarded(
+              call,
+              kind.close === undefined ? undefined : (r) => closeOne(kind, { kind: kind.key, target: t, ...r.extras }),
+            ),
+            onOpened: (o, secrets) => {
+              opened.push(o);
+              secretsOf.set(`${kind.key}:${t.name}`, secrets);
+            },
           });
-          const blocked = portProblem(kind, t, ports);
-          if (blocked !== null) {
-            lifecycle({
-              event: 'target_skipped', kind: kind.label, target: t.name, message: blocked,
-            });
-            continue;
-          }
-          const secrets = readSecrets(kind, t, held);
-          if (secrets.error !== undefined) {
-            lifecycle({
-              event: 'target_skipped', kind: kind.label, target: t.name, message: secrets.error,
-            });
-            continue;
-          }
-          const ctx = {
-            env, sessionDir, secretFiles, secretFilesProblem, prepared: prepared.get(kind.key).get(t.name), secrets: secrets.secrets,
-          };
-          // The result of open is always awaited. A kind with close is closed again when a stop arrived meanwhile.
-          const r = await openGuarded(
-            () => kind.open(t, ctx),
-            kind.close === undefined ? undefined : (result) => closeOne(kind, { kind: kind.key, target: t, ...result.extras }),
-          );
-          if (r.late) break;
-          if (r.ok) {
-            opened.push({ kind: kind.key, target: t, ...r.extras });
-            secretsOf.set(`${kind.key}:${t.name}`, secrets.secrets);
-            if (r.warn === undefined) {
-              lifecycle({ event: 'target_up', kind: kind.label, target: t.name });
-            } else {
-              lifecycle({
-                event: 'target_warn', kind: kind.label, target: t.name, message: r.warn,
-              });
-            }
-            for (const note of r.notes ?? []) {
-              lifecycle({
-                event: 'target_warn', kind: kind.label, target: t.name, message: note,
-              });
-            }
-            for (const source of secrets.short) {
-              lifecycle({
-                event: 'target_warn', kind: kind.label, target: t.name, message: `${source} ${SHORT_SECRET_WHY}`,
-              });
-            }
-            for (const source of secrets.shortForms) {
-              lifecycle({
-                event: 'target_warn', kind: kind.label, target: t.name, message: `${source} ${SHORT_FORM_WHY}`,
-              });
-            }
-          } else {
-            lifecycle({
-              event: 'target_skipped', kind: kind.label, target: t.name, message: r.error,
-            });
-          }
+          if (result.late) break;
         }
       }
       // Only the secrets of the opened targets are kept.

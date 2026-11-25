@@ -12,6 +12,7 @@ Commands:
   start ... --project a,b                   run several projects in one start
   start ... --listen HOST:PORT [--new-token] [--tls-cert FILE --tls-key FILE]
                                             serve its projects over HTTP on the local network
+  doctor ... [NAME...]                      check each target start ... would open, then close it
   status [--project NAME]                   show every live session and each target's state
   log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]
                                             show the last N log entries (default 50)
@@ -45,6 +46,7 @@ Commands:
   start ... --project a,b                   run several projects in one start
   start ... --listen HOST:PORT [--new-token] [--tls-cert FILE --tls-key FILE]
                                             serve its projects over HTTP on the local network
+  doctor ... [NAME...]                      check each target start ... would open, then close it
   status [--project NAME]                   show every live session and each target's state
   log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]
                                             show the last N log entries (default 50)
@@ -77,6 +79,7 @@ Commands:
   start ... --project a,b                   run several projects in one start
   start ... --listen HOST:PORT [--new-token] [--tls-cert FILE --tls-key FILE]
                                             serve its projects over HTTP on the local network
+  doctor ... [NAME...]                      check each target start ... would open, then close it
   status [--project NAME]                   show every live session and each target's state
   log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]
                                             show the last N log entries (default 50)
@@ -109,6 +112,7 @@ Commands:
   start ... --project a,b                   run several projects in one start
   start ... --listen HOST:PORT [--new-token] [--tls-cert FILE --tls-key FILE]
                                             serve its projects over HTTP on the local network
+  doctor ... [NAME...]                      check each target start ... would open, then close it
   status [--project NAME]                   show every live session and each target's state
   log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]
                                             show the last N log entries (default 50)
@@ -141,6 +145,7 @@ Commands:
   start ... --project a,b                   run several projects in one start
   start ... --listen HOST:PORT [--new-token] [--tls-cert FILE --tls-key FILE]
                                             serve its projects over HTTP on the local network
+  doctor ... [NAME...]                      check each target start ... would open, then close it
   status [--project NAME]                   show every live session and each target's state
   log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]
                                             show the last N log entries (default 50)
@@ -173,6 +178,7 @@ Commands:
   start ... --project a,b                   run several projects in one start
   start ... --listen HOST:PORT [--new-token] [--tls-cert FILE --tls-key FILE]
                                             serve its projects over HTTP on the local network
+  doctor ... [NAME...]                      check each target start ... would open, then close it
   status [--project NAME]                   show every live session and each target's state
   log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]
                                             show the last N log entries (default 50)
@@ -205,6 +211,7 @@ Commands:
   start ... --project a,b                   run several projects in one start
   start ... --listen HOST:PORT [--new-token] [--tls-cert FILE --tls-key FILE]
                                             serve its projects over HTTP on the local network
+  doctor ... [NAME...]                      check each target start ... would open, then close it
   status [--project NAME]                   show every live session and each target's state
   log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]
                                             show the last N log entries (default 50)
@@ -424,6 +431,7 @@ Commands:
   start ... --project a,b                   run several projects in one start
   start ... --listen HOST:PORT [--new-token] [--tls-cert FILE --tls-key FILE]
                                             serve its projects over HTTP on the local network
+  doctor ... [NAME...]                      check each target start ... would open, then close it
   status [--project NAME]                   show every live session and each target's state
   log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]
                                             show the last N log entries (default 50)
@@ -456,6 +464,7 @@ Commands:
   start ... --project a,b                   run several projects in one start
   start ... --listen HOST:PORT [--new-token] [--tls-cert FILE --tls-key FILE]
                                             serve its projects over HTTP on the local network
+  doctor ... [NAME...]                      check each target start ... would open, then close it
   status [--project NAME]                   show every live session and each target's state
   log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]
                                             show the last N log entries (default 50)
@@ -488,6 +497,7 @@ Commands:
   start ... --project a,b                   run several projects in one start
   start ... --listen HOST:PORT [--new-token] [--tls-cert FILE --tls-key FILE]
                                             serve its projects over HTTP on the local network
+  doctor ... [NAME...]                      check each target start ... would open, then close it
   status [--project NAME]                   show every live session and each target's state
   log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]
                                             show the last N log entries (default 50)

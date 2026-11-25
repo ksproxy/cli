@@ -200,3 +200,14 @@ test('the lookups return the kind for each of its names and undefined for an unk
   assert.equal(kindByFlag('nope'), undefined);
   assert.equal(kindByTool('nope'), undefined);
 });
+
+test('the contract check takes an optional doctor hook, and holds it to a function', () => {
+  const [ssh, kubernetes] = KINDS;
+  const withHook = (doctor) => {
+    const kind = { ...ssh, doctor };
+    checkKind(kind, [kind, kubernetes]);
+  };
+  assert.doesNotThrow(() => withHook(undefined));
+  assert.doesNotThrow(() => withHook(async () => ({ ok: true, detail: 'connected' })));
+  assert.throws(() => withHook('x'), /ssh: doctor/);
+});

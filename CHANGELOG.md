@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-25
+
+### Added
+
+- Local targets: a new `programs` list, with a new `paths` list (folders, files and patterns with `*`, `**` and `.`), lets the agent run the programs you name, with any arguments, inside those paths. The program word must be exactly one of the names, never a path. Every path a command names is checked, a best-effort list of options that run code or reach outside the paths is always refused (such as `find -exec`, `tar -P`, `tar -C`, `tar --to-command`, `cpio --insecure`, `sort --compress-program`, `split --filter`, `install --strip-program`, an archive name with `:`, `unzip -:` and sed scripts with `e`, `w` or `r`), and the rules in `allow` are tried first. `review` may be used with it, and every path of a reviewed command must also be inside `paths`. `ksproxy start` names the programs and paths of such a target, and `ksproxy start` and `ksproxy check` warn about a listed program that can act as you, such as an interpreter, `ps`, `gh` or an archive program such as `tar`, whose unpacked links can point anywhere. `paths` may also be given with listed rules only, to limit their wildcard arguments. See "Listed programs inside chosen paths" in the README.
+- `ksproxy doctor` takes the arguments of `ksproxy start` and reports, in one run, every pre-check of `start` and every target, each with one fixed read-only check of its kind. It changes nothing on a target and writes neither the session nor the log. Exit code 0 when everything is OK, 1 otherwise, 2 for a usage error.
+
 ## [0.5.0] - 2026-11-24
 
 ### Added
@@ -94,6 +101,7 @@ First release.
 - `ksproxy init`, `ksproxy status` and `ksproxy check <ssh|kube|local> <name> <command...>` to create an inventory, inspect the session, and test a rule without opening anything.
 - No npm dependencies. Requires Node.js 24 or later, on macOS or Linux.
 
+[0.6.0]: https://github.com/ksproxy/cli/releases/tag/v0.6.0
 [0.5.0]: https://github.com/ksproxy/cli/releases/tag/v0.5.0
 [0.4.0]: https://github.com/ksproxy/cli/releases/tag/v0.4.0
 [0.3.0]: https://github.com/ksproxy/cli/releases/tag/v0.3.0

@@ -249,6 +249,89 @@ export function valueProblem(value, target, env = process.env, scope = localScop
   return null;
 }
 
+const SEPARATORS = /[=:@,+%]/;
+
+function exists(p) {
+  try {
+    fs.lstatSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// True when a word is a path: it contains "/", or it, or a part of it after = : @ , + or %, starts with "." or names
+// an existing entry of the folder; the whole word is tested too (prod+creds). Other words, such as a search word, are
+// free.
+export function isPath(word, folder) {
+  if (word.includes('/')) return true;
+  const named = (part) => part.startsWith('.') || (part !== '' && exists(path.join(folder, part)));
+  return [...new Set([word, ...word.split(SEPARATORS)])].some(named);
+}
+
+// True when a name matches one part of a paths entry, where * stands for any characters, none included.
+function partMatches(pattern, name) {
+  let p = 0;
+  let n = 0;
+  let star = -1;
+  let mark = 0;
+  while (n < name.length) {
+    if (pattern[p] === '*') {
+      star = p;
+      mark = n;
+      p += 1;
+    } else if (pattern[p] === name[n]) {
+      p += 1;
+      n += 1;
+    } else if (star !== -1) {
+      p = star + 1;
+      mark += 1;
+      n = mark;
+    } else {
+      return false;
+    }
+  }
+  while (pattern[p] === '*') p += 1;
+  return p === pattern.length;
+}
+
+// True when a paths entry matches the parts of a path, or the parts of one of the folders above it: docs covers
+// docs/a.md, docs/* covers what lies below each entry of docs, ** stands for any number of parts and . for the folder.
+// A star matches names that start with a dot too.
+export function covers(entry, parts, insensitive) {
+  const fold = (text) => (insensitive ? text.toLowerCase() : text);
+  let reach = [0];
+  for (const segment of entry.split('/').filter((s) => s !== '' && s !== '.')) {
+    const next = new Set();
+    for (const j of reach) {
+      if (segment === '**') {
+        for (let k = j; k <= parts.length; k += 1) next.add(k);
+      } else if (j < parts.length && partMatches(fold(segment), fold(parts[j]))) {
+        next.add(j + 1);
+      }
+    }
+    reach = [...next];
+  }
+  return reach.length > 0;
+}
+
+// The paths list of a session target, its strings only, or null when it has none.
+export function pathsOf(target) {
+  return Array.isArray(target.paths) ? target.paths.filter((entry) => typeof entry === 'string') : null;
+}
+
+// null when a value that passed valueProblem lies inside paths, judged by its real path relative to the real folder.
+export function pathsProblem(value, paths, scope) {
+  const real = realish(path.join(scope.cwdReal, value), undefined, scope.platform);
+  const parts = real !== null && path.relative(scope.cwdReal, real).split(path.sep).filter(Boolean);
+  const insensitive = isCaseInsensitive(scope.platform);
+  if (parts !== false && paths.some((entry) => covers(entry, parts, insensitive))) return null;
+  return {
+    reason: `the argument ${value} is outside the paths this target allows: ${paths.join(', ')}`,
+    short: 'outside paths',
+  };
+}
+
 // null when every wildcard-matched argument is acceptable, else { reason, short }.
 export function wildcardProblem(detail, target, env = process.env, scope = localScope(target, env)) {
   for (const arg of [...detail.star, ...detail.rest]) {
@@ -298,9 +381,11 @@ function gluedValues(flag, scope, target) {
   return out;
 }
 
-// null when an unlisted command may be sent to the reviewer, else { reason, short }.
+// null when an unlisted command may be sent to the reviewer, else { reason, short }. With paths, every value that is a
+// path must also lie inside them.
 export function reviewProblem(tokens, target, env = process.env, scope = localScope(target, env)) {
   if (!isFolder(target.cwd)) return { reason: "this target's folder does not exist", short: 'folder missing' };
+  const paths = pathsOf(target);
   if (!Array.isArray(target.programs) || !target.programs.includes(tokens[0])) {
     return {
       reason: `the program ${tokens[0]} is not one the reviewer may approve for this target`,
@@ -319,7 +404,8 @@ export function reviewProblem(tokens, target, env = process.env, scope = localSc
     }
     for (const value of values) {
       if (!scope.checked.has(value)) scope.checked.set(value, valueProblem(value, target, env, scope));
-      const problem = scope.checked.get(value);
+      const problem = scope.checked.get(value)
+        ?? (paths !== null && isPath(value, scope.cwdReal) ? pathsProblem(value, paths, scope) : null);
       if (problem) return problem;
     }
   }

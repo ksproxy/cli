@@ -3,6 +3,7 @@ import {
   InventoryError, checkAllow, checkKeys, checkReview, checkSecretVariable,
 } from '../../checks.js';
 import { REVIEWED } from '../shared.js';
+import { DOCTOR_MAX_BYTES, hiddenOf, httpVerdict } from './doctor.js';
 import httpKind, { QUERY_NOTE } from '../http/index.js';
 import {
   authHeader, authProblem, authSecrets, encodedForms, matchRequestRule, readRequest, requestWords, reviewWords, send,
@@ -67,6 +68,7 @@ function checkRules(allow, where, example, pathOptions) {
 
 // spec: key, flag, label, word, noun, countNoun, apiKey (whether apiKeyEnv is a field), sample, example (a rule),
 // toolName, toolDescription, toolBullet, title, refusedNote (one sentence for the notes), fixedRefusal(request),
+// doctorPath and doctorDescribe (the fixed GET of the doctor check and the detail of its JSON answer, or null),
 // vhostSegment (whether a path segment may be exactly %2F, for RabbitMQ's default virtual host) with vhostNote.
 export function httpServiceKind(spec) {
   const keys = ['name', 'url', 'userEnv', 'passwordEnv', ...(spec.apiKey ? ['apiKeyEnv'] : []), 'description', 'allow', 'review'];
@@ -153,6 +155,20 @@ export function httpServiceKind(spec) {
     // The base64 credential of basic auth, which the core hides with the secret values.
     hiddenForms(target, secrets) {
       return encodedForms(engineAuth(target.auth), secrets);
+    },
+    // The doctor check: the one fixed GET of the spec through the same send, never a rule of the agent.
+    async doctor(opened, { secrets, timeoutMs, signal }) {
+      const { target } = opened;
+      const request = readRequest({ method: 'GET', path: spec.doctorPath }, pathOptions);
+      const result = await send({
+        baseUrl: target.baseUrl, headers: headersOf(target.auth, secrets), ...request, timeoutMs, maxBytes: DOCTOR_MAX_BYTES, signal,
+      });
+      return httpVerdict(result, {
+        request: `GET ${spec.doctorPath}`,
+        describe: spec.doctorDescribe,
+        hidden: hiddenOf(secrets, encodedForms(engineAuth(target.auth), secrets)),
+        signal,
+      });
     },
     checkInput: httpKind.checkInput,
     toolBullet: spec.toolBullet,

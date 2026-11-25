@@ -4,6 +4,7 @@ import {
 import {
   InventoryError, checkAllow, checkKeys, checkReview, checkSecretVariable, isObject,
 } from '../../checks.js';
+import { hostAnswers } from './reach.js';
 import { clip } from '../../text.js';
 import { REVIEWED } from '../shared.js';
 import {
@@ -110,6 +111,10 @@ export default {
   open(target, { secrets }) {
     const problem = authProblem(target.auth, secrets);
     return problem === null ? { ok: true, extras: {} } : { ok: false, error: problem };
+  },
+  // The check of ksproxy doctor: the host answers on its port. No HTTP request is sent.
+  doctor(opened, { timeoutMs, signal }) {
+    return hostAnswers(new URL(opened.target.baseUrl), { timeoutMs, signal });
   },
   record(opened, { reviewed }) {
     const { target } = opened;

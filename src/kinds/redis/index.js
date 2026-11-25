@@ -4,6 +4,7 @@ import {
   InventoryError, checkAllow, checkInteger, checkKeys, checkReview, checkSecretVariable,
 } from '../../checks.js';
 import { REVIEWED } from '../shared.js';
+import { DOCTOR_MAX_BYTES, hiddenOf, respVerdict } from '../engines/doctor.js';
 import { escapeText, exchange } from '../engines/resp.js';
 import {
   fixedRefusal, matchCommandRule, normalizeWords, readCommand,
@@ -154,6 +155,23 @@ export default {
   // The user name and the password as a reply shows them inside a string, escaped; the core hides them with the values.
   hiddenForms(target, secrets) {
     return Object.values(secrets).map(escapeText);
+  },
+  // The doctor check: PING through the same exchange as a call, never a command of the agent.
+  async doctor(opened, { secrets, timeoutMs, signal }) {
+    const { target } = opened;
+    const result = await exchange({
+      host: target.host,
+      port: target.port,
+      tls: target.tls,
+      db: target.db,
+      user: target.userEnv === null ? undefined : secrets[target.userEnv],
+      password: target.passwordEnv === null ? undefined : secrets[target.passwordEnv],
+      words: ['PING'],
+      timeoutMs,
+      maxBytes: DOCTOR_MAX_BYTES,
+      signal,
+    });
+    return respVerdict(result, { hidden: hiddenOf(secrets, Object.values(secrets).map(escapeText)), signal });
   },
   toolBullet: '- `redis_command { target, command, timeout_seconds? }` - run one Redis command on a redis target.',
   agentSection(target) {

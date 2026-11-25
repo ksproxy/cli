@@ -7,6 +7,7 @@ import { clip } from '../../text.js';
 import { REVIEWED } from '../shared.js';
 import { resolveProgram } from '../command/index.js';
 import { runClient } from '../engines/command.js';
+import { DOCTOR_MAX_BYTES, clientVerdict, hiddenOf } from '../engines/doctor.js';
 import {
   FORBIDDEN_KEYS, FORBIDDEN_STAGES, PROTOCOL_KEYS, RESULT_LIMIT, WRITE_COMMANDS, boundCommand, judgeCommand, passwordParts, readCommand,
 } from './document.js';
@@ -93,6 +94,29 @@ async function performMongo(target, decision, {
 // The passwords inside the connection string, as written and decoded; the core hides them with the whole string.
 function hiddenForms(target, secrets) {
   return passwordParts(secrets[target.uriEnv]);
+}
+
+// The doctor check: the ping command through the same client and fixed script as a call, never a command of the agent.
+async function doctorMongo(opened, {
+  env, secrets, timeoutMs, signal,
+}) {
+  const { target } = opened;
+  const result = await runClient({
+    program: opened.program,
+    fixedArgs: CLIENT_ARGS,
+    env,
+    childEnv: { MGO_URI: secrets[target.uriEnv], MGO_DB: target.database, MGO_DOC: JSON.stringify({ ping: 1 }) },
+    homeInWorkFolder: true,
+    timeoutMs,
+    maxBytes: DOCTOR_MAX_BYTES,
+    signal,
+  });
+  return clientVerdict(result, {
+    name: 'mongosh',
+    describe: (text) => (JSON.parse(text).ok === 1 ? 'ping answered' : null),
+    hidden: hiddenOf(secrets, hiddenForms(target, secrets)),
+    signal,
+  });
 }
 
 function agentLines(target) {
@@ -186,6 +210,7 @@ export default {
   backMessage: 'the call service is back',
   decide: decideMongo,
   perform: performMongo,
+  doctor: doctorMongo,
   hiddenForms,
   // ksproxy check mongo NAME DOCUMENT: the words joined into one JSON document; text that is not JSON is passed on
   // as a string, which the reader refuses.

@@ -10,6 +10,7 @@ import { clip } from '../../text.js';
 import { REVIEWED } from '../shared.js';
 import { hasLookaround, matchCommandRule, resolveProgram } from '../command/index.js';
 import { runClient } from '../engines/command.js';
+import { DOCTOR_MAX_BYTES, clientVerdict, hiddenOf, shown } from '../engines/doctor.js';
 
 const KAFKA_KEYS = ['name', 'bootstrap', 'clientConfig', 'binDir', 'writes', 'description', 'allow', 'review'];
 const PROGRAMS = new Map([
@@ -259,6 +260,31 @@ export default {
     const fixedArgs = ['--bootstrap-server', target.bootstrap, ...(target.clientConfig === null ? [] : ['--command-config', target.clientConfig])];
     return runClient({
       program: target.programs[first], fixedArgs, words, env, timeoutMs, maxBytes, signal,
+    });
+  },
+  // The doctor check: kafka-topics --list through the same client and fixed arguments as a call; the detail counts the lines.
+  async doctor(opened, {
+    env, secrets, timeoutMs, signal,
+  }) {
+    const { target, programs } = opened;
+    if (programs.topics === undefined) return { ok: false, detail: shown('kafka-topics was not found', hiddenOf(secrets)) };
+    const result = await runClient({
+      program: programs.topics,
+      fixedArgs: ['--bootstrap-server', target.bootstrap, ...(target.clientConfig === null ? [] : ['--command-config', target.clientConfig])],
+      words: ['--list'],
+      env,
+      timeoutMs,
+      maxBytes: DOCTOR_MAX_BYTES,
+      signal,
+    });
+    return clientVerdict(result, {
+      name: 'kafka-topics',
+      describe: (text) => {
+        const count = text.split('\n').filter((line) => line.trim() !== '').length;
+        return `${count} ${count === 1 ? 'topic' : 'topics'}`;
+      },
+      hidden: hiddenOf(secrets),
+      signal,
     });
   },
   forCheck(target, { env }) {
