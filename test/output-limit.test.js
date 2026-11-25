@@ -111,7 +111,7 @@ test('outputKiB takes an integer from 256 to 4096 and gives 256 for anything els
 });
 
 test('every kind accepts maxOutputKiB the same way and keeps it on the target', () => {
-  assert.equal(realKinds.length, 12);
+  assert.equal(realKinds.length, 13);
   const raw = Object.fromEntries(realKinds.map((kind) => [kind.key, sample[kind.key].map((entry) => ({ ...entry, maxOutputKiB: 2048 }))]));
   const validated = validateInventory(raw);
   for (const kind of realKinds) {

@@ -1,6 +1,6 @@
 # Kinds of target
 
-A kind of target is one folder under `src/kinds/`. ksproxy has twelve: `ssh`, `kubernetes` and `local`, and nine brokered kinds that reach a service: the custom kinds `http` and `command`, and `elasticsearch`, `rabbitmq`, `redis`, `postgres`, `mysql`, `mongodb` and `kafka`. The core (the files in `src/`) walks the list of kinds and calls the same functions on each one. It does not branch on which kind it is talking to, with the exceptions listed under "What the core still names".
+A kind of target is one folder under `src/kinds/`. ksproxy has thirteen: `ssh`, `kubernetes` and `local`, and ten brokered kinds that reach a service: the custom kinds `http` and `command`, `elasticsearch`, `rabbitmq`, `redis`, `postgres`, `mysql`, `mongodb` and `kafka`, and `mcp`, which reaches an MCP server. The core (the files in `src/`) walks the list of kinds and calls the same functions on each one. It does not branch on which kind it is talking to, with the exceptions listed under "What the core still names".
 
 Kinds are files in this repository. Nothing loads a kind from the inventory, from an environment variable or from another package. To add a kind you add a folder and one line to `src/kinds/index.js`, and you build ksproxy again.
 
@@ -25,6 +25,7 @@ src/kinds/engines/command.js        the command engine: running one client progr
 src/kinds/engines/resp.js           the resp engine: the Redis protocol over TCP or TLS
 src/kinds/engines/sql.js            the SQL reader: one statement into words, the refusals of what it cannot judge
 src/kinds/engines/sql-service.js    what postgres and mysql share: the fields, the session, the decision, running the client
+src/kinds/engines/mcp-client.js     the MCP client: the protocol of both eras over a transport, and the stdio transport
 
 src/kinds/http/index.js             the custom http kind (brokered, on the http engine)
 src/kinds/command/index.js          the custom command kind (brokered, on the command engine)
@@ -38,24 +39,29 @@ src/kinds/mongodb/index.js          the mongodb kind (brokered, on the command e
 src/kinds/mongodb/document.js       the mongodb command document: the reader, the words and the fixed refusals
 src/kinds/mongodb/script.js         the one fixed script that mongosh runs
 src/kinds/kafka/index.js            the kafka kind (brokered, on the command engine)
+src/kinds/mcp/index.js              the mcp kind (brokered, no flag, on the MCP client engine)
+src/kinds/mcp/rules.js              its rules on tools and arguments, and the pinned arguments
+src/kinds/mcp/pin.js                the pinned-version check of a local server's command
+src/kinds/mcp/export.js             what the agent's tool list gets, and mcp-tools.json
+src/kinds/mcp/answer.js             the answer of one tools/call as the result of perform
 
 src/checks.js                       inventory checks that the kinds share
 ```
 
-An engine under `src/kinds/engines/` holds what several kinds share. It is not a kind and is not in the list; it imports only `src/checks.js`, `src/allowlist.js`, `src/text.js` and the like, never the core. There are six, listed under "The engines and the service kinds".
+An engine under `src/kinds/engines/` holds what several kinds share. It is not a kind and is not in the list; it imports only `src/checks.js`, `src/allowlist.js`, `src/text.js` and the like, never the core. There are seven, listed under "The engines and the service kinds".
 
 A kind is a plain object, the default export of `src/kinds/<name>/index.js`. There is no class and no registration call. The mechanics of a kind sit beside its object and are not part of the interface.
 
 ## The list and the order
 
-`src/kinds/index.js` exports `KINDS`, an array in a fixed order: `ssh`, `kubernetes`, `local`, `http`, `command`, `elasticsearch`, `rabbitmq`, `redis`, `postgres`, `mysql`, `mongodb`, `kafka`. A new kind is appended. The order is observable, so it is never sorted:
+`src/kinds/index.js` exports `KINDS`, an array in a fixed order: `ssh`, `kubernetes`, `local`, `http`, `command`, `elasticsearch`, `rabbitmq`, `redis`, `postgres`, `mysql`, `mongodb`, `kafka`, `mcp`. A new kind is appended. The order is observable, so it is never sorted:
 
 - targets are opened in list order, and the session file, `AGENT.md`, `tools/list` and the menu follow it;
 - the clean-up after a killed run goes in reverse list order, so the cluster proxies are stopped before the sockets are closed.
 
 The core reads `KINDS` when a function is called, never when a module is loaded, so nothing is cached from it. A test can push a kind onto the array in its own process.
 
-The lookups return the kind or `undefined`: `kindByKey(key)`, `kindByFlag(flag)` and `kindByTool(name)`. `secretFilesOf(inventory)` collects the `secretFiles` of every kind over every inventory entry. `start` and `ksproxy check` add to them the `secretFiles` of every other inventory file (`everySecretFile` in `src/projects.js`), so a local target of one project never reaches a file that another project's file names.
+The lookups return the kind or `undefined`: `kindByKey(key)`, `kindByFlag(flag)` (never a kind without a flag), `kindByTool(name)` and `kindByCliName(name)`, which finds a kind by `cliName(kind)`, the name that `ksproxy check` takes: the flag, or the key of a kind without a flag. `flaggedKinds()` gives the kinds that have a flag, in list order. `secretFilesOf(inventory)` collects the `secretFiles` of every kind over every inventory entry. `start` and `ksproxy check` add to them the `secretFiles` of every other inventory file (`everySecretFile` in `src/projects.js`), so a local target of one project never reaches a file that another project's file names.
 
 ## The interface
 
@@ -66,7 +72,7 @@ A field marked required must be there. A field marked optional may be left out; 
 | Field | Required | Type | Used for |
 |---|---|---|---|
 | `key` | yes | string | The inventory key, `kind` in the session file and in a review request, the key of the selection. Example: `kubernetes`. |
-| `flag` | yes | string | `--<flag> a,b` on `ksproxy start`, `ksproxy check <flag> ...`, the key in the start options, `unknown <flag> target` in a start error. Example: `kube`. |
+| `flag` | no | string | `--<flag> a,b` on `ksproxy start` and `ksproxy doctor`, `ksproxy check <flag> ...`, the key in the start options, `unknown <flag> target` in a start error. Example: `kube`. A kind may leave it out; see "A kind without a flag". |
 | `label` | yes | string | The kind column of a log line and `kind` in audit entries. The column is padded to 4 characters. Example: `kube`, `loc`. |
 | `word` | yes | string | `REFUSED (<word> <name>): ...`. |
 | `noun` | yes | string | `unknown <noun> "x". Open targets: ...`. Example: `cluster`. |
@@ -74,14 +80,26 @@ A field marked required must be there. A field marked optional may be left out; 
 | `tool` | yes | object | The MCP tool of the kind, below. |
 | `toolBullet` | yes | string | The line for the tool in the Tools list of `AGENT.md`. It must contain `tool.name`. |
 
-The six names `key`, `flag`, `label`, `word`, `noun` and `countNoun` are non-empty strings, and each is unique across kinds. The rules for the names are these:
+The names `key`, `label`, `word`, `noun` and `countNoun`, and `flag` when the kind has one, are non-empty strings, and each is unique across kinds. The rules for the names are these:
 
 - `key`, `flag` and `label` match `/^[a-z][a-z0-9-]*$/`.
 - `label` is at most 4 characters, because the log column is 4 wide.
 - `flag` is not `all`, `verbose`, `help` or `version`.
+- The name on the command line, `cliName(kind)`, is unique across kinds: the key of a kind without a flag is never the flag of another kind, because `ksproxy check` takes either.
 - No value that one kind uses as a `key`, a `label` or a tool name equals a `key`, a `label` or a tool name of another kind. The log finds the kind of an entry by those three, so `loc` could not be another kind's key.
 
 `test/kind-contract.js` checks all of this.
+
+#### A kind without a flag
+
+A kind may have no `flag`, so that adding it adds no option to `ksproxy start` (the owner's rule: no new flag). The core then works by the kind key wherever it chose or named kinds by flag:
+
+- `ksproxy start` and `ksproxy doctor` read the kind flags of `flaggedKinds()` only, so no argument (`--undefined`, `--<key>`) names such a kind, and the check that kind flags need a single project never names it. Its targets are chosen with `--all` or the picker, which lists every kind that has targets, by key. `ksproxy doctor` also finds them by their target names.
+- The options of `start` hold the names of the kind flags under each flag, as before. `startMany` hands the picks of each project, and `doctor` its target names, to `chooseTargets` by kind key in `named`; `namesByKind(options)` of `src/start.js` reads either form by kind key.
+- The usage shows no flag for it on the `start` lines; the `check` lines name it by its key. The error of `ksproxy start` without a terminal names no flag for it.
+- `ksproxy check <key> NAME ...` finds its target: `kindByCliName` takes the flag of a kind, or the key of a kind without one.
+
+`test/fixtures/kind-live.js` (the kind `live`, and `liveKind(key)` for more such kinds) is a brokered kind without a flag; `test/kind-live.test.js` and `test/kind-live-projects.test.js` take it through the command line, `start` with one and with several projects, the picker, `check` and `doctor`.
 
 `tool` has these fields:
 
@@ -95,6 +113,7 @@ The six names `key`, `flag`, `label`, `word`, `noun` and `countNoun` are non-emp
 | `auditedDetail(call)` | function, only with `detailShape` | What the audit entry keeps of an object call, under `detailKey`. For `http_request`: `{ method, path, query, body }`, `query` the encoded query clipped to 1024 characters and only when one was given, `body` a boolean; never the body or a header. |
 | `detailText(recorded)` | function, only with `detailShape` | The text of the call in a log line, from what `auditedDetail` recorded. It must accept any value, since the log can be edited. |
 | `definition` | object | The entry in `tools/list`. `definition.name` equals `name`. `timeout_seconds` is handled by the core. |
+| `listed` | `false` or left out | `false`: the tool is never in `tools/list`, whatever the inventory holds, though `callTool` still answers it. Only `mcp_call` sets it: the agent sees the tools of an MCP server under their own names. |
 
 ### Inventory and selection
 
@@ -116,7 +135,7 @@ The core runs `checkCommon` first (the name, a duplicate name, the description),
 | `reapStale(ctx)` | no | `{ socketDir, env }` | A promise of an array of lines to print after the kind cleaned up what a killed run left. |
 | `prepare(targets, ctx)` | no | the selected targets of this kind, `{ env }` | A `Map` from target name to data that `open` gets as `ctx.prepared`. Throws an `Error` when a path is too long; the first error in list order stops the start. |
 | `openingMessage(target)` | yes | an inventory target | The text of the `OPENING` line. |
-| `open(target, ctx)` | yes | an inventory target, `{ env, sessionDir, secretFiles, secretFilesProblem, prepared, secrets }` | `{ ok: true, extras, warn?, notes? }` or `{ ok: false, error }`, directly or as a promise. The core always waits for the result. `secrets` is `{}` for a kind without `secrets`; see "Brokered kinds". `secretFilesProblem` is `null`, or the text `cannot read <file> to protect the files it names` when another inventory file could not be read: a kind that uses `secretFiles` must then refuse with that text, as the local kind does. |
+| `open(target, ctx)` | yes | an inventory target, `{ env, sessionDir, secretFiles, secretFilesProblem, prepared, secrets, signal, say }` | `{ ok: true, extras, warn?, notes? }` or `{ ok: false, error }`, directly or as a promise. The core always waits for the result. `secrets` is `{}` for a kind without `secrets`; see "Brokered kinds". `secretFilesProblem` is `null`, or the text `cannot read <file> to protect the files it names` when another inventory file could not be read: a kind that uses `secretFiles` must then refuse with that text, as the local kind does. `signal` and `say` are described under "ctx.signal and ctx.say". |
 | `close(opened, ctx)` | no | the opened entry, `{ env }` | A promise. |
 | `closeLimit` | with `close` | string | The name under which a test may override the time limit for `close` through `host.limits` of `start`. Today `sshCloseMs` and `kubeCloseMs`. |
 | `closeMs` | with `close` | positive integer | The time limit for `close` in milliseconds: 15000 for ssh and 20000 for kubernetes. The core uses `limits[closeLimit] ?? closeMs`. A kind without `close` has none of `closeLimit`, `closeMs` and `onCloseTimeout`. |
@@ -124,16 +143,25 @@ The core runs `checkCommon` first (the name, a duplicate name, the description),
 | `record(opened, ctx)` | yes | the opened entry, `{ env, selected, secretFiles, reviewed }` | The target as written to `session.json`. |
 | `sessionFiles(opened, ctx)` | no | the opened entries of this kind (possibly none), `{ env }` | An array of `{ name, text }`, written to the session folder even when the array is empty. |
 | `state(sessionTarget, env)` | yes, and none for a brokered kind | a target of `session.json` | A promise of `'up'`, or any other string. Used by `list_targets`, `ksproxy status` and the health check. |
-| `downMessage(sessionTarget, state)` | yes | the target, the state that is not `up` | The text of the `DOWN` line. |
+| `downMessage(sessionTarget, state, opened)` | yes | the target, the state that is not `up`, the opened entry | The text of the `DOWN` line. |
 | `backMessage` | yes | string | The text of the `UP` line when the target is back. |
 | `doctor(opened, ctx)` | no | the opened entry, `{ env, secrets, timeoutMs, signal }` | A promise of `{ ok, detail }`: `ok` a boolean, `detail` a short text. The one fixed, read-only check of `ksproxy doctor` for an opened target; see "The doctor hook" below. |
 
 Notes on these functions:
 
-- `extras` of an `open` result are copied into the opened entry, which is `{ kind: <key>, target, ...extras }`. `close`, `record` and `sessionFiles` receive it. `warn` replaces the `UP` line with a `WARN` line, and each of `notes` adds a `WARN` line after it.
+- `extras` of an `open` result are copied into the opened entry, which is `{ kind: <key>, target, ...extras }`, with `target` the inventory target. `close`, `record`, `sessionFiles`, `downMessage` and the `doctor` hook receive it, and so do `perform` and `probe` of a brokered kind, as `ctx.opened`. It lives in the memory of `start` only: the core never writes it, or anything of the extras, to `session.json`, `AGENT.md`, the audit log or any other file; only what `record` and `sessionFiles` return is written. So `extras` may hold a live object, such as a connection or a child process, and each target reaches its own: two projects in one `start`, each with a target of the same name, keep two opened entries. `warn` replaces the `UP` line with a `WARN` line, and each of `notes` adds a `WARN` line after it.
 - `selected` in the `record` context is every selected target of this kind, including the ones that were skipped. `reviewed` is `true` when the review service runs for this target; write `review: true` into the recorded target then.
 - A recorded target must have `kind`, `name`, `description`, `allow` and `state`, because the core reads them for `list_targets`, `AGENT.md` and the health check.
 - The kind that has `close` is closed again when a stop arrives while it opens. A kind without `close` has nothing to hold open, and a stop cannot leave anything behind.
+
+#### ctx.signal and ctx.say
+
+`open` gets two more fields in its context, in `start` and in `ksproxy doctor` alike:
+
+- `signal` is an `AbortSignal` of this target alone. It fires when a stop is asked while the target opens: Ctrl-C, `SIGTERM` or `SIGHUP`, a closed output, a fatal error, or another project of the same `start` that stops. An `open` that waits (for a server to start, for a login) listens to it and returns at once, usually `{ ok: false, error }`, which gives a `SKIPPED` line. It also fires at a later stop, so a kind may keep it.
+- `say(text)` writes one line about this target. In `start` it goes to the terminal's stderr (with the `[NAME] ` prefix of a project when `start` runs several), with the time, kind and target columns of the other lines of the target, empty status and duration columns, then the text (`formatSaidLine` of `src/audit.js`). The text is cleaned: a control character, such as a newline or an escape, is written as `\uXXXX`, so it stays one line. It is not clipped to the width of the terminal, and it is never written to the audit log, so it suits a text the owner must see whole but the log must not keep (the last lines a server wrote to its stderr, or a URL to open). `start` does not hide secrets in it: the kind hides what it must before it calls `say`. The kind may keep `say` and call it later, for example when its server stops; a line written after the output closed is dropped. In `ksproxy doctor` the line goes to stdout among the other lines of the project, with every value that doctor hides in its lines replaced by `[hidden]`.
+
+A kind that does not need them ignores them.
 
 The core keeps what is the same for every kind: the stop checks, the warning for an empty allow list, the order of the log lines (`target_warn`, `target_opening`, then `target_up`, `target_warn` or `target_skipped`, then the notes, then a `target_warn` for each secret shorter than 8 characters), the review service, `AGENT.md`, `mcp.json` and `session.json` (written last), the follower and the health loop.
 
@@ -141,7 +169,7 @@ The core also keeps the ports apart. Before any target opens, `start` reads ever
 
 #### The doctor hook
 
-`ksproxy doctor` (`src/doctor.js`) opens each target that `start` would open with the same arguments, through the same code (`openTarget` of `src/start.js`), checks it, and closes it again, one target after another. The check is `await kind.doctor(opened, ctx)`, called only after `open` succeeded and before the target is closed:
+`ksproxy doctor` (`src/doctor.js`) opens each target that `start` would open with the same arguments, through the same code (`openTarget` of `src/start.js`, with `ctx.signal` and `ctx.say`), checks it, and closes it again, one target after another. The check is `await kind.doctor(opened, ctx)`, called only after `open` succeeded and before the target is closed:
 
 - `opened` is the entry `start` keeps for an opened target: `{ kind: <key>, target, ...extras }`, with the `extras` that `open` returned.
 - `ctx` is `{ env, secrets, timeoutMs, signal }`. `env` is the environment `start` would give the kind, without any credential variable; its state folder is a temporary one (the sockets of the target are there), while the root state and configuration folders are the real ones. `secrets` holds the target's secret values as `open` got them. `timeoutMs` is 30000. `signal` is an `AbortSignal` that fires at Ctrl-C or when the time limit passes.
@@ -182,6 +210,7 @@ The core keeps argument checks, finding the target, the review round trip, the t
 | Field | Required | Arguments | Returns |
 |---|---|---|---|
 | `agentSection(sessionTarget)` | yes | a target of the session | The section of `AGENT.md` for that target. Add the `REVIEWED` line from `src/kinds/shared.js` when `review` is true. |
+| `listFields(sessionTarget)` | no | a target of the session | An object whose fields are added to that target's entry in `list_targets`. Only `mcp` has it: `tools`, the names of its exported tools as `TARGET__TOOL`. |
 
 ## Brokered kinds
 
@@ -199,14 +228,14 @@ agent -> ksproxy mcp -> call-sock -> ksproxy start -> perform()
 | Field | Required | Arguments | Returns |
 |---|---|---|---|
 | `brokered` | yes, for this sort of kind | `true` | Any other value is a contract error. A brokered kind has no `command` and no `state`; every other kind has both and has neither `perform` nor `probe`. |
-| `perform(target, decision, ctx)` | yes | the target as `record` gave it, held in the memory of `start`; an allowed decision (`rule: 'review'` after a reviewer approved it); `ctx = { env, secrets, timeoutMs, maxBytes, signal, input }` | A promise of `{ exitCode, stdout, stderr, timedOut?, truncated? }`. `exitCode` is an integer or `null`, `stdout` and `stderr` are strings. |
+| `perform(target, decision, ctx)` | yes | the target as `record` gave it, held in the memory of `start`; an allowed decision (`rule: 'review'` after a reviewer approved it); `ctx = { env, secrets, timeoutMs, maxBytes, signal, input, opened }` | A promise of `{ exitCode, stdout, stderr, timedOut?, truncated? }`. `exitCode` is an integer or `null`, `stdout` and `stderr` are strings. |
 | `secrets(target)` | no | an inventory target | `{ env: string[], files: string[], users?: string[] }`: the names of the environment variables and the paths of the files that hold the target's credentials. Both arrays are always present. `users`, when given, names the variables of `env` that hold only a user name (redis `userEnv`, the user of basic auth): the short-secret warning leaves them out. Any kind may have it; today only a brokered kind needs it. |
-| `probe(target, ctx)` | no | the recorded target, `ctx = { env, secrets }` | A promise of `'up'` or any other string, for the health loop of `start`. |
+| `probe(target, ctx)` | no | the recorded target, `ctx = { env, secrets, opened }` | A promise of `'up'` or any other string, for the health loop of `start`. |
 | `hiddenForms(target, secrets)` | no | the recorded target and its secrets, as `perform` gets them | An array of strings: the forms of the secrets that the kind sends or that the service shows, and that are not a secret value as it is (the base64 credential of basic auth, an escaped or a decoded password). The core calls it before `perform` and hides these texts with the secret values. They are used only for hiding: they never reach the agent, the audit log or the answer line. A `perform` does not hide anything itself. |
 
 Two optional fields of "A call" matter most to brokered kinds. `forCheck(target, ctx)` lets `ksproxy check` do what `open` does for a target that needs it (the `command` and `kafka` kinds look up their programs there; `ksproxy check` has no session). `ruleWarnings(target)` replaces the default warnings of `start` and `check`.
 
-In `ctx`, `env` is the environment of `start` without any credential variable, `secrets` is a plain object from each variable name and each file path that `secrets` named to its value, `timeoutMs` is the call's time limit, `maxBytes` the read limit per stream (the bytes the agent sees, 262144 or the `maxOutputKiB` of the target times 1024, at most 4 MiB, plus a fixed margin of 32768 bytes for a path cut by the read limit, the same for every call on a target so that it tells nothing of a secret's length; see "The output limit" in docs/LOGIC.md), `signal` an `AbortSignal` that fires at the time limit or when the session stops, and `input` the call exactly as `decide` got it. A kind must honour any `maxBytes` it is given and keep no limit of its own on bytes; a limit on documents or rows may stay. A decision after review keeps only the words, so a kind whose call carries more than its words (the query and the body of an http request) reads `input` again in `perform`.
+In `ctx`, `env` is the environment of `start` without any credential variable, `secrets` is a plain object from each variable name and each file path that `secrets` named to its value, `timeoutMs` is the call's time limit, `maxBytes` the read limit per stream (the bytes the agent sees, 262144 or the `maxOutputKiB` of the target times 1024, at most 4 MiB, plus a fixed margin of 32768 bytes for a path cut by the read limit, the same for every call on a target so that it tells nothing of a secret's length; see "The output limit" in docs/LOGIC.md), `signal` an `AbortSignal` that fires at the time limit or when the session stops, `input` the call exactly as `decide` got it, and `opened` the opened entry of the target, with the `extras` its `open` returned (in `probe` too), so the kind reaches the live object it keeps there. A kind must honour any `maxBytes` it is given and keep no limit of its own on bytes; a limit on documents or rows may stay. A decision after review keeps only the words, so a kind whose call carries more than its words (the query and the body of an http request) reads `input` again in `perform`.
 
 ### What the core does for a brokered kind
 
@@ -215,7 +244,7 @@ In `ctx`, `env` is the environment of `start` without any credential variable, `
 - **On the mcp side**, `execTool` does the argument checks of today and finds the target in `session.json` to give the usual answers to a bad call or an unknown target, and audits those refusals itself, as for every kind, so the user sees them in the log. A call socket path that cannot be used is refused and audited there too. A call that is sent on is audited by `start` only, so no call is audited twice. It then sends `{ kind, name, input, timeoutSeconds }` to the call socket and returns the answer as it is. `list_targets` and `ksproxy status` report the recorded state while the call socket accepts a connection, else `down`.
 - **Inside start**, the handler finds the target in its own list of opened targets, never in `session.json`: a target added to the session file, or a rule widened there, changes nothing. It checks the type of the call again, calls `decide`, asks the review service in the same process when no rule matched and the target is reviewed (same cache, budget, verdicts and checks on the words as for the socket), then `perform` within the time limit, replaces every secret value of the target and every form of one that `hiddenForms` gives in both streams by `[hidden]` (so a program that prints its own environment gives nothing away), drops a last piece of a stream that is the start of one of those texts (a secret cut by the read limit, the time limit or a broken stream), cleans the output with `scrubOutput`, drops the end of a stream that reached the read limit, cuts each stream to the visible limit of the target (262144 bytes unless the inventory raised it), and answers with the text of today. The audit entry, with the fields of today, is written before the streams are fitted: if the hiding or the scrub throws, the call is still audited as run, and the agent gets the first line of the answer and `the output could not be shown`, without any output.
 - **The health loop** asks `probe` with the target's secrets when the kind has it, else the state above.
-- **What the agent is shown.** `tools/list` always lists `list_targets` and the tool of every kind that is not brokered. The tool of a brokered kind is listed when the inventory holds a target of that kind; `ksproxy mcp` reads the inventory for this (it holds no credential, and nothing else is read). No inventory file counts as an inventory without targets; a file that cannot be read or is not valid lists every tool. A tool that is not listed still answers when called. `AGENT.md` lists the same tools for the kinds of the session. The usage text puts the flags of the brokered kinds on lines of their own after `--all` and `-v`, and the error of `ksproxy start` without a terminal names the flag of a brokered kind only when the inventory holds a target of it.
+- **What the agent is shown.** `tools/list` always lists `list_targets` and the tool of every kind that is not brokered. The tool of a brokered kind is listed when the inventory holds a target of that kind; `ksproxy mcp` reads the inventory for this (it holds no credential, and nothing else is read). No inventory file counts as an inventory without targets; a file that cannot be read or is not valid lists every tool. A tool that is not listed still answers when called; a tool with `listed: false` (`mcp_call`) is never listed. While a session with an `mcp` target runs, the tools of its servers follow, as `TARGET__TOOL` (see "The mcp kind and its client engine"). `AGENT.md` lists the same tools for the kinds of the session. The usage text puts the flags of the brokered kinds on lines of their own after `--all` and `-v`, and the error of `ksproxy start` without a terminal names the flag of a brokered kind only when the inventory holds a target of it. A kind without a flag is named in neither.
 
 ### The protocol and its failures
 
@@ -240,7 +269,7 @@ The end of `## Adding a kind` applies too; in addition, a brokered kind that rea
 
 ## The engines and the service kinds
 
-An engine knows how to talk to a service or how to read a call; a kind knows one service: its inventory fields, its fixed refusals and its notes for the agent. A custom kind (`http`, `command`) is an engine used directly from the inventory. The six engines are these:
+An engine knows how to talk to a service or how to read a call; a kind knows one service: its inventory fields, its fixed refusals and its notes for the agent. A custom kind (`http`, `command`) is an engine used directly from the inventory. The seven engines are these:
 
 | Engine | What it does | Used by |
 |---|---|---|
@@ -250,6 +279,7 @@ An engine knows how to talk to a service or how to read a call; a kind knows one
 | `resp.js` | Speaks the Redis protocol over TCP or TLS. | `redis` |
 | `sql.js` | Turns one SQL statement into words and refuses what it cannot judge. | `postgres`, `mysql` |
 | `sql-service.js` | Builds a whole kind on `sql.js` and `command.js` from names, a dialect, fixed refusals and the way the client is called. | `postgres`, `mysql` |
+| `mcp-client.js` | Speaks MCP to one server, in both protocol eras: `connectStdio` runs a local server as a program, `connectHttp` reaches a remote one. | `mcp` |
 
 ## The http engine and the custom http kind
 
@@ -340,6 +370,25 @@ The kind `redis` (`src/kinds/redis/index.js`, label `rds`, flag `redis`) takes `
 
 `kafka` (`src/kinds/kafka/index.js`, flag `kafka`, label `kfk`, tool `kafka_exec { target, command, timeout_seconds? }`) is a brokered kind on the command engine that runs the Kafka command-line clients the user installed. The first word of a call picks the program from a fixed table (`topics` is `kafka-topics`, `groups` is `kafka-consumer-groups`, `configs`, `acls`, `log-dirs`, `broker-api-versions`), looked up in the target's `binDir` or on the `PATH` of `ksproxy start` as the bare name and then with `.sh`, when the target opens; the agent never names a program or a path. The kind adds `--bootstrap-server` and, when set, `--command-config` itself, so options that change the server or the client configuration, any option whose name holds `file`, `config` or `propert`, words that point at a local file and `@` argument files are refused, and the write flags (an abbreviation of two characters or more counts as the flag) need `"writes": true` and a rule that allows the command; rules are matched with `matchCommandRule` of the command kind, and a regex rule with a lookaround is an inventory error there too; none of these can be overruled by a rule, a `regex(...)` rule or a reviewer. `clientConfig` is a secret file: `secretFiles` returns it, so local targets cannot reach it, and ksproxy never reads or prints it.
 
+## The mcp kind and its client engine
+
+`mcp` (`src/kinds/mcp/index.js`, label `mcp`, word `mcp`, noun `MCP server`, no flag (see "A kind without a flag"), tool `mcp_call { target, tool, arguments, timeout_seconds? }` with `listed: false`) is a brokered kind that reaches an MCP server: a local one that `start` runs (`command`, a list of words, over stdio through `connectStdio` of `src/kinds/engines/mcp-client.js`) or a remote one (`url`, over Streamable HTTP, with `login` `none`, `token` and `tokenEnv`, or `basic` and `userEnv` with `tokenEnv`). Its targets are chosen with the picker or `--all`, and `ksproxy check mcp NAME TOOL [JSON]` takes the tool and its arguments as one JSON object.
+
+- **Inventory.** `name`, `description`, `allow`, `arguments` (pinned: added to every call of a tool that declares them, a call with another value refused), `timeoutSeconds` (1 to 600, default 60), and `command` with `env`, or `url` with `login`, `tokenEnv` and `userEnv`. `review` and `"allow": "any"` are refused. A value of `env` is a text, or `{ "fromEnv": NAME }` for a variable `start` reads as a secret; names starting `LD_` or `DYLD_` are refused, and a text whose name looks like a secret gives a warning. `command` and `url` are not secret fields: a `url` query name, a `command` word with a user and password in a URL, an option that gives a secret (`--token`, `--api-key` and the like), a setting `NAME=VALUE` or a header `NAME: VALUE` whose name looks like a secret gives a warning too, naming the field and never the value. `command[0]` is checked as the command kind checks its program, and a runner that downloads a package (`npx`, `bunx`, `uvx`, `pipx run`, `docker run`, `podman run`) must pin it exactly (`nerdctl` and `finch` as `docker`, `go run` with `path@vX.Y.Z`), and `npm`, `pnpm`, `pnpx`, `yarn`, `bun`, `uv`, `deno`, `dnx`, `pixi`, `mise`, `corepack`, `python -m pipx` and `python -m uv` are refused; the program is compared in lower case, and the table is in `docs/LOGIC.md` under `src/kinds/mcp/pin.js`. It does not pin the package's own dependencies.
+- **Rules.** A tool name, or `{ "tool": NAME, "arguments": { NAME: VALUE } }` where a value is equal JSON, `"*"` (present), `"\\*"` (the text `*`) or `"regex(...)"` (the whole text of the value). Arguments a rule does not name are free; an argument the tool's schema does not declare is refused before the call is sent. A rule on a query argument (JQL, CQL, a search text) cannot limit what the query reads.
+- **Open.** A local server runs without a shell, in an empty private folder `run/mcp-XXXXXX` of the state folder (removed at close), with `PATH`, `HOME`, `LANG`, `LC_ALL`, `TMPDIR`, the cache folders `XDG_CACHE_HOME`, `UV_CACHE_DIR` and `npm_config_cache` when `start` has them, and its `env`: no other variable of `start`. It runs as the user, so it can read what the user can. Starting and listing the tools take at most 120 seconds (30 for a remote server), and Ctrl-C ends the wait through `ctx.signal`. A failure gives a fixed `SKIPPED` text in the log, and the reason and the last 20 lines of the server's stderr, every secret of the target hidden, on the terminal only through `ctx.say`. A server that stops later makes the target `DOWN` and says its last lines the same way; it is not restarted.
+- **The agent's tools.** Only a tool a rule names is exported, as `TARGET__TOOL`, when its name and schema are safe (rules in `docs/LOGIC.md` under `src/kinds/mcp/export.js`), at most 200 a target and 1 MiB of definitions a session; `sessionFiles` writes them to `mcp-tools.json` in the session folder, with the pid and start time of the process, every secret hidden. A session without an `mcp` target writes no such file. `ksproxy mcp` and the listener read it (`src/session-tools.js`) only when its pid and start time are those of the live `session.json`, list its tools after the fixed tools, and route a call of `TARGET__TOOL` to `mcp_call` with the agent's arguments whole (an argument named `timeout_seconds` included) and the target's `timeoutSeconds` as the time limit; a name not in that list is an unknown tool. On stdio, `ksproxy mcp` declares `tools.listChanged` when the inventory holds an `mcp` target or cannot be read, and then checks every 2 seconds (the `stat` of the two files and `kill(pid, 0)`) whether the list changed, sending `notifications/tools/list_changed` only when it did. The listener declares nothing and pushes nothing.
+- **Calls.** `decide` checks the rule and refuses a pinned argument with another value, or arguments of more than 192 KiB of JSON. `perform` reaches the live client through `ctx.opened`, refuses an argument the tool's schema does not declare (the call is not sent, exit code 1), adds the pinned values the tool declares (when it leaves one out, it matches the rules again on the arguments really sent and refuses the call when none matches), and calls within the smaller of the call's limit and `timeoutSeconds`. Text parts of an answer are joined, and the answer is cut only at its end; an image, audio or binary part is one line that names it; an error is a fixed text or the server's message. Every server text that is shortened goes through `shownText` of the engine first: the target's secrets and their forms hidden, cleaned, hidden again, a cut piece dropped, then clipped. The core hides every secret of the target, its JSON-escaped forms and the base64 credential of basic auth.
+- **Probe and doctor.** A local target is `down` once its program has ended. A remote server is pinged at most every 5 minutes, each ping within 10 seconds; an answer of `429` counts as up. The `doctor` hook reports what `open` listed and exported and never calls a tool; for a local server it adds that the credential is checked only by a call.
+
+**The engine.** `src/kinds/engines/mcp-client.js` is one client for one MCP server. The protocol layer (ids, the era, one request at a time, paging, answers to the server, limits) knows nothing of the transport; a transport writes one message line and hands back each message it reads.
+
+- *Eras.* Over stdio the client sends `initialize` first, asking `2025-11-25`, then `notifications/initialized`. Only a JSON-RPC error to `initialize` leads to `server/discover` in the `2026-07-28` form; a server that answers it is a modern server, and each later request carries the protocol version, the client and empty capabilities in `_meta`. Over HTTP the order and the session id rules are those of the HTTP transport (see its section of `docs/LOGIC.md`).
+- *Transports.* `connectStdio` runs a local server as a program, without a shell, in its own process group, with exactly the environment it is given: JSON lines on stdin and stdout, stderr kept in a ring of 64 KiB. Stopping closes stdin, sends `SIGTERM` to the group after 2 seconds and `SIGKILL` after 2 more; `close()` returns a promise. `connectHttp` reaches a remote server over Streamable HTTP, follows no redirect, never reads the body of an HTTP error, and runs its requests at the same time.
+- *One call at a time over stdio.* Requests are queued and run one by one; a `ping` does not queue. Over HTTP each request has its own answer, so nothing is queued. A call that is no longer waited for gets `notifications/cancelled`.
+- *Everything the server sends is hostile.* Every stdout line is capped at 16 MiB (`MAX_MESSAGE_BYTES`) and a longer line is discarded to its newline; a line that is not JSON ends the call in flight; every request of the server is answered with the error `-32601` (a `ping` gets `{}`) and never ends a call; notifications are dropped; an answer to a request of a local server is dropped while more than 1 MiB waits on its stdin; stdin and child errors stop the server; nothing can reject a promise that nobody waits for, because an unhandled rejection would stop every target.
+- *Limits.* At most 2,000 tools and 16 MiB (`MAX_LIST_BYTES`, the option `maxListBytes`) over all pages of `tools/list`; starting a local server and listing its tools 120 seconds, connecting to a remote one 30 seconds; the texts of an answer share the output limit. `callTool` gives the answer of the server, `{ inputRequired: true }` for a modern `input_required` result, or a plain sentence for the failure. The client reports `serverInfo` (name and version, secrets hidden, cleaned), and `onEnd` tells when the server stopped. Both `connectStdio` and `connectHttp` take `hidden`, the texts to hide in every server text they shorten (the kind gives its secrets and their forms).
+
 ## What a kind may import
 
 A kind object and its mechanics may import `src/checks.js`, `src/allowlist.js`, `src/paths.js`, `src/exec.js`, `src/text.js`, `src/session.js` and the files of kinds that do not import the core. The kubernetes mechanics import the ssh mechanics for the tunnel; the other direction does not exist, and `local` imports neither. A kind never imports a core file that imports the list (`start.js`, `tools.js`, `inventory.js`, `cli.js`, `agent-md.js`, `audit.js`, `review.js`, `mcp.js`), because that would make a loop of imports.
@@ -354,7 +403,7 @@ A kind does not read another kind's entries. When one kind needs something from 
 
 1. Create `src/kinds/<name>/index.js` with the object above and put the mechanics in files beside it.
 2. Import it in `src/kinds/index.js` and append it to `KINDS`.
-3. Choose the six names so that none is used by another kind. Keep `label` to 4 characters or the log columns shift.
+3. Choose the names so that none is used by another kind: five, or six with a `flag`. Leave `flag` out unless the owner asks for one; the kind is then chosen with the picker or `--all`. Keep `label` to 4 characters or the log columns shift.
 4. If the kind has `close`, give it `closeLimit` (a name for a test override) and `closeMs` (the limit in milliseconds). `src/start.js` needs no change.
 5. Write the tests and keep line, branch and function coverage at 100%.
 6. Add a `## src/kinds/<name>/...` section with a Mermaid diagram for each new file in `docs/LOGIC.md`; `test/logic-docs.test.js` fails without them.

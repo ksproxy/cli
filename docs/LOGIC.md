@@ -30,7 +30,7 @@ sequenceDiagram
     Agent->>Server: one JSON-RPC line, method tools/call with name and arguments
     Server->>Server: parse the line and check the message shape
     Server->>Tools: callTool with the tool name and arguments
-    Tools->>Tools: an unknown tool name answers unknown tool, isError
+    Tools->>Tools: a name that is not list_targets or the tool of a kind is looked for among the tools of the live session, see 6.4. Not there: unknown tool, isError. There: it becomes a call of mcp_call with its target and tool, the arguments whole and the target's timeoutSeconds
     Tools->>Session: liveSession of the session folder
     Session-->>Tools: the session, or null when none is live
     alt no live session
@@ -38,10 +38,10 @@ sequenceDiagram
     else list_targets
         Tools->>Log: append an entry with event list
         Tools->>Target: targetState of each target, by ssh check, folder stat or port probe
-        Tools-->>Server: startedAt and the targets as JSON, isError false
+        Tools-->>Server: startedAt and the targets as JSON, with the fields that listFields of their kind adds, isError false
     else the tool of a kind
         Tools->>Tools: check the argument types and timeout, find the open target by kind and name
-        Note over Tools: continues in 1.2 for ssh_exec, kubectl or local_exec, in 8.1 for the tool of a brokered kind
+        Note over Tools: continues in 1.2 for ssh_exec, kubectl or local_exec, in 8.1 for the tool of a brokered kind and for a tool of the session
     end
     Note over Server: the first two branches continue in 1.4, the answer to the agent
 ```
@@ -224,7 +224,7 @@ flowchart TD
     B5a["after the OPENING line"] --> B5s["readSecrets: nothing for a kind without secrets, else each env name of secrets from the values held at start,<br/>then each file it names, read with one trailing newline dropped"]
     B5s --> B5t{"a variable unset or empty, a file that cannot be read, or one that is empty?"}
     B5t -->|"yes, open is not called"| B11
-    B5t -->|"no"| B5k{"kind?"}
+    B5t -->|"no: open gets env, the session folder, the secret files and their problem, what prepare gave, the secrets,<br/>signal, which fires when a stop is asked, and say, a line about the target on stderr, see openTarget in src/start.js"| B5k{"kind?"}
     B5k -->|"ssh"| B6["the host, then 1 jump or then N jumps when the target has jumps,<br/>open: openMaster on the prepared socket ssh-NAME, to the host only, the jumps are not tried"]
     B5k -->|"kubernetes"| K6["port PORT, open: openCluster"]
     B5k -->|"local"| L6["the folder, open: secretFilesProblem first, then the folder checks of the local kind, awaited like every open"]
@@ -310,7 +310,7 @@ This diagram shows how the call service starts when a brokered target is open, s
 
 ```mermaid
 flowchart TD
-    Y3["comes from: 2d.2, every session target is built"] --> Q1["calls: for each opened target of a brokered kind, by kind and name,<br/>its session target as recorded in memory and its secrets"]
+    Y3["comes from: 2d.2, every session target is built"] --> Q1["calls: for each opened target of a brokered kind, by kind and name,<br/>its session target as recorded in memory, its secrets, and its opened entry with the extras of open, which no file holds"]
     Q1 --> Q2{"any?"}
     Q2 -->|"no"| Z3["continues in: 2d.3, the session file, READY and the loops"]
     Q2 -->|"yes"| Q3["startCallServer on callSocketPath, the handler is answerCall with calls, the session targets, the env without credentials,<br/>the review service of this process and the terminal for a failed audit write"]
@@ -366,7 +366,7 @@ flowchart TD
     RS -->|"yes"| RS2{"already stopping?"}
     RS1 --> RS2
     RS2 -->|"yes"| RS3["nothing more"]
-    RS2 -->|"no"| RS4["stopping, wake the run"]
+    RS2 -->|"no"| RS4["stopping, fire every signal that stopSignals gave to an open, wake the run"]
     RS4 --> Z1["continues in: 3a.2, what the run does next"]
 ```
 
@@ -378,7 +378,7 @@ This diagram shows how the stop is handled, depending on where the run is.
 flowchart TD
     Y1["comes from: 3a.1, stopping, the run is woken"] --> WH{"where is the run?"}
     WH -->|"waiting after READY"| CL1["CLOSING with the reason"]
-    WH -->|"opening targets"| WO["the open in progress finishes and is closed at once if it opened,<br/>the loops stop, see diagrams 2b and 2c"]
+    WH -->|"opening targets"| WO["the signal of the open in progress fires, an open that waits on it can end,<br/>it finishes and is closed at once if it opened, the loops stop, see diagrams 2b and 2c"]
     WH -->|"before the opening loops"| WB["the run goes on, and the opening loops stop at once"]
     WH -->|"in the picker"| WP["SIGTERM or SIGHUP cancels the raw-key picker, the numbered prompt does not listen to signals: nothing selected, exit 1, cleanup without CLOSING or CLOSED.<br/>A SIGINT signal or an output error only marks the stop: the picker stays open, then the opening loops are skipped and CLOSING follows.<br/>Ctrl-C typed in the raw picker is a key and cancels it"]
     WH -->|"starting the review or the call service"| WR["the start is awaited, then CLOSING, cleanup closes the service, CLOSED"]
@@ -499,7 +499,7 @@ flowchart TD
     H7 -->|"no"| H8["checkOnce: next target, in opening order"]
     H8 --> H9{"stopping?"}
     H9 -->|"yes"| H20["check ends"]
-    H9 -->|"no"| H10["stateNow: probe of the kind with the target's secrets when the kind has probe, else targetState, diagram 5b"]
+    H9 -->|"no"| H10["stateNow: probe of the kind with the target's secrets and its opened entry when the kind has probe, else targetState, diagram 5b"]
     H10 --> H11{"threw?"}
     H11 -->|"yes"| H8
     H11 -->|"no"| H12{"stopping?"}
@@ -508,7 +508,7 @@ flowchart TD
     H13 -->|"yes"| H8
     H13 -->|"no"| H14{"up now?"}
     H14 -->|"yes"| H15["UP with backMessage of the kind: folder is back for a local target, else connection is back"]
-    H14 -->|"no"| H16["DOWN with downMessage of the kind, diagram 5b"]
+    H14 -->|"no"| H16["DOWN with downMessage of the kind, given the opened entry too, diagram 5b"]
     H15 --> H8
     H16 --> H8
     H20 --> H6
@@ -531,7 +531,7 @@ flowchart TD
     G2 -->|"a brokered kind"| G7{"brokeredState: the call socket path is usable and the call socket accepts a connection?"}
     G7 -->|"yes"| G8["the state recorded at opening"]
     G7 -->|"no"| G11
-    D1["downMessage of the kind, given the session target and the state"] --> D2{"kind?"}
+    D1["downMessage of the kind, given the session target, the state and the opened entry, with the extras of open"] --> D2{"kind?"}
     D2 -->|"ssh"| D3["connection lost"]
     D2 -->|"local"| D5["folder is gone"]
     D2 -->|"kubernetes"| D6{"state?"}
@@ -577,9 +577,9 @@ This diagram shows what each method of a valid request with an id answers.
 ```mermaid
 flowchart TD
     Y1["comes from: 6.1, a valid request with an id"] --> M13{"method?"}
-    M13 -->|"initialize"| M14["protocol version, tools capability, SERVER_INFO, instructionsFor of the env"]
+    M13 -->|"initialize"| M14["protocol version, tools capability, with listChanged on stdio for an inventory with an mcp target, see 6.4,<br/>SERVER_INFO, instructionsFor of the env"]
     M13 -->|"ping"| M15["empty result"]
-    M13 -->|"tools/list"| M16["toolDefinitions of the inventory: list_targets and the tools of the kinds that are not brokered,<br/>then the tool of each brokered kind with a target in the inventory, every one when it cannot be read"]
+    M13 -->|"tools/list"| M16["toolDefinitions of the inventory: list_targets and the tools of the kinds that are not brokered,<br/>then the tool of each brokered kind with a target in the inventory, every one when it cannot be read, never mcp_call,<br/>then the tools of the live session from mcp-tools.json, see 6.4"]
     M13 -->|"tools/call"| M17{"params has a string name and arguments absent or a plain object?"}
     M17 -->|"no"| M18["error -32602 Invalid params"]
     M17 -->|"yes"| M19["callTool, diagram 1: result with one text item and isError"]
@@ -602,6 +602,36 @@ This diagram shows the one step every answer goes through before the next line i
 flowchart TD
     Y2["comes from: 6.1 and 6.2, an answer is ready"] --> M21["write one JSON line to stdout"]
     M21 --> Z4["continues in: 6.1, read the next line"]
+```
+
+### 6.4 The tools of MCP servers, and telling the client that they changed
+
+While a session with an `mcp` target runs, its allowed tools are in the agent's tool list as `TARGET__TOOL`, read from `mcp-tools.json` in the session folder, and a call to one is a call of `mcp_call`. This diagram shows how `ksproxy mcp` tells its client that the list changed. `tools.listChanged` is declared only when the inventory holds an `mcp` target, or cannot be read: a user without an `mcp` target gets the `initialize` answer of before, byte for byte, no poll runs, and no notification is ever sent. The network listener never declares it and pushes nothing; its clients see the tools on their next `tools/list`.
+
+```mermaid
+sequenceDiagram
+    participant Agent
+    participant Serve
+    participant Watch
+    participant Files
+    Agent->>Serve: initialize
+    Serve->>Watch: declare, does the inventory hold an mcp target, or can it not be read
+    Serve-->>Agent: capabilities tools with listChanged true when it does, else tools empty as before
+    Agent->>Serve: notifications/initialized
+    Serve->>Watch: start, a timer every 2 s that never keeps the process alive, only when declared, only once
+    Agent->>Serve: tools/list
+    Serve-->>Agent: the fixed tools, then the tools of the live session in the order of mcp-tools.json
+    Serve->>Watch: gave, that list is the last one the client has
+    loop every LIST_POLL_MS while the input is open
+        Watch->>Files: toolsStamp, the stat of session.json and mcp-tools.json and signal 0 to the pid
+        alt the stamp is the one of the last tick
+            Watch->>Watch: nothing read, nothing computed
+        else it changed
+            Watch->>Files: the pid read again, the stamp taken again, the list computed as tools/list does
+            Watch-->>Agent: notifications/tools/list_changed, only when a list was given and this one differs from it
+        end
+    end
+    Note over Serve: the input ends, stop clears the timer, and nothing the poll does can throw
 ```
 
 ## 7. Life of a session
@@ -642,7 +672,7 @@ sequenceDiagram
     participant Agent
     participant Mcp
     participant Start
-    Note over Mcp: comes from 1.1, the tool of a brokered kind, arguments checked and the target found in session.json
+    Note over Mcp: comes from 1.1, the tool of a brokered kind or mcp_call for a tool of the session, arguments checked and the target found in session.json
     Mcp->>Mcp: a refusal of the arguments or an unknown target is answered and audited by mcp, as for every kind
     Mcp->>Mcp: callSocketOrNull, a socket path that cannot be used answers the session did not answer, audited by mcp
     Note over Mcp: a call that is sent on is audited by start only, never by mcp, so no call is audited twice
@@ -696,7 +726,7 @@ This diagram shows the run of an allowed brokered call, its limits and its answe
 ```mermaid
 flowchart TD
     Y2["comes from: 8.2, an allowed decision"] --> P0["hiddenTexts: the secret values of the target and the forms from hiddenForms of the kind, a throw is call failed"]
-    P0 --> P1["performWithin: perform of the kind with env, the target's secrets, timeoutMs, maxBytes the read limit,<br/>visibleLimit of the target in memory plus 32768, a signal and the input"]
+    P0 --> P1["performWithin: perform of the kind with env, the target's secrets, timeoutMs, maxBytes the read limit,<br/>visibleLimit of the target in memory plus 32768, a signal, the input, and opened: the opened entry with the extras of open"]
     P1 --> P2{"what settles first?"}
     P2 -->|"perform"| P3{"it threw?"}
     P3 -->|"yes"| R1["REFUSE: call failed, audited, nothing of the error is kept"]
@@ -1236,6 +1266,19 @@ flowchart TD
     G2 -->|"yes"| G4["width: columns when a positive integer, else 120.<br/>color: NO_COLOR unset and TERM not dumb"]
 ```
 
+### formatSaidLine
+
+This diagram shows the line a kind says about one of its targets through `ctx.say` of its `open`, in `start` and in `ksproxy doctor`. It is never an audit entry.
+
+```mermaid
+flowchart TD
+    S1["formatSaidLine of ts, kind label, target name and text"] --> S2["clock of ts, the label padded to 4, the name cleaned by sanitizeForTerminal, clipped and padded to 10"]
+    S2 --> S3["the status column of 8 and the duration column of 6, both empty, so the text stands where a detail stands"]
+    S3 --> S4["the text, any value made a text, cleaned by sanitizeForTerminal: a newline or an escape character becomes a backslash, u and four hex digits, so it stays one line"]
+    S4 --> S5["joined by spaces, the spaces at the end dropped"]
+    S5 --> S6["never clipped to the width of the terminal and never coloured"]
+```
+
 ## src/broker.js
 
 The call socket of the brokered kinds: `startCallServer` listens inside `ksproxy start` and hands each request to its handler, `askCall` is the client `ksproxy mcp` uses, and `callSocketOpen` says whether the socket accepts a connection. `MAX_CALL_BYTES` (256 KiB) caps a request line, `MAX_ANSWER_BYTES` (16 MiB, 4 times the largest output limit of one stream, 4 MiB) an answer line, and `MAX_CONNECTIONS` (64) the connections open at once, so that a local process cannot open connections without end. The server closes a connection itself once its answer is sent, so a client that keeps its side open cannot hold a place. Every failure ends in one of the fixed texts of `CALL_FAILED`, made into an answer by `callRefusal`. The file imports only `src/text.js` and no kind.
@@ -1563,7 +1606,7 @@ This diagram shows how the start line and the check lines of the usage text are 
 
 ```mermaid
 flowchart TD
-    U1["startUsage"] --> U2["each kind in list order gives its flag, then a,b at an even index or x,y at an odd one"]
+    U1["startUsage"] --> U2["each kind that has a flag, flaggedKinds, in list order gives its flag, then a,b at an even index or x,y at an odd one,<br/>a kind without a flag shows nothing on these lines"]
     U2 --> U3["the first line: two spaces, start, the flags of the kinds that are not brokered, then --all and -v or --verbose"]
     U3 --> U4{"next brokered kind?"}
     U4 -->|"none left"| U11["the item [--project NAME] comes last and is placed by the same wrapping rule"]
@@ -1576,7 +1619,7 @@ flowchart TD
     U7 -->|"yes"| U9["it is the last line, after eight spaces"]
     U7 -->|"no"| U10["OK: the lines joined, today the first line and two lines with the flags of the brokered kinds"]
     U9 --> U10
-    K1["checkKinds"] --> K2["the flag of each kind in list order, joined by a bar, between angle brackets"]
+    K1["checkKinds"] --> K2["cliName of each kind in list order: its flag, or the key of a kind without one, joined by a bar, between angle brackets"]
     K3["checkUsage"] --> K4["two spaces, check and [--project NAME], then on new lines after eight spaces: checkKinds, then name and command"]
     K5["the usage error of check"] --> K6["usage: ksproxy check, [--project NAME], checkKinds, name and command, on one line"]
 ```
@@ -1604,7 +1647,7 @@ flowchart TD
     V4 -->|"no"| V6{"that TLS file given already?"}
     V6 -->|"yes"| E4["ERROR: --tls-cert given twice, or --tls-key given twice"]
     V6 -->|"no"| V7["keep the file name"]
-    V1 -->|"no"| P6{"the flag of a kind in the list, any of the twelve kinds, alone or with an equals sign and value?"}
+    V1 -->|"no"| P6{"the flag of a kind that has one, flaggedKinds, alone or with an equals sign and value? A kind without a flag gives no option"}
     P6 -->|"no"| PW{"the command is doctor, and the word does not start with a dash?"}
     PW -->|"yes"| PX["a target name: append it to the names"]
     PW -->|"no"| E1["ERROR: unknown option for COMMAND: ARG, the command being start or doctor"]
@@ -1624,14 +1667,14 @@ flowchart TD
     C1 -->|"yes"| E5["ERROR: --new-token, --tls-cert and --tls-key work only with --listen"]
     C1 -->|"no"| C2{"only one of --tls-cert and --tls-key?"}
     C2 -->|"yes"| E6["ERROR: --tls-cert and --tls-key go together"]
-    C2 -->|"no"| C3{"more than one project, and the flag of a kind given, the first in list order?"}
+    C2 -->|"no"| C3{"more than one project, and the flag of a kind given, the first of flaggedKinds in list order? A kind without a flag is never named here"}
     C3 -->|"yes"| E7["ERROR: --FLAG names targets of one project, use it with a single --project"]
     C3 -->|"no"| C4{"more than one project, and a target name given, only doctor takes them?"}
     C4 -->|"yes"| E8["ERROR: NAMES_OF_ONE, target names belong to one project, use them with a single --project"]
     C4 -->|"no"| P12["OK: options, one list per kind flag that was given and null for the others, all, verbose.<br/>Apart from them: the listen values, newToken, tls, null or the cert and key file names, and names, empty for start"]
 ```
 
-The exact texts behind the last two errors: `--ssh names targets of one project; use it with a single --project`, with the flag that was given, and `target names belong to one project; use them with a single --project`. Every error here is a usage error: the message, then the usage on stderr, exit 2. For `start` a plain word is refused as before (`unknown option for start: WORD`); for `doctor` it is a target name, and an unknown option reads `unknown option for doctor: ARG`.
+The exact texts behind the last two errors: `--ssh names targets of one project; use it with a single --project`, with the flag that was given, and `target names belong to one project; use them with a single --project`. Every error here is a usage error: the message, then the usage on stderr, exit 2. For `start` a plain word is refused as before (`unknown option for start: WORD`); for `doctor` it is a target name, and an unknown option reads `unknown option for doctor: ARG`. A kind without a flag puts nothing into the options and nothing into the pattern of the kind flags, so `--undefined` and `--KEY` of such a kind are unknown options; its targets are chosen with the picker or `--all`, and in `doctor` by their names.
 
 ### parseLogArgs and showLog
 
@@ -1787,8 +1830,8 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    C1["check KIND NAME WORDS, after takeProject took the flag before the kind"] --> C2{"kindByFlag finds KIND (the flag of any kind), NAME given and at least one word?"}
-    C2 -->|"no"| C3["usage error, 2: the message reads usage: ksproxy check [--project NAME], checkKinds with the flag of every kind, then name and command words"]
+    C1["check KIND NAME WORDS, after takeProject took the flag before the kind"] --> C2{"kindByCliName finds KIND: the flag of a kind, or the key of a kind without a flag, NAME given and at least one word?"}
+    C2 -->|"no"| C3["usage error, 2: the message reads usage: ksproxy check [--project NAME], checkKinds with cliName of every kind, then name and command words"]
     C2 -->|"yes"| CP{"NAME starts with --project? A target name never starts with a dash"}
     CP -->|"yes"| CQ["usage error, 2: --project must come before the kind: ksproxy check --project NAME, kind, name and command"]
     CP -->|"no"| C4["loadInventory of the inventory file of the project, with initCommand as the hint"]
@@ -1904,7 +1947,7 @@ Runs `ksproxy doctor`: `doctor` runs the pre-checks of `start` in `start`'s orde
 
 Where the files go: a kind puts its sockets and proxy pid files in the socket folder and the kubernetes kind its log in the session folder, both built on `stateDir`. For each project, `doctor` makes a temporary folder `d-XXXXXX` with an owner record inside the root state folder (`makeDoctorFolder` of `src/doctor-folder.js`) and gives the kinds an env whose `STATE_FOLDER` (see `src/paths.js`) is that folder: the sockets go to `d-XXXXXX/s`, the kube logs to `d-XXXXXX/session`. `rootStateDir` and `configDir` stay the real ones, so the folder checks of the local and command kinds are those of `start`, and every local target refuses a path inside the root state folder, the temporary one included. The folder is removed when the project is done, after a stop too; a doctor killed with SIGKILL leaves it, and the next `doctor` or `start` cleans it up (`reapDoctorFolders`). Inside the root state folder its socket paths are about as long as those of `start`; the system's temporary folder is long on macOS and would push an ssh socket over its 83 bytes.
 
-Every line is in the format of the log (`formatLogLine`, events `doctor_ok` as OK and `doctor_fail` as FAIL, never written to a log), with no clipping to the width of the terminal (`NO_CLIP`): the reasons of `start` can be long. With several projects each line of a project starts with `[NAME] ` (a `LineStream` of `src/start-many.js`, `nameOf`); the lines of `--listen` and the last line have no prefix. The kind column is two dashes for a check that is not a target, and the target column names the check:
+Every line is in the format of the log (`formatLogLine`, events `doctor_ok` as OK and `doctor_fail` as FAIL, never written to a log), with no clipping to the width of the terminal (`NO_CLIP`): the reasons of `start` can be long. The `open` of a kind gets the `ctx.signal` and `ctx.say` of `start`: the signal fires when a stop is asked, and a line the kind says is a `formatSaidLine` line among the lines of its project, never clipped, with every value that is hidden in the other lines hidden. With several projects each line of a project starts with `[NAME] ` (a `LineStream` of `src/start-many.js`, `nameOf`); the lines of `--listen` and the last line have no prefix. The kind column is two dashes for a check that is not a target, and the target column names the check:
 
 | Column | OK text | FAIL text |
 | --- | --- | --- |
@@ -2007,7 +2050,8 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    T1["hide: the held values of the project"] --> T2["openTarget of the kind and the target, see src/start.js"]
+    T1["hide: the held values of the project"] --> T2["openTarget of the kind and the target, see src/start.js, with the context of start and signal, a signal of stopSignals"]
+    T2 --> TS["say of the context, which the kind may keep: formatSaidLine of the text with every value of hide replaced by hidden in brackets,<br/>on the stream of the project with its other lines, never clipped"]
     T2 --> T3["lifecycle: only target_warn and target_skipped are shown, SHOWN, every value of hide replaced by hidden in brackets"]
     T2 --> T4["open: hide grows by the target's secrets and formsOf them, then the kind's open, awaited"]
     T4 --> T5{"opened, a stop was asked meanwhile, and the kind has close?"}
@@ -2043,11 +2087,11 @@ flowchart TD
     R7 --> R10
     R8 --> R10
     R9 --> R10
-    S1["selectionOf of inventory, options, names"] --> S2{"next name: no kind holds a target of it?"}
+    S1["selectionOf of inventory, options, names: named, namesByKind of the options, the names of the kind flags by kind key"] --> S2{"next name: no kind holds a target of it?"}
     S2 -->|"yes"| S3["ERROR: unknown target NAME, known targets: every name once, or none"]
-    S2 -->|"no"| S4["the name joins the flag of each kind that holds it"]
+    S2 -->|"no"| S4["the name joins named under the key of each kind that holds it, a kind without a flag too"]
     S4 --> S2
-    S2 -->|"no name left"| S5["chooseTargets with the options as they are when --all or a kind flag is given, else with all, never the picker"]
+    S2 -->|"no name left"| S5["chooseTargets with the options and named, and with all when neither --all nor any name was given, never the picker"]
     F1["formsOf of kind, target, secrets"] --> F2["hiddenForms of the kind, none without it or when it throws"]
     B1["bindOnce of address and text"] --> B2["listen, then close: null, or cannot listen on TEXT: MESSAGE.<br/>A connection that arrives meanwhile is destroyed at once, so the close never waits for it"]
 ```
@@ -2064,8 +2108,8 @@ flowchart TD
     Q4["a write that throws: no more is written, the reason output closed"] --> Q5
     Q5 --> Q7{"a stop asked already?"}
     Q7 -->|"yes"| Q8["nothing: the first reason is kept"]
-    Q7 -->|"no"| Q9["stopping, the reason kept, the promise stopped settles"]
-    Q9 --> Q10["the check that runs ends at once with null, its signal fires, an open that runs is awaited and its target closed,<br/>the target is closed, no other target or project is begun, the temporary folder is removed"]
+    Q7 -->|"no"| Q9["stopping, the reason kept, every signal that stopSignals gave to an open fires, the promise stopped settles"]
+    Q9 --> Q10["the check that runs ends at once with null, its signal fires, an open that runs is awaited, an open that waits on its signal can end,<br/>a target that opened is closed, no other target or project is begun, the temporary folder is removed"]
     Q10 --> Q11["FAIL doctor: stopped: REASON when stdout still works, the last line, exit 1"]
 ```
 
@@ -2233,12 +2277,15 @@ The review block of one target is checked by `checkReview`, drawn in the `src/ch
 
 ## src/kinds/index.js
 
-The ordered list of kinds and the lookups the core uses. The order is `ssh`, `kubernetes`, `local`, `http`, `command`, `elasticsearch`, `rabbitmq`, `redis`, `postgres`, `mysql`, `mongodb`, `kafka`: the order of opening, of the session file, of the agent notes and of the tools. The core reads `KINDS` when a function is called, so a test may add a kind to it. `kindByKey`, `kindByFlag` and `kindByTool` return the kind for a name, or `undefined`. `secretFilesOf` of a validated inventory collects the files that hold credentials, over every kind that has `secretFiles` and over all of its inventory entries, not only the selected ones, so that no kind reads another kind's entries. `everySecretFile` in `src/projects.js` adds to them the files of every other inventory file.
+The ordered list of kinds and the lookups the core uses. The order is `ssh`, `kubernetes`, `local`, `http`, `command`, `elasticsearch`, `rabbitmq`, `redis`, `postgres`, `mysql`, `mongodb`, `kafka`, `mcp`: the order of opening, of the session file, of the agent notes and of the tools. The core reads `KINDS` when a function is called, so a test may add a kind to it. `kindByKey`, `kindByFlag` and `kindByTool` return the kind for a name, or `undefined`. A kind may have no `flag`: `flaggedKinds` gives the kinds that have one, for every place of the command line that loops over the kind flags, and `cliName` gives the name `ksproxy check` takes, the flag or else the key, with `kindByCliName` to find the kind for it. `secretFilesOf` of a validated inventory collects the files that hold credentials, over every kind that has `secretFiles` and over all of its inventory entries, not only the selected ones, so that no kind reads another kind's entries. `everySecretFile` in `src/projects.js` adds to them the files of every other inventory file.
 
 ```mermaid
 flowchart TD
-    K1["KINDS: ssh, kubernetes, local, http, command, elasticsearch, rabbitmq, redis, postgres, mysql, mongodb, kafka, in this order"] --> K2["kindByKey of key: the first kind with that key, else undefined"]
-    K1 --> K3["kindByFlag of flag: the first kind with that command line flag, else undefined"]
+    K1["KINDS: ssh, kubernetes, local, http, command, elasticsearch, rabbitmq, redis, postgres, mysql, mongodb, kafka, mcp, in this order"] --> K2["kindByKey of key: the first kind with that key, else undefined"]
+    K1 --> K3["kindByFlag of flag: the first kind that has a flag and whose flag it is, else undefined: a kind without a flag is never found, not even for undefined"]
+    K1 --> K7["flaggedKinds: the kinds that have a flag, in list order, a new array at each call"]
+    K1 --> K8["cliName of a kind: its flag, or its key for a kind without a flag"]
+    K8 --> K9["kindByCliName of name: the first kind whose cliName it is, else undefined, for ksproxy check"]
     K1 --> K5["kindByTool of name: the first kind whose tool has that name, else undefined"]
     K1 --> K6["secretFilesOf of inventory: for each kind in list order, secretFiles of its inventory entries, or nothing when it has none,<br/>today the kubeconfig of every cluster entry"]
 ```
@@ -4561,19 +4608,20 @@ flowchart TD
 
 ## src/mcp.js
 
-The stdio MCP server: `serve` reads JSON-RPC lines and writes answers, `handleMessage` answers one message, `inventoryForTools` reads the inventory for the tool listing, `instructionsFor` gives the instructions of `initialize`, and `SERVER_INFO` gives the name ksproxy and the package version. `handleMessage` takes an origin, `{ from, client }`, and a signal, the AbortSignal of the listener, for a message that came through the network listener of `src/listen.js`, and passes both on to `callTool`: the origin goes into the audit entries of the call, and an abort of the signal, at the close of the listener, kills the program the call runs. `serve` gives neither, so nothing changes for `ksproxy mcp`. The env of `ksproxy mcp --project NAME` carries the project, so `inventoryForTools`, `instructionsFor` and `callTool` all use that project's files and texts.
+The stdio MCP server: `serve` reads JSON-RPC lines and writes answers, `handleMessage` answers one message, `inventoryForTools` reads the inventory for the tool listing, `listedTools` gives the list of `tools/list` (the fixed tools, then the tools of the live session when `mayHaveMcp` says the inventory may have them: it holds an `mcp` target or cannot be read), `instructionsFor` gives the instructions of `initialize`, and `SERVER_INFO` gives the name ksproxy and the package version. On stdio only, `serve` declares `tools.listChanged` when `watchesTools` says so and keeps a `listWatch`, which checks every `LIST_POLL_MS` (2000 ms) whether the tool list changed and then writes `notifications/tools/list_changed` (diagram 6.4); `answerOnStdio` connects the two. `handleMessage` takes an origin, `{ from, client }`, and a signal, the AbortSignal of the listener, for a message that came through the network listener of `src/listen.js`, and passes both on to `callTool`: the origin goes into the audit entries of the call, and an abort of the signal, at the close of the listener, kills the program the call runs. `serve` gives neither, so nothing changes for `ksproxy mcp`. The env of `ksproxy mcp --project NAME` carries the project, so `inventoryForTools`, `instructionsFor` and `callTool` all use that project's files and texts.
 
 ### serve
 
 ```mermaid
 flowchart TD
-    S1["serve of input, output, env"] --> S2{"next line, or the input ended?"}
-    S2 -->|"ended"| S9["OK: resolve"]
+    S1["serve of input, output, env, and pollMs, LIST_POLL_MS unless a test lowers it"] --> S0["listWatch of env, writing to output"]
+    S0 --> S2{"next line, or the input ended?"}
+    S2 -->|"ended"| S9["OK: stop of the watch clears its timer, then resolve. A failed input stops it too"]
     S2 -->|"a line"| S3{"blank?"}
     S3 -->|"yes"| S2
     S3 -->|"no"| S4{"JSON.parse works?"}
     S4 -->|"no"| S5["error -32700 Parse error, id null"]
-    S4 -->|"yes"| S6["handleMessage"]
+    S4 -->|"yes"| S6["answerOnStdio, below"]
     S6 --> S7{"answer is null?"}
     S7 -->|"yes"| S2
     S7 -->|"no"| S8["write the answer as one JSON line"]
@@ -4587,7 +4635,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    H1["handleMessage of message, env, origin and signal, neither from serve"] --> H2{"an object with no method and a result or error field?"}
+    H1["handleMessage of message, env, origin and signal, neither from serve, and listChanged, only from serve"] --> H2{"an object with no method and a result or error field?"}
     H2 -->|"yes"| N1["OK: null"]
     H2 -->|"no"| H3{"an object, jsonrpc 2.0, method a string?"}
     H3 -->|"no"| E1["error -32600 Invalid Request, id when a string or finite number, else null"]
@@ -4599,16 +4647,65 @@ flowchart TD
     H6 -->|"initialize"| I1{"asked protocolVersion is 2024-11-05, 2025-03-26 or 2025-06-18?"}
     I1 -->|"yes"| I2["that version"]
     I1 -->|"no"| I3["2025-06-18"]
-    I2 --> I4["OK: capabilities tools, serverInfo SERVER_INFO, instructions from instructionsFor of env, see below"]
+    I2 --> I4["OK: capabilities tools, with listChanged true when the option says so, else empty as before,<br/>serverInfo SERVER_INFO, instructions from instructionsFor of env, see below"]
     I3 --> I4
     H6 -->|"ping"| P1["OK: empty result"]
-    H6 -->|"tools/list"| L1["OK: tools from toolDefinitions of inventoryForTools, see the next diagram"]
+    H6 -->|"tools/list"| L1["OK: tools from listedTools of env, see below"]
     H6 -->|"tools/call"| C1{"params an object with a string name,<br/>arguments absent or a plain object?"}
     C1 -->|"no"| E3["error -32602 Invalid params"]
     C1 -->|"yes"| C2["callTool of name and arguments, or an empty object, with the origin and the signal"]
     C2 --> C3["OK: content with one text item, isError"]
     H6 -->|"anything else"| E4["error -32601 Method not found: METHOD"]
     H6 -->|"a handler throws"| E5["error -32603 Internal error: MESSAGE"]
+```
+
+### answerOnStdio, watchesTools and listedTools
+
+This diagram shows what `serve` adds to `handleMessage` on stdio, and the list that `tools/list` gives everywhere.
+
+```mermaid
+flowchart TD
+    A1["answerOnStdio of a parsed message, env, the watch and pollMs"] --> A2{"method initialize?"}
+    A2 -->|"yes"| A3["listChanged is declare of the watch"]
+    A2 -->|"no"| A4["listChanged false"]
+    A3 --> A5["handleMessage with listChanged"]
+    A4 --> A5
+    A5 --> A6{"method notifications/initialized, and no answer, so a notification?"}
+    A6 -->|"yes"| A7["start of the watch with pollMs"]
+    A6 -->|"no"| A8{"method tools/list, and the answer has a result?"}
+    A8 -->|"yes"| A9["gave of the watch: the tools of the answer are the last list the client has"]
+    A7 --> A10["the answer"]
+    A8 -->|"no"| A10
+    A9 --> A10
+    W1["watchesTools of env"] --> W2{"mayHaveMcp: inventoryForTools is null, or holds an mcp target?"}
+    W2 -->|"yes"| W3["true"]
+    W2 -->|"no, or it throws"| W4["false: initialize answers as before, and no poll runs"]
+    T1["listedTools of env"] --> T5{"mayHaveMcp of inventoryForTools?"}
+    T5 -->|"yes"| T2["toolDefinitions of the inventory, with directTools of env, in the src/tools.js section"]
+    T5 -->|"no"| T3["toolDefinitions of the inventory alone: the session is never read, so no ps runs"]
+```
+
+### listWatch
+
+This diagram shows the poll of diagram 6.4. A tick reads no file and computes nothing while the stamp stays the same.
+
+```mermaid
+flowchart TD
+    L1["listWatch of env and write: not declared, no timer, given null, stamp null, pid null"] --> L2["declare: declared is watchesTools of env, returned"]
+    L1 --> L3{"start of everyMs: declared, and no timer yet?"}
+    L3 -->|"yes"| L4["setInterval of tick, unref, so it never keeps the process alive"]
+    L3 -->|"no"| L5["nothing"]
+    L1 --> L6["gave of tools: given is their JSON"]
+    L1 --> L7["stop: clearInterval, no timer"]
+    K1["tick"] --> K2["toolsStamp of sessionDir of env and the pid, in the src/session-tools.js section"]
+    K2 --> K3{"the same as stamp?"}
+    K3 -->|"yes"| K4["false: nothing read, nothing computed"]
+    K3 -->|"no"| K5["pid from readSession, else null, then stamp is toolsStamp again with that pid"]
+    K5 --> K6["the JSON of listedTools of env"]
+    K6 --> K7{"given is null, or the same?"}
+    K7 -->|"yes"| K8["false: nothing written"]
+    K7 -->|"no"| K9["given is that JSON, write one line notifications/tools/list_changed, true"]
+    K1 -->|"anything throws"| K10["false: the poll goes on, nothing escapes"]
 ```
 
 ### instructionsFor
@@ -4637,7 +4734,7 @@ flowchart TD
     V2 -->|"yes"| V4{"loadInventory reads and validates it?"}
     V4 -->|"yes"| V5["that inventory: a brokered tool is listed when it holds a target of the kind"]
     V4 -->|"throws, unreadable or not valid"| V6["null: every tool is listed"]
-    V3 --> V7["toolDefinitions, in the src/tools.js section"]
+    V3 --> V7["toolDefinitions through listedTools, and watchesTools, in the src/tools.js section and above"]
     V5 --> V7
     V6 --> V7
 ```
@@ -5122,17 +5219,18 @@ flowchart TD
 
 ## src/session.js
 
-Reads, writes and clears session.json and decides whether the session in it is still running: `writeSession`, `readSession`, `liveSession`, `clearSession`, `isLive`, `processStartTime`, `parseLstart` and `psEnv`.
+Reads, writes and clears session.json (`SESSION_FILE`) and decides whether the session in it is still running: `writeSession`, `readSession`, `liveSession`, `clearSession`, `isLive`, `pidAlive`, `processStartTime`, `parseLstart` and `psEnv`. `pidAlive` alone starts no program: the poll of `ksproxy mcp` uses it through `toolsStamp`.
 
-### isLive and processStartTime
+### isLive, pidAlive and processStartTime
 
 ```mermaid
 flowchart TD
-    I1["isLive of session"] --> I2{"pid a positive integer?"}
+    I1["isLive of session"] --> I2{"pidAlive of its pid?"}
     I2 -->|"no"| F1["false"]
-    I2 -->|"yes"| I3{"signal 0 to the pid works, or fails with EPERM?"}
-    I3 -->|"no"| F1
-    I3 -->|"yes"| I4{"processStartedAt a finite number?"}
+    A1["pidAlive of pid"] --> A2{"a positive integer, and signal 0 to it works or fails with EPERM, the process of another user?"}
+    A2 -->|"yes"| A3["true, though the pid may have been reused"]
+    A2 -->|"no"| A4["false"]
+    I2 -->|"yes"| I4{"processStartedAt a finite number?"}
     I4 -->|"no"| T1["true"]
     I4 -->|"yes"| I5["processStartTime of the pid"]
     I5 --> I6{"unknown, or within 5000 ms of processStartedAt?"}
@@ -5152,7 +5250,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    R1["readSession of dir"] --> R2{"session.json reads and parses?"}
+    R1["readSession of dir"] --> R2{"session.json, SESSION_FILE, reads and parses?"}
     R2 -->|"no"| R3["null"]
     R2 -->|"yes"| R4{"a non-null object?"}
     R4 -->|"no"| R3
@@ -5163,6 +5261,53 @@ flowchart TD
     L3 -->|"no"| L5["null"]
     W1["writeSession of dir and session"] --> W2["ensureDir, then writeFileAtomic of session.json"]
     C1["clearSession of dir"] --> C2["remove session.json, no error when missing"]
+```
+
+## src/session-tools.js
+
+The tools that the MCP servers of a live session give the agent directly, as `TARGET__TOOL`. `ksproxy start` writes them to `mcp-tools.json` in the session folder (`toolsFileText` in the `src/kinds/mcp/export.js` section); `readSessionTools` reads them for `ksproxy mcp` and the network listener, and `toolsStamp` is what the poll of `ksproxy mcp` compares. The file is used only when it is whole and has the shape `start` writes, and its pid and start time are those of the live session.json: a file that a killed run left, or one of another run, is never used. `MAX_TOOLS_FILE_BYTES` is 4 MiB, four times the 1 MiB budget of definitions: a definition is at least 80 bytes and the fields around it at most 120, so a file that `start` wrote never comes near it. Nothing here writes a file.
+
+### readSessionTools and readSmall
+
+```mermaid
+flowchart TD
+    R1["readSessionTools of the session folder and the live session"] --> R2["readSmall of mcp-tools.json and MAX_TOOLS_FILE_BYTES"]
+    R2 --> R3{"a text?"}
+    R3 -->|"no"| N1["no tools"]
+    R3 -->|"yes"| R4{"JSON.parse works?"}
+    R4 -->|"no"| N1
+    R4 -->|"yes"| R5{"an object, version 1, the pid of the session, its processStartedAt or null for none, tools a list?"}
+    R5 -->|"no: a stale file, or another run's"| N1
+    R5 -->|"yes"| R6{"validEntry of every entry?"}
+    R6 -->|"no, even one"| N1
+    R6 -->|"yes"| R7["OK: each entry as target, tool, timeoutSeconds and a definition of name, description and inputSchema only,<br/>in the order of the file: no other field reaches the agent"]
+    S1["readSmall of a file and max"] --> S2{"opened read only and without waiting, so a named pipe never blocks?"}
+    S2 -->|"no, missing or not allowed"| S5["null"]
+    S2 -->|"yes"| S3{"fstat of it says a regular file of at most max bytes?"}
+    S3 -->|"yes"| S4["its text, read from the file opened, so a file replaced meanwhile is never read past max"]
+    S3 -->|"no"| S5
+    S3 --> S6["the file closed in every case. A read that fails once it is open throws: sessionTools gives no tools"]
+```
+
+### validEntry and toolsStamp
+
+```mermaid
+flowchart TD
+    V1["validEntry of an entry"] --> V2{"an object, with a definition that is an object?"}
+    V2 -->|"no"| V9["false"]
+    V2 -->|"yes"| V3{"target matches NAME_RE, tool is letters, digits, _ and - only?"}
+    V3 -->|"no"| V9
+    V3 -->|"yes"| V4{"timeoutSeconds an integer from 1 to 600?"}
+    V4 -->|"no"| V9
+    V4 -->|"yes"| V5{"the definition named TARGET__TOOL, at most MAX_NAME, 50, characters?"}
+    V5 -->|"no"| V9
+    V5 -->|"yes"| V6{"a text description, and an inputSchema that is an object of type object?"}
+    V6 -->|"no"| V9
+    V6 -->|"yes"| V7["true"]
+    T1["toolsStamp of the session folder and a pid"] --> T2["stat of session.json, SESSION_FILE, and of mcp-tools.json: inode, size and mtime, or null when missing"]
+    T2 --> T3["pidAlive of the pid, in the src/session.js section"]
+    T3 --> T4["the JSON of the three: it changes when a file is written, appears or goes, or when the process starts or ends.<br/>No file is read and no program starts"]
+    T2 -->|"stat fails for another reason"| T5["ERROR: thrown, and the tick of listWatch catches it"]
 ```
 
 ## src/kinds/ssh/master.js
@@ -5270,7 +5415,7 @@ flowchart TD
 
 ## src/start.js
 
-Runs `ksproxy start`: `start` sets up the session around the run drawn in Part 1 (diagrams 2a to 2d, 3, 5 and 8), with the helpers `bounded`, `emptyDirectory`, `fileSize`, `startFollower`, `ensureStateDir` for the state folder of the default or of a project, and `credentialVariables`, `withoutVariables` and `readSecrets` for the credentials. The call service of the brokered kinds (`startCallServer` of `src/broker.js`, with `answerCall` of `src/tools.js` as its handler) is drawn in 2d.2b, its closing in 3b. `logKind` gives the log label of a kind from its key (`kindByKey` of the key, then its label); every log line of a lifecycle event uses it. `chooseTargets`, `credentialVariables` and `withoutVariables` are exported for `startMany` in `src/start-many.js`, which runs the picker before any session opens and builds the env of its listener without any credential. `withOutputLimit` adds the `maxOutputKiB` of the inventory entry to the record of each opened target that has one (diagram 2d.2): the session file carries it for `ksproxy mcp`, and the call service uses the record in memory. A raised limit prints no line in the terminal: no setting of a target has a WARN line of its own, and settings such as read-write are named only in the opening line that a kind writes.
+Runs `ksproxy start`: `start` sets up the session around the run drawn in Part 1 (diagrams 2a to 2d, 3, 5 and 8), with the helpers `bounded`, `emptyDirectory`, `fileSize`, `startFollower`, `ensureStateDir` for the state folder of the default or of a project, and `credentialVariables`, `withoutVariables` and `readSecrets` for the credentials. The call service of the brokered kinds (`startCallServer` of `src/broker.js`, with `answerCall` of `src/tools.js` as its handler) is drawn in 2d.2b, its closing in 3b. `logKind` gives the log label of a kind from its key (`kindByKey` of the key, then its label); every log line of a lifecycle event uses it. `chooseTargets`, `namesByKind`, `credentialVariables` and `withoutVariables` are exported for `startMany` in `src/start-many.js`, which runs the picker before any session opens and builds the env of its listener without any credential; `stopSignals` is exported for `src/doctor.js`. `withOutputLimit` adds the `maxOutputKiB` of the inventory entry to the record of each opened target that has one (diagram 2d.2): the session file carries it for `ksproxy mcp`, and the call service uses the record in memory. A raised limit prints no line in the terminal: no setting of a target has a WARN line of its own, and settings such as read-write are named only in the opening line that a kind writes.
 
 The run walks `KINDS` and names no kind: what is particular to a kind sits in its object (the "The session" diagrams of `src/kinds/ssh/index.js`, `src/kinds/kubernetes/index.js` and `src/kinds/local/index.js`). The core keeps the skeleton: the stop checks, the empty-allow warning, the order of the lines, the guard that closes a target opened during a stop, the review service, the files, the follower and the health loop. `closeOne` closes one opened target through `closeTarget`: its kind's `close`, bounded by `limits[closeLimit]` and with the kind's `onCloseTimeout` past it; the time limits keep their names `sshCloseMs` and `kubeCloseMs`. `closeStaleSockets` lives in `src/kinds/ssh/master.js` and is no longer exported from here. Before it reaps its own leftovers, the run calls `reapDoctorFolders` of `src/doctor-folder.js` and prints its lines (diagram 2a.2): it prints nothing when no killed doctor left a folder.
 
@@ -5466,13 +5611,13 @@ flowchart TD
 flowchart TD
     C1["chooseTargets of inventory, options"] --> C2{"--all?"}
     C2 -->|"yes"| C3["OK: every target of every kind, under each kind's key"]
-    C2 -->|"no"| C4{"the flag of some kind given: --ssh, --kube or --local?"}
-    C4 -->|"yes"| C5["pickByName for each kind in list order, with its flag as the label: ssh, then kube, then local"]
+    C2 -->|"no"| C4{"namesByKind of the options gives names for some kind: a kind flag, or named from startMany or doctor?"}
+    C4 -->|"yes"| C5["pickByName for each kind in list order, with its cliName as the label: its flag, or the key of a kind without one"]
     C5 --> C6{"a name not in the inventory for that kind?"}
-    C6 -->|"yes"| C7["ERROR: unknown FLAG target NAME, with the known FLAG targets or none, the first such kind wins"]
+    C6 -->|"yes"| C7["ERROR: unknown LABEL target NAME, with the known LABEL targets or none, the first such kind wins"]
     C6 -->|"no"| C8["OK: the named targets, in inventory order"]
     C4 -->|"no"| C9{"stdin is a terminal?"}
-    C9 -->|"no"| C10["ERROR: no targets selected: use FLAGS or --all when not running in a terminal, FLAGS the flag of each kind in list order<br/>that is not brokered or has a target in the inventory, joined by commas, today --ssh, --kube, --local and --http"]
+    C9 -->|"no"| C10["ERROR: no targets selected: use FLAGS or --all when not running in a terminal, FLAGS the flag of each kind of flaggedKinds<br/>in list order that is not brokered or has a target in the inventory, joined by commas, a kind without a flag named by none"]
     C9 -->|"yes"| C11["kinds that have at least one target, in list order,<br/>each item: the key as key and label, the hint N and the kind's countNoun"]
     C11 --> C12{"how many such kinds?"}
     C12 -->|"none"| C20
@@ -5487,6 +5632,28 @@ flowchart TD
     C18 -->|"no"| C19{"more kinds?"}
     C19 -->|"yes"| C16
     C19 -->|"no"| C20["OK: the picked targets of each kind"]
+```
+
+### namesByKind, stopSignals and sayAbout
+
+`namesByKind` reads the target names of the options by kind key, so that no step after the command line needs a flag: `startMany` hands the picks of each project to its `start`, and `doctor` its target names, as `named`, which reaches a kind without a flag too. `stopSignals` gives each `open` its `ctx.signal`, one signal per target so that no signal gathers the listeners of many targets; `requestStop` fires them. `sayAbout` gives each `open` its `ctx.say`.
+
+```mermaid
+flowchart TD
+    N1["namesByKind of the options"] --> N2{"named given, by kind key?"}
+    N2 -->|"yes"| N3["for each kind in list order: named under its key"]
+    N2 -->|"no"| N4{"the kind has a flag?"}
+    N4 -->|"yes"| N5["the list under its flag, as parseStartArgs gives it"]
+    N4 -->|"no"| N6["nothing: a kind without a flag is named only through named"]
+    N3 --> N7["each value, or null when none, by kind key"]
+    N5 --> N7
+    N6 --> N7
+    G1["stopSignals"] --> G2["signal: a new AbortController for one target, kept, its signal given.<br/>Already aborted when fire was called before"]
+    G1 --> G3["fire: remembers that it fired and aborts every controller kept"]
+    G3 --> G4["start calls it in requestStop, doctor in its own requestStop, each at the first stop only"]
+    A1["sayAbout of kind and target, given to open as say"] --> A2["say of a text: formatSaidLine of now, the label of the kind, the name of the target and the text"]
+    A2 --> A3["written to stderr with a newline through write, so a dead stream drops it, never recorded in the audit log, never clipped"]
+    A3 --> A4["the kind may keep say and call it later, after open, for this target"]
 ```
 
 ### openTarget
@@ -5517,7 +5684,7 @@ flowchart TD
     O18 --> O19["gives the opened entry and its secrets"]
 ```
 
-In `start`, `open` is `openGuarded` with `closeOne` for a kind that has `close`, `onOpened` adds the entry to the opened list and keeps the secrets by kind and name, and `lifecycle` records the entry in the audit log and prints it; a late result leaves the kind. Every entry carries the kind's label and the target's name.
+In `start`, `open` is `openGuarded` with `closeOne` for a kind that has `close`, `onOpened` adds the entry to the opened list and keeps the secrets by kind and name, and `lifecycle` records the entry in the audit log and prints it; a late result leaves the kind. Every entry carries the kind's label and the target's name. The context that the caller gives holds `signal` and `say` for the target (see namesByKind, stopSignals and sayAbout). The opened entry, with the extras of `open`, goes on to `close`, `record`, `sessionFiles`, `probe`, `downMessage` and `perform`; the core never writes it to a file.
 
 ### prepareTargets, openGuarded, closeOne and closeTarget
 
@@ -5680,7 +5847,7 @@ The exact text of check 5: `another ksproxy start is listening (pid N)`. Check 5
 
 ```mermaid
 flowchart TD
-    C1["chooseAll of projects, inventories, options, the real process, pick, label"] --> C2{"--all, or the flag of some kind given?"}
+    C1["chooseAll of projects, inventories, options, the real process, pick, label"] --> C2{"--all, or namesByKind of the options gives names for some kind, a kind flag given?"}
     C2 -->|"yes"| C3["OK: every start gets the options as given, kind flags are resolved by name in start as before"]
     C2 -->|"no"| C4{"several projects, and stdin is not a terminal?"}
     C4 -->|"yes"| X1["ERROR: several projects need --all when not running in a terminal"]
@@ -5688,7 +5855,7 @@ flowchart TD
     C5 --> C6["chooseTargets of src/start.js with its inventory and the real process,<br/>through pick with the title after PREFIX, such as [shop] Which kinds of proxy?"]
     C6 --> C7{"an error? Only one project gets here without a terminal"}
     C7 -->|"yes"| X2["ERROR: its text, no targets selected: use FLAGS or --all when not running in a terminal"]
-    C7 -->|"no"| C8["the names picked, kind by kind, become the kind flags of the options of that project"]
+    C7 -->|"no"| C8["the names picked, by kind key, become named in the options of that project, which reaches a kind without a flag too"]
     C8 --> C9{"no name in any kind: cancelled or nothing chosen?"}
     C9 -->|"yes"| X3["ERROR: PREFIX nothing selected"]
     C9 -->|"no"| C10{"more projects?"}
@@ -5995,7 +6162,7 @@ The real warning has a semicolon after the day: `the token expires on DAY; type 
 
 ## src/tools.js
 
-The MCP tools: `toolDefinitions` (`list_targets` first, then the tool of each kind in list order that is listed, built when called), `callTool` and its exec path, `detailOf` (the call among the arguments), `reviewRoute` and `reviewWordsProblem` for what may go to the reviewer, `targetState`, `scrubOutput`, and `noSessionText`, the answer while no session is live. The exec path shares three helpers with `answerCall`, the handler of a brokered call inside `ksproxy start`: `detailProblem` (the type of the call), `auditedDetailOf` (the call as the audit entry records it) and `reviewStep` (the review route, the reviewer and the refusal texts). `answerCall` uses `performWithin` and `validResult` for the run; both paths shape each stream with `fitStream`, which uses `dropCutSecret`, `dropLast` and `capBytes` with the visible limit of the target from `visibleLimit` and the fixed `OUTPUT_MARGIN`; `answerLimit` gives the longest answer line of a brokered call; `callSocketOrNull` and `brokeredState` serve the mcp side of a brokered kind.
+The MCP tools: `toolDefinitions` (`list_targets` first, then the tool of each kind in list order that is listed, built when called, then the tools of the live session that `directTools` gives), `callTool` and its exec path, `callDirect` (a tool of the session routed to `mcp_call`, `ROUTED_TOOL`) with `sessionTools`, `listFieldsOf` (what the kind of a target adds in `list_targets`), `detailOf` (the call among the arguments), `reviewRoute` and `reviewWordsProblem` for what may go to the reviewer, `targetState`, `scrubOutput`, and `noSessionText`, the answer while no session is live. The exec path shares three helpers with `answerCall`, the handler of a brokered call inside `ksproxy start`: `detailProblem` (the type of the call), `auditedDetailOf` (the call as the audit entry records it) and `reviewStep` (the review route, the reviewer and the refusal texts). `answerCall` uses `performWithin` and `validResult` for the run; both paths shape each stream with `fitStream`, which uses `dropCutSecret`, `dropLast` and `capBytes` with the visible limit of the target from `visibleLimit` and the fixed `OUTPUT_MARGIN`; `answerLimit` gives the longest answer line of a brokered call; `callSocketOrNull` and `brokeredState` serve the mcp side of a brokered kind.
 
 The decisions, the commands, the state checks and the output rewrites of each kind live in the kind objects (`src/kinds/ssh/index.js`, `src/kinds/kubernetes/index.js`, `src/kinds/local/index.js`). This file finds the kind with `kindByTool` or `kindByKey` and calls it. It imports nothing under `src/kinds/` except the list.
 
@@ -6003,18 +6170,21 @@ The decisions, the commands, the state checks and the output rewrites of each ki
 
 ### toolDefinitions
 
-This diagram shows which tools `tools/list` gives. Listing a tool grants nothing: `callTool` answers the tool of every kind in the list.
+This diagram shows which tools `tools/list` gives. Listing a tool grants nothing: `callTool` answers the tool of every kind in the list. A tool whose `listed` is `false`, today `mcp_call`, is never listed: the agent sees the tools of an MCP server under their own names instead, and `mcp_call` still answers when called.
 
 ```mermaid
 flowchart TD
-    D1["toolDefinitions of an inventory, an empty one by default"] --> D2["list_targets first"]
-    D2 --> D3{"for each kind in list order: not brokered?"}
+    D1["toolDefinitions of an inventory, an empty one by default, and direct, none by default"] --> D2["list_targets first"]
+    D2 --> D0{"for each kind in list order: its tool has listed false?"}
+    D0 -->|"yes"| D7b["never listed, today mcp_call, whatever the inventory"]
+    D0 -->|"no"| D3{"not brokered?"}
     D3 -->|"yes"| D4["its tool is listed: today ssh_exec, kubectl and local_exec, always"]
     D3 -->|"no"| D5{"the inventory is null, it could not be read?"}
     D5 -->|"yes"| D4b["its tool is listed"]
     D5 -->|"no"| D6{"the inventory holds a target of that kind?"}
     D6 -->|"yes"| D4b
     D6 -->|"no"| D7["left out, today http_request without an http target"]
+    D1 --> D8["then each tool of direct, from directTools, in its order: none by default, so the list of before"]
 ```
 
 ### callTool
@@ -6022,13 +6192,13 @@ flowchart TD
 ```mermaid
 flowchart TD
     C1["callTool of name, args, env, origin: undefined, or from and client of a network client,<br/>and signal: undefined, or the AbortSignal of the network listener"] --> C2{"name is list_targets, or kindByTool finds the kind of that tool?"}
-    C2 -->|"no"| C3["unknown tool: NAME, isError"]
+    C2 -->|"no"| C3["callDirect, below: a tool of the live session, else unknown tool: NAME, isError"]
     C2 -->|"yes"| C4["liveSession of the session folder"]
     C4 --> C5{"none, or targets not a list?"}
     C5 -->|"yes"| C6["noSessionText of env, see below, isError unless the tool is list_targets"]
     C5 -->|"no"| C7{"list_targets?"}
     C7 -->|"yes"| C8["listTargets: audit an entry with event list, and from and client when there is an origin,<br/>a failed write is reported on stderr"]
-    C8 --> C9["OK: JSON with startedAt and each target's kind, name, description, state from targetState, allow, review true<br/>for a reviewed target, and outputLimit N KiB per stream when outputKiB of the target is not 256, isError false"]
+    C8 --> C9["OK: JSON with startedAt and each target's kind, name, description, state from targetState, allow, review true<br/>for a reviewed target, outputLimit N KiB per stream when outputKiB of the target is not 256,<br/>and listFieldsOf: what listFields of its kind adds, when the kind has it, today tools of an mcp target. isError false"]
     C7 -->|"no"| C10{"isPlainObject: args an object, not null and not an array?"}
     C10 -->|"no"| C11["invalid arguments: expected an object, isError"]
     C10 -->|"yes"| C12["execTool with the origin and the signal, next diagrams"]
@@ -6036,6 +6206,31 @@ flowchart TD
 ```
 
 The session folder, the sockets and the log of a call all come from the env, so the MCP server of a project reads and reaches the session of that project only, and never another project's or the default's.
+
+### directTools, sessionTools and callDirect
+
+This diagram shows how a tool of the live session is listed and called. Its name is `TARGET__TOOL`; a target name holds no `_`, so a name without `__` is never one. Its call is a call of `mcp_call`, whose rules, audit and answer apply as they are.
+
+```mermaid
+flowchart TD
+    G1["callDirect of name, args, env"] --> G2{"name a text with __ in it?"}
+    G2 -->|"no"| G3["unknown tool: NAME, isError, and the session is not read"]
+    G2 -->|"yes"| G4["sessionTools of env"]
+    G4 --> G5{"a tool of its list has that name?"}
+    G5 -->|"no: stale, not exported, of another project, or no session"| G6["unknown tool: NAME, isError, as for any unknown tool"]
+    G5 -->|"yes"| G7{"isPlainObject of args?"}
+    G7 -->|"no"| G8["invalid arguments: expected an object, isError"]
+    G7 -->|"yes"| G9["execTool of ROUTED_TOOL, mcp_call, with the session read: target and tool of the entry,<br/>arguments the args whole, timeout_seconds the timeoutSeconds of the target"]
+    G9 --> G10["the refusals, the audit entry and the answer are those of mcp_call, diagram 8.1"]
+    S1["sessionTools of env"] --> S2["sessionDirOf env, then liveSession of it"]
+    S2 --> S3{"live, with a list of targets?"}
+    S3 -->|"no"| S4["no tools"]
+    S3 -->|"yes"| S5["readSessionTools of the folder and the session, in the src/session-tools.js section"]
+    S5 --> S6["less each tool named as a fixed tool, list_targets or the tool of any kind, listed or not,<br/>and each name that comes more than once: no copy of it"]
+    S6 --> S7["the session, the folder and the tools, in the order of the file"]
+    S1 -->|"anything throws"| S4
+    T1["directTools of env"] --> T2["the tools of sessionTools, for toolDefinitions"]
+```
 
 ### noSessionText
 
@@ -6192,7 +6387,7 @@ flowchart TD
     T1["hiddenTexts of the kind and the opened target"] --> T2{"the kind has hiddenForms?"}
     T2 -->|"yes"| T3["the secret values, then hiddenForms of the target and the secrets"]
     T2 -->|"no"| T4["the secret values"]
-    P1["performWithin of kind, opened target, decision, env, timeoutMs, maxBytes, signal"] --> P2["a signal of its own, given to perform with env, the target's secrets, timeoutMs and maxBytes,<br/>the read limit of the target, the same for every call on it"]
+    P1["performWithin of kind, opened target, decision, env, timeoutMs, maxBytes, signal"] --> P2["a signal of its own, given to perform with env, the target's secrets, timeoutMs and maxBytes,<br/>the read limit of the target, the same for every call on it, the input, and opened: the opened entry with the extras of open"]
     P2 --> P3["perform of the kind, a throw becomes a rejection"]
     P2 --> P4["the signal of the call server fires: abort, and the wait ends with stopped"]
     P2 --> P5["timeoutMs passes: abort, then at most GRACE_MS, 1000 ms, before the wait ends with LATE: exit code null, no output, timed out"]
@@ -6348,7 +6543,7 @@ The signal fires at the call's time limit and when the session stops: `run` kill
 
 ## src/kinds/command/index.js
 
-The custom `command` kind: one client program the user names in the inventory, with fixed arguments, secrets in the child's environment and an allow list. It is brokered: `perform` runs the program through `runClient`. Its names are `command` for the key, the flag and the word, `cmd` for the label; its tool is `command_exec` with `command` as a string.
+The custom `command` kind: one client program the user names in the inventory, with fixed arguments, secrets in the child's environment and an allow list. It is brokered: `perform` runs the program through `runClient`. Its names are `command` for the key, the flag and the word, `cmd` for the label; its tool is `command_exec` with `command` as a string. The `mcp` kind checks and finds the program of a local MCP server the same way: it imports `checkProgram`, `resolveProgram` and `LOADER_PREFIXES` (`LD_` and `DYLD_`, the names of variables that change how programs are loaded, refused in `env`).
 
 ### command entries: validate, checkProgram and checkArgs
 
@@ -8334,3 +8529,1293 @@ flowchart TD
 | `server object` | CREATE, ALTER, DROP or RENAME of a server object |
 | `server function` | a call of `load_file`, `sys_exec`, `sys_eval`, `sys_get` or `sys_set` |
 | `waiting function` | a call of one of `WAIT_FUNCTIONS` |
+
+## src/kinds/engines/mcp-client.js
+
+The MCP client engine: `ksproxy start` talks to one MCP server through it (the `mcp` kind, `src/kinds/mcp/index.js`). It imports only `node:child_process`, `node:fs` (to read the package version) and `hideSecrets` of `src/kinds/engines/http.js`; HTTP uses the global `fetch`. The protocol layer, `makeClient`, `listEveryTool` and `callOne`, knows nothing of the transport. Over stdio, `createSession` and `negotiate` run on `startStdio`, the program; over HTTP, `createHttpSession` and `negotiateHttp` give the same client. Everything the server sends is hostile: no answer may throw, grow memory without bound, or leave a promise that rejects with nobody waiting, since `start` stops every target on an uncaught error.
+
+`connectStdio` and `connectHttp` are the functions that connect. The constants: `MODERN_VERSION` (`2026-07-28`), `LEGACY_VERSION` (`2025-11-25`, asked at `initialize`), `MAX_TOOLS` (2000), `MAX_MESSAGE_BYTES` (16 MiB, the default limit of one line of stdout, of one HTTP JSON body, and of one SSE line and one SSE event) and `MAX_LIST_BYTES` (16 MiB, the default limit of all the pages of `tools/list` together, as received: what one message may hold, so a server whose list fits one message works as before, while a list ten times the 1 MiB that a session may export serves no one).
+
+Both take `hidden`, the texts the caller hides (the kind gives the secret values of the target and their forms, `hiddenOf`). Every server text the engine shows, an error of `initialize`, `server/discover` or `tools/list`, `serverInfo`, the name of an argument in a header refusal and the lines of `stderrTail`, has them hidden before it is cleaned or clipped, through `shownText`, which the kind uses too, with `dropCut`. So a clip never cuts a secret in two and shows a piece of it.
+
+The client it gives: `era` (the version in use), `serverInfo` (`name` and `version`), `listTools({ signal })` giving `{ tools, capped }`, `callTool(name, args, { timeoutMs, maxBytes, signal })` giving one of `{ result, truncated }`, `{ rpcError: { code, message } }`, `{ inputRequired: true }`, `{ timedOut: true }`, `{ tooLarge: true }` or `{ ended: { code, signal } }`, `ping({ signal })` giving true or false, `stderrTail(lines)`, `onEnd(callback)` and `close()`, a promise of the end.
+
+`connectHttp({ url, headers, fetchImpl, signal, limitMs, maxMessageBytes })` gives the same client without `stderrTail`. Its `callTool` may also give `{ httpError: { status, retryAfter } }` (any status that is not 2xx, a redirect too; `retryAfter` in seconds or null; the body is never read), `{ unreachable: true }` (fetch failed) or `{ cutOff: true }` (the answer ended or broke before it came); a value the server wants in a header that cannot go there as it is gives `{ rpcError: { code: -32602, message } }` and nothing is sent. `ping` is true for a 429 too. The end comes only from `close`, with `code` and `signal` null. `headers()` is asked before every request, for the token, and no error text holds what it gives.
+
+### connectStdio
+
+```mermaid
+flowchart TD
+    C1["connectStdio of argv, env, cwd, signal, limitMs default 120000, maxMessageBytes default MAX_MESSAGE_BYTES,<br/>maxListBytes default MAX_LIST_BYTES, hidden default none"] --> C2{"the signal already aborted?"}
+    C2 -->|"yes"| E1["REJECT: the start of the MCP server was stopped. Nothing is started"]
+    C2 -->|"no"| C3["createSession, whose send and answer write through the transport, with the three limits"]
+    C3 --> C4["startStdio: argv 0 with the other words, no shell, its own process group, exactly env, in cwd"]
+    C4 -->|"spawn throws"| E2["REJECT: could not start the MCP server: the message"]
+    C4 --> C5["a timer of limitMs and the signal each abort one inner controller, with their own reason"]
+    C5 --> C6["negotiate with the inner signal"]
+    C6 -->|"the era and the server's info"| C7["clear the timer, drop the signal listener"]
+    C7 --> C8["OK: makeClient, with stderrTail and close of the transport"]
+    C6 -->|"throws"| C9["kill: SIGKILL to the group, then wait until the program is gone"]
+    C9 --> C10{"the child reported a spawn error, ENOENT for a missing program or folder?"}
+    C10 -->|"yes"| E2
+    C10 -->|"no"| C11{"the inner controller aborted?"}
+    C11 -->|"yes, the timer"| E3["REJECT: the MCP server was not ready within N seconds"]
+    C11 -->|"yes, the signal"| E4["REJECT: the start of the MCP server was stopped"]
+    C11 -->|"no"| E5["REJECT: the error of negotiate"]
+    E2 --> C12["in every case of the start: the timer cleared and the signal listener removed"]
+    E3 --> C12
+    E4 --> C12
+    E5 --> C12
+    C12 --> C13["an error after the program started carries stderrTail of it, for the kind to show where it may"]
+```
+
+### negotiate
+
+`initialize` comes first: older servers built on the Python SDK stop on a method they do not know before `initialize`, newer ones answer `-32602`, and some may never answer a probe. Only a JSON-RPC error to it leads to `server/discover`. `initialize` declares no client capabilities, so a server has no reason to ask for sampling, elicitation or roots.
+
+```mermaid
+flowchart TD
+    N1["negotiate of the session and the signal"] --> N2["initialize, queued: protocolVersion LEGACY_VERSION, capabilities empty, clientInfo ksproxy and its version"]
+    N2 --> N3{"a result?"}
+    N3 -->|"yes"| N4{"versionOf: its protocolVersion a text of the form YYYY-MM-DD?"}
+    N4 -->|"no"| E1["THROW: the MCP server answered initialize without a protocol version"]
+    N4 -->|"yes"| N5["send notifications/initialized"]
+    N5 --> N6["OK: the era is the version the server answered, the info its serverInfo"]
+    N3 -->|"no"| N7{"a JSON-RPC error?"}
+    N7 -->|"no: the end, the wait stopped, too large, not JSON"| E2["THROW: failure of initialize"]
+    N7 -->|"yes: Method not found, an unsupported version, any other"| N8["server/discover, queued, with _meta: protocolVersion MODERN_VERSION, clientInfo, clientCapabilities empty"]
+    N8 --> N9{"a result?"}
+    N9 -->|"no"| E3["THROW: failure of server/discover"]
+    N9 -->|"yes"| N10["OK: the era MODERN_VERSION, the info its serverInfo"]
+```
+
+### createSession: requests, one call at a time
+
+Over stdio, calls run one at a time per server: queued requests (`initialize`, `server/discover`, each page of `tools/list`, each call) go out one after another, so a line the transport skips or cannot read always belongs to the one request in flight, `current`. A call's time limit counts from when it was asked, so a call can time out in the queue; it is then never sent. A ping does not queue, so a probe is not held back by a long call; its answer is small and can never be the line skipped.
+
+```mermaid
+flowchart TD
+    R1["request of method, params, signal, timeoutMs, call, queued default true"] --> R2{"the server has ended?"}
+    R2 -->|"yes"| R3["OK: ended with its exit code and signal, nothing sent"]
+    R2 -->|"no"| R4{"the signal already aborted?"}
+    R4 -->|"yes"| R5["OK: timedOut, nothing sent"]
+    R4 -->|"no"| R6["the next id: 1, 2, 3. The line is JSON.stringify of the message, a throw rejects this request only"]
+    R6 --> R7["timeoutMs given: a timer. The signal given: a listener. Each calls abandon with timedOut"]
+    R7 --> R8{"queued?"}
+    R8 -->|"no, a ping"| R9["sent at once, waiting for its answer beside the queue"]
+    R8 -->|"yes"| R10["at the end of the queue, then pump"]
+    P1["pump: one call at a time per server, one queued request in flight"] --> P2{"the server ended, a request in flight, or the queue empty?"}
+    P2 -->|"yes"| P3["nothing"]
+    P2 -->|"no"| P4["the first of the queue becomes current, the request in flight, and is sent"]
+    F1["finish of an entry and its outcome"] --> F2["out of the waiting answers or of the queue, no longer current, its timer and listener removed"]
+    F2 --> F3["resolve the outcome, then pump: the next request goes out only now"]
+    A1["abandon of an entry and its outcome"] --> A2{"a call that was sent?"}
+    A2 -->|"yes"| A3["send notifications/cancelled with requestId and the reason: ksproxy stopped waiting for the answer"]
+    A2 -->|"no, still queued, or not a call"| A4["finish"]
+    A3 --> A4
+```
+
+### createSession: what the transport hands back
+
+```mermaid
+flowchart TD
+    V1["receive of a message the transport read"] --> V2{"isObject: an object, not null, not an array?"}
+    V2 -->|"no: 42, null, a batch"| V3["dropped"]
+    V2 -->|"yes"| V4{"a text method?"}
+    V4 -->|"yes"| V5{"isId: a text or a number id?"}
+    V5 -->|"no"| V6["a notification: read and dropped, progress, log, list_changed and cancelled alike"]
+    V5 -->|"yes"| V7["a request from the server: answer of serverAnswer, which the transport may drop. It never ends the call in flight"]
+    V4 -->|"no"| V8{"its id waits for an answer?"}
+    V8 -->|"no"| V9["dropped: a late answer, or an answer to nothing"]
+    V8 -->|"yes"| V10["finish with answerOf the message and the bytes of its line"]
+    S1["serverAnswer"] --> S2{"ping?"}
+    S2 -->|"yes"| S3["an empty result"]
+    S2 -->|"no: sampling, elicitation, roots, anything else"| S4["error -32601: ksproxy does not support requests from an MCP server"]
+    Q1["fault of tooLarge or notJson"] --> Q2{"a request in flight?"}
+    Q2 -->|"yes"| Q3["abandon it with that outcome"]
+    Q2 -->|"no"| Q4["nothing: the line belonged to no request, a flood of notifications for one"]
+    D1["end of the exit code and signal, once"] --> D2["every waiting and queued request: finish with ended"]
+    D2 --> D3["watchEnd tells each onEnd callback. onEnd is watchEnd's, and learn is ignore"]
+```
+
+### answerOf and callOne
+
+```mermaid
+flowchart TD
+    W1["answerOf of an answer"] --> W2{"error an object?"}
+    W2 -->|"yes"| W3["rpcError: the code when it is an integer, else null. The message when it is a text, else empty"]
+    W2 -->|"no"| W4{"result an object?"}
+    W4 -->|"yes"| W5["result, and bytes: the size of the message as it was received"]
+    W4 -->|"no"| W6["rpcError -32603: the MCP server sent an answer without a result"]
+    K1["callOne, callTool of name, args, timeoutMs, maxBytes default no limit, signal"] --> K2["request tools/call as a call, queued: params name, arguments args, and _meta when modern"]
+    K2 --> K3{"the outcome?"}
+    K3 -->|"notJson"| K4["OK: rpcError -32700: the MCP server sent a line that is not JSON"]
+    K3 -->|"timedOut, tooLarge, ended or rpcError"| K5["OK: the outcome as it is"]
+    K3 -->|"a result"| K6{"modern, and its resultType input_required?"}
+    K6 -->|"yes"| K7["OK: inputRequired"]
+    K6 -->|"no, also a legacy result with that resultType"| K8["OK: cutText of the result and maxBytes"]
+```
+
+### cutText
+
+`maxBytes` applies to the decoded text, not to the line: the line may be as large as `maxMessageBytes`, and the texts of the result are cut to `maxBytes` and marked truncated instead of failing. Every part after the cut is left out, so the cut is always the end of the answer: the core drops a piece of a secret at the end of a stream, and a part after the cut would hide such a piece from it.
+
+```mermaid
+flowchart TD
+    T1["cutText of a result and maxBytes"] --> T2{"content an array?"}
+    T2 -->|"no"| T3["OK: the result as it is, truncated false"]
+    T2 -->|"yes"| T4["left is maxBytes. For each part in order"]
+    T4 --> T5["textOf the part, and its size in UTF-8 bytes: 0 for a part without text"]
+    T5 --> T6{"more than left?"}
+    T6 -->|"no"| T7["kept as it is, left less its size"]
+    T6 -->|"yes"| T9{"left above 0?"}
+    T9 -->|"yes"| T10["withText of the part and cutUtf8 of its text to left bytes, kept"]
+    T9 -->|"no"| T11["the part left out"]
+    T10 --> T14["OK: a copy of the result with the content so far, truncated true. Every later part is left out"]
+    T11 --> T14
+    T7 --> T12{"more parts?"}
+    T12 -->|"yes"| T5
+    T12 -->|"no"| T13["OK: a copy of the result with the content, truncated false. structuredContent stays as it is"]
+```
+
+### textOf, withText and cutUtf8
+
+```mermaid
+flowchart TD
+    X1["textOf of a part"] --> X2{"an object of type text with a text?"}
+    X2 -->|"yes"| X3["its text"]
+    X2 -->|"no"| X4{"of type resource, its resource an object with a text?"}
+    X4 -->|"yes"| X5["the resource's text"]
+    X4 -->|"no: an image, audio, a blob, a link, anything else"| X6["null: no text"]
+    U1["withText of a part and a text"] --> U2{"a text part?"}
+    U2 -->|"yes"| U3["a copy with the new text"]
+    U2 -->|"no"| U4["a copy whose resource is a copy with the new text"]
+    Z1["cutUtf8 of text and bytes"] --> Z2["the UTF-8 bytes up to bytes, moved back past continuation bytes, so no character is split"]
+```
+
+### listEveryTool
+
+A page without tools ends the list, so a server that sends an empty page with a cursor forever cannot hold the start; one that sends tools forever reaches `MAX_TOOLS`, and one that sends large pages forever reaches `maxListBytes` first: without it, 2,000 pages of 16 MiB could fill the memory of `start` before `MAX_TOOLS`.
+
+```mermaid
+flowchart TD
+    L1["listEveryTool, listTools of signal"] --> L2["no tools, no cursor, 0 bytes"]
+    L2 --> L3["request tools/list, queued: the cursor when there is one, and _meta when modern"]
+    L3 --> L4{"a result?"}
+    L4 -->|"no"| E1["THROW: failure of tools/list"]
+    L4 -->|"yes"| L12["add the bytes of the page as it was received: its line, its JSON body or the data of its SSE event"]
+    L12 --> L13{"more than maxListBytes in all?"}
+    L13 -->|"yes"| E3["THROW: the list of tools of the MCP server takes more than N bytes over all its pages"]
+    L13 -->|"no"| L5{"its tools an array?"}
+    L5 -->|"no"| E2["THROW: the MCP server answered tools/list without a list of tools"]
+    L5 -->|"yes"| L6{"for each tool of the page: MAX_TOOLS kept already?"}
+    L6 -->|"yes"| L7["OK: the tools, capped true: the server had more"]
+    L6 -->|"no"| L8["kept as it is, the kind checks each one"]
+    L8 --> L6
+    L6 -->|"the page is done"| L9["the cursor is nextCursor when it is a text, else none"]
+    L9 --> L10{"no cursor, or an empty page?"}
+    L10 -->|"yes"| L11["OK: the tools, capped false"]
+    L10 -->|"no"| L3
+```
+
+### makeClient, ping and infoText
+
+```mermaid
+flowchart TD
+    M1["makeClient of the session, the era and the server's info"] --> M2{"era is MODERN_VERSION?"}
+    M2 -->|"yes"| M3["modern: every request carries _meta with protocolVersion, clientInfo and clientCapabilities"]
+    M2 -->|"no"| M4["legacy: no _meta"]
+    M3 --> M5["serverInfo: name and version, each through infoText"]
+    M4 --> M5
+    M5 --> M6["callTool is callOne, onEnd is the session's. infoText gets the hidden texts of the session"]
+    M6 --> M7["listTools: listEveryTool, then the session's learn of the tools, the x-mcp-header marks over HTTP"]
+    G1["ping of signal"] --> G2["request ping, not queued, with _meta when modern"]
+    G2 --> G3{"a result, a JSON-RPC error, or HTTP 429?"}
+    G3 -->|"yes"| G4["OK: true, the server answered. A 429 only says it is busy"]
+    G3 -->|"no: ended, the signal, another HTTP error, out of reach"| G5["OK: false"]
+    I1["infoText of a value and the hidden texts"] --> I2{"a text?"}
+    I2 -->|"yes"| I3["shownText with cleanLine, at most 64 characters"]
+    I2 -->|"no"| I4["empty"]
+```
+
+### failure
+
+```mermaid
+flowchart TD
+    F1["failure of what, the outcome, and maxMessageBytes and hidden of the session"] --> F2{"ended?"}
+    F2 -->|"yes"| F3["endText"]
+    F2 -->|"no"| F4{"timedOut?"}
+    F4 -->|"yes"| F5["the wait for WHAT was stopped"]
+    F4 -->|"no"| F6{"tooLarge?"}
+    F6 -->|"yes"| F7["the answer of the MCP server to WHAT is larger than LIMIT bytes"]
+    F6 -->|"no"| F8{"notJson?"}
+    F8 -->|"yes"| F9["the MCP server sent a line that is not JSON in answer to WHAT"]
+    F8 -->|"no"| F10{"httpError?"}
+    F10 -->|"yes"| F11["httpText"]
+    F10 -->|"no"| F12{"unreachable?"}
+    F12 -->|"yes"| F13["the MCP server could not be reached for WHAT"]
+    F12 -->|"no"| F14{"cutOff?"}
+    F14 -->|"yes"| F15["the answer of the MCP server to WHAT ended early"]
+    F14 -->|"no"| F16["the MCP server refused WHAT: its message through shownText with cleanLine, at most 300 characters"]
+```
+
+### endText, httpText and retryAfterOf
+
+```mermaid
+flowchart TD
+    N1["endText of the exit code and signal"] --> N2{"a signal?"}
+    N2 -->|"yes"| N3["the MCP server stopped (signal NAME)"]
+    N2 -->|"no"| N4{"an exit code?"}
+    N4 -->|"yes"| N5["the MCP server stopped (exit CODE)"]
+    N4 -->|"no: ksproxy closed an HTTP connection"| N6["the connection to the MCP server was closed"]
+    H1["httpText of what, the status and retryAfter"] --> H2{"status below 400: a redirect?"}
+    H2 -->|"yes"| H3["the MCP server answered WHAT with a redirect (HTTP STATUS), which is not followed"]
+    H2 -->|"no"| H4["the MCP server answered WHAT with HTTP STATUS, and with a retryAfter: a comma, then retry after N seconds"]
+    R1["retryAfterOf the Retry-After header"] --> R2{"none?"}
+    R2 -->|"yes"| R3["null"]
+    R2 -->|"no"| R4{"1 to 9 digits?"}
+    R4 -->|"yes"| R5["that number of seconds"]
+    R4 -->|"no"| R6{"Date.parse reads a date?"}
+    R6 -->|"yes"| R7["the seconds until then, rounded up, 0 once past"]
+    R6 -->|"no"| R8["null: no text of the server is kept"]
+```
+
+### shownText and dropCut
+
+The one order for every text of the server that ksproxy clips: hide, clean, hide again, drop a cut piece, clip. The engine uses it for its own texts, and the kind for an error message, a link, a MIME type and a part type of an answer (`src/kinds/mcp/answer.js`) and for a description (`src/kinds/mcp/export.js`). A secret is hidden while it is whole, so the clip, which the agent can move by the length of its own arguments, never shows a piece of it.
+
+```mermaid
+flowchart TD
+    S1["shownText of a text, the hidden texts, max and clean"] --> S2["String of the text, every hidden text replaced by the hidden marker, the longest first"]
+    S2 --> S3["clean: the caller's, cleanLine here. Then every hidden text hidden again, as cleaning can join the pieces of one"]
+    S3 --> S4["dropCut at the end: a piece that a cut before ksproxy left there"]
+    S4 --> S5{"at most max characters?"}
+    S5 -->|"yes"| S6["OK: the text"]
+    S5 -->|"no"| S7["the first max less 1 characters, dropCut at the end again, then an ellipsis"]
+    D1["dropCut of a text, the hidden texts, the end"] --> D2["from the size of the longest hidden text less one down to 4: the first piece at that end<br/>that a longer hidden text ends with, at the start, or starts with, at the end, is cut off"]
+    D2 --> D3["none: the text as it is. Pieces of 1 to 3 characters stay, as in the stderr lines"]
+```
+
+### cleanLine, tell, watchEnd, versionOf, isObject, isId, ignore and unanswered
+
+```mermaid
+flowchart TD
+    L1["cleanLine of a text"] --> L2["terminal escapes removed: CSI, OSC up to BEL or ST, a lone ESC with one character"]
+    L2 --> L3["a tab becomes a space, then every other C0 or C1 control character and the direction marks U+202A to U+202E and U+2066 to U+2069 are removed"]
+    T1["tell of a callback and the end"] --> T2["the callback in try and catch: a throw is ignored, since an uncaught one would stop every target"]
+    W1["watchEnd, the end of a transport"] --> W2["end of a value: kept, and told through tell once to each callback waiting"]
+    W1 --> W3{"onEnd of a callback: ended already?"}
+    W3 -->|"yes"| W4["tell it in a microtask"]
+    W3 -->|"no"| W5["kept for the end"]
+    V1["versionOf a result of initialize"] --> V2{"its protocolVersion a text of the form YYYY-MM-DD?"}
+    V2 -->|"yes"| V3["that version"]
+    V2 -->|"no"| V4["THROW: the MCP server answered initialize without a protocol version"]
+    H1["isObject: not null, an object, not an array. isId: a text or a number. ignore: does nothing, the learn of the stdio session"]
+    U1["unanswered of an outcome: tooLarge, notJson or cutOff, an answer not read to its end, while the server may still work on it"]
+```
+
+### lineReader
+
+```mermaid
+flowchart TD
+    R1["lineReader of limit, onLine and onSkip: a function for each chunk of stdout"] --> R2["find the next newline in the chunk, from where it got to"]
+    R2 --> R3{"skipping the current line?"}
+    R3 -->|"no"| R4["add the bytes up to the newline, or to the chunk's end, to the line's size"]
+    R4 --> R5{"the size over limit?"}
+    R5 -->|"yes"| R6["skipping: the pieces kept are dropped, onSkip once"]
+    R5 -->|"no"| R7["keep the piece"]
+    R3 -->|"yes"| R8{"a newline in this chunk?"}
+    R6 --> R8
+    R7 --> R8
+    R8 -->|"no"| R9["wait for the next chunk"]
+    R8 -->|"yes"| R10{"skipping?"}
+    R10 -->|"no"| R11["onLine of the pieces joined"]
+    R10 -->|"yes"| R12["nothing: the line is gone, and never more than limit bytes of it were kept"]
+    R11 --> R13["a new line starts after the newline, not skipping"]
+    R12 --> R13
+    R13 --> R2
+```
+
+### startStdio: the program and its events
+
+```mermaid
+flowchart TD
+    S1["startStdio of argv, env, cwd and the session"] --> S2["spawn: no shell, detached in its own process group, stdin, stdout and stderr piped, exactly env and no other variable"]
+    S2 --> S3["stdout: lineReader with maxMessageBytes of the session"]
+    S3 -->|"a line"| S4{"only blanks?"}
+    S4 -->|"yes"| S5["ignored"]
+    S4 -->|"no"| S6{"JSON.parse works?"}
+    S6 -->|"no"| S7["session fault with notJson"]
+    S6 -->|"yes"| S8["session receive, with the bytes of the line"]
+    S3 -->|"a line skipped"| S9["session fault with tooLarge"]
+    S2 --> S10["stderr: kept in a ring of the newest 64 KiB, never sent anywhere"]
+    S2 --> S11["an error on stdin, stdout or stderr, EPIPE once the server is gone or closed stdin: SIGKILL to the group"]
+    S2 --> S12["error event: the spawn error is kept, ENOENT"]
+    S2 --> S13["exit event: the exit code and signal kept, a grace timer of 500 ms destroys stdout and stderr"]
+    S13 --> S14["so a program left in the group that holds stdout open cannot hold the end back"]
+    S2 --> S15["close event, once: stopping, timers cleared, SIGKILL to the group for what is left in it"]
+    S15 --> S16["session end with the exit code and signal, both null after a spawn error"]
+    S16 --> S17["done settles with them"]
+```
+
+### startStdio: send, close, kill and stderrTail
+
+```mermaid
+flowchart TD
+    W1["send of a line: a request, a notification, a cancel"] --> W2{"stdin still writable?"}
+    W2 -->|"yes"| W3["write the line and a newline. JSON.stringify never writes a newline inside a message"]
+    W2 -->|"no: closed or broken"| W4["nothing: the end settles what waits"]
+    A1["answer of a line: the answer to a request of the server"] --> A2{"more than 1 MiB, ANSWER_BACKLOG, waits to be written to stdin?"}
+    A2 -->|"yes: a server that asks and never reads"| A3["dropped, so what waits cannot grow"]
+    A2 -->|"no"| W1
+    C1["close"] --> C2{"stopping already, or ended?"}
+    C2 -->|"yes"| C3["the same done promise"]
+    C2 -->|"no"| C4["stopping. End stdin: a server should exit now"]
+    C4 --> C5["after 2 s: SIGTERM to the group"]
+    C5 --> C6["after 2 s more: SIGKILL to the group"]
+    C4 --> C7["done settles at the close event, when the program is gone, with the exit code and signal"]
+    C6 --> C7
+    K1["kill"] --> K2["SIGKILL to the group at once, errors ignored, then done"]
+    T1["stderrTail of lines"] --> T2["the ring as UTF-8, split at newlines, in each line the hidden texts of the session hidden, then cleanLine"]
+    T2 --> T3["lines empty after cleaning are left out"]
+    T3 --> T4["OK: the last lines of them, none for 0. The kind hides secrets, since it knows them"]
+```
+
+### The HTTP transport: requests at the same time
+
+Over HTTP each request is one POST, and its answer is read only from the response to that POST, a JSON body or an SSE stream, and only when it carries that request's id. A line too large, data that is not JSON or an early end therefore belongs to that request without doubt, so requests are not queued: calls, pages and pings run at the same time, and one slow call holds back no other. Answers to other ids in a stream are dropped. In the 2025-11-25 era the `Mcp-Session-Id` is kept and sent; a 404 on it renews the session once, one renewal at a time. The deprecated HTTP+SSE transport, the GET stream and resumption with `Last-Event-ID` are not used.
+
+### connectHttp
+
+```mermaid
+flowchart TD
+    H1["connectHttp of url, headers default none, fetchImpl default fetch, signal, limitMs default 30000,<br/>maxMessageBytes default MAX_MESSAGE_BYTES, maxListBytes default MAX_LIST_BYTES, hidden default none"] --> H2{"the signal already aborted?"}
+    H2 -->|"yes"| E1["REJECT: the connection to the MCP server was stopped. Nothing is sent"]
+    H2 -->|"no"| H3["createHttpSession of url, headers, fetchImpl, limitMs, maxMessageBytes, maxListBytes and hidden"]
+    H3 --> H4["a timer of limitMs and the signal each abort one inner controller, with their own reason"]
+    H4 --> H5["negotiateHttp with the inner signal"]
+    H5 -->|"the era and the server's info"| H6["OK: makeClient, with close of the session, and no stderrTail"]
+    H5 -->|"throws"| H7["close the session: what waits ends, and DELETE when initialize gave a session"]
+    H7 --> H8{"the inner controller aborted?"}
+    H8 -->|"yes, the timer"| E2["REJECT: the MCP server did not answer within N seconds"]
+    H8 -->|"yes, the signal"| E3["REJECT: the connection to the MCP server was stopped"]
+    H8 -->|"no"| E4["REJECT: the error of negotiateHttp"]
+    E2 --> H9["in every case: the timer cleared and the signal listener removed"]
+    E3 --> H9
+    E4 --> H9
+    H6 --> H9
+```
+
+### negotiateHttp and initialize
+
+Over HTTP the order is the specification's: `server/discover` first, and any HTTP error or JSON-RPC error to it means an older server. The body of an HTTP error is never read, so a 400 is not told apart from a 404.
+
+```mermaid
+flowchart TD
+    N1["negotiateHttp of the session and the signal"] --> N2["request server/discover with _meta, in the 2026-07-28 form: MCP-Protocol-Version 2026-07-28 and Mcp-Method"]
+    N2 --> N3{"a result?"}
+    N3 -->|"yes"| N4["OK: the era MODERN_VERSION, the info its serverInfo"]
+    N3 -->|"no"| N5{"an HTTP error, a redirect too, or a JSON-RPC error?"}
+    N5 -->|"no: out of reach, cut off, too large, not JSON, the wait stopped"| E1["THROW: failure of server/discover"]
+    N5 -->|"yes: 400 Mcp-Session-Id header is required, 404, 405, Method not found, Server not initialized"| I1["initialize of the signal"]
+    I1 --> I2["post initialize: protocolVersion LEGACY_VERSION, capabilities empty, clientInfo. MCP-Protocol-Version LEGACY_VERSION, no session"]
+    I2 --> I3{"a result?"}
+    I3 -->|"no"| E2["THROW: failure of initialize"]
+    I3 -->|"yes"| I4["versionOf the result, which throws without a version"]
+    I4 --> I5{"an Mcp-Session-Id header that is empty or not visible ASCII, 0x21 to 0x7E?"}
+    I5 -->|"yes"| E3["THROW: the MCP server sent a session id that is not visible ASCII"]
+    I5 -->|"no"| I6["the era is the version answered, the session the header, or none"]
+    I6 --> I7["note notifications/initialized within the signal, its answer not read"]
+    I7 --> I8{"the signal aborted meanwhile?"}
+    I8 -->|"yes"| E4["THROW: the signal's reason"]
+    I8 -->|"no"| I9["OK: the era and the server's info"]
+```
+
+### createHttpSession: request, leave and settle
+
+```mermaid
+flowchart TD
+    R1["request of method, params, signal, timeoutMs, call default false. queued is ignored"] --> R2{"closed?"}
+    R2 -->|"yes"| R3["OK: ended, code and signal null, nothing sent"]
+    R2 -->|"no"| R4{"the signal already aborted?"}
+    R4 -->|"yes"| R5["OK: timedOut, nothing sent"]
+    R4 -->|"no"| R6["entryOf: the next id, the message and its JSON. A throw of JSON.stringify rejects this request only"]
+    R6 --> R7["in live. A timer of timeoutMs and a signal listener each call leave with timedOut"]
+    R7 --> R8["exchange of the entry with its own stop signal"]
+    R8 --> R9{"unanswered: tooLarge, notJson or cutOff?"}
+    R9 -->|"yes"| L1["leave with the outcome"]
+    R9 -->|"no"| S1["settle with the outcome"]
+    L1 --> L2{"a call, the era not 2026-07-28, and still in live?"}
+    L2 -->|"yes"| L3["cancel: closing a 2025-11-25 stream does not cancel the call, notifications/cancelled does"]
+    L2 -->|"no: in the 2026-07-28 era closing the stream is the cancel"| S1
+    L3 --> S1
+    S1 --> S2{"still in live?"}
+    S2 -->|"no: settled already, an outcome that came late"| S3["nothing"]
+    S2 -->|"yes"| S4["out of live, the timer and listener removed, stop aborted so the POST and its stream close, the outcome resolved"]
+```
+
+### exchange and renew: one re-initialize at a time
+
+```mermaid
+flowchart TD
+    X1["exchange of an entry and its signal"] --> X2["wait for a renewal under way, if there is one"]
+    X2 --> X3["sent is the session now. post the entry"]
+    X3 --> X4{"a session was sent, and the answer is HTTP 404?"}
+    X4 -->|"no"| X5["OK: the outcome"]
+    X4 -->|"yes"| X6["renew of sent"]
+    X6 --> X7["post the entry once more with the session now. A second 404 is its httpError"]
+    W1["renew of sent"] --> W2{"no renewal under way, and the session still the one sent?"}
+    W2 -->|"yes"| W3["renewing: initialize within limitMs, then none again. A failure is ignored and the old session stays"]
+    W2 -->|"no, one under way"| W4["join it: every request that met the same old session waits for the same renewal"]
+    W2 -->|"no, the session changed since the request was sent"| W5["nothing: the request is only repeated"]
+```
+
+### post, fetchOnce and ownHeaders
+
+```mermaid
+flowchart TD
+    P1["post of an entry and a signal"] --> P2{"the era 2026-07-28 and a tools/call?"}
+    P2 -->|"yes"| P3["callHeaders of the params that are sent"]
+    P3 -->|"a refusal"| P4["OK: rpcError -32602 with the refusal. Nothing is sent"]
+    P2 -->|"no"| P5["fetchOnce: POST, ownHeaders and the call headers, the JSON of the message, the close signal and the signal"]
+    P3 -->|"the headers"| P5
+    P5 --> P6{"a response?"}
+    P6 -->|"no"| P7["OK: unreachable"]
+    P6 -->|"yes"| P8["its Mcp-Session-Id header kept on the entry, for initialize"]
+    P8 --> P9{"a 2xx status?"}
+    P9 -->|"yes"| P10["readAnswer for the entry's id"]
+    P9 -->|"no: 3xx, 4xx or 5xx"| P11["httpError: the status and retryAfterOf Retry-After. The body is never read"]
+    P10 --> P12["done: what was not read is closed"]
+    P11 --> P12
+    F1["fetchOnce of an init and signals"] --> F2["fetchImpl of url with headersFor, redirect manual so a 3xx comes back as it is, and the signals"]
+    F2 -->|"throws: out of reach, a header that cannot be sent, headers throws, a stop"| F3["no response, so unreachable. No text of the error is kept, as it may hold a header value"]
+    F2 --> F4["the response, and done, which aborts its own controller"]
+    O1["ownHeaders of a message"] --> O2["accept application/json and text/event-stream, content-type application/json"]
+    O2 --> O3{"initialize?"}
+    O3 -->|"yes"| O4["MCP-Protocol-Version LEGACY_VERSION, and no session"]
+    O3 -->|"no"| O5["MCP-Protocol-Version the era, Mcp-Session-Id when there is one, Mcp-Method in the 2026-07-28 era for a message with a method"]
+```
+
+### headersFor and hide: the token
+
+```mermaid
+flowchart TD
+    G1["headersFor of ksproxy's own headers"] --> G2["headers of the caller, asked again for every request: the token"]
+    G2 --> G3["remember each value: the whole value, and each word of it of at least 8 characters, the token after Bearer"]
+    G3 --> G4["then ksproxy's own headers set over them: they win, so the caller cannot change accept, the version or the session"]
+    K1["hide of the message of a JSON-RPC error"] --> K2["every remembered text, the longest first, becomes the text [hidden]"]
+    K2 --> K3["a server that echoes the token in an error never puts it in an error text, a call's or a start's"]
+```
+
+### callHeaders, headerText, headerMarks and learn
+
+The 2026-07-28 era wants the tool name in `Mcp-Name` and each argument whose schema property has `x-mcp-header` in `Mcp-Param-NAME`, equal to the body. They are built from the params object that is sent, so they cannot differ from it, and a value a header cannot carry as it is stops the call before anything is sent.
+
+```mermaid
+flowchart TD
+    C1["callHeaders of the params sent, the marks learned and the hidden texts"] --> C2["Mcp-Name: the tool name"]
+    C2 --> C3["for each mark of that tool whose property is an own key of the arguments object: Mcp-Param-HEADER with its value"]
+    C3 --> C4{"for each: a header name, and headerText of the value not null?"}
+    C4 -->|"no header name"| C5["headerRefusal of WHAT, badName: the header name the server gave is not valid"]
+    C4 -->|"headerText null"| C7["headerRefusal of WHAT: the value cannot go in a header as it is"]
+    C4 -->|"yes, all"| C6["the headers"]
+    T1["headerText of a value"] --> T2["a number or a boolean as String writes it, a text as it is, anything else none"]
+    T2 --> T3{"a text of printable ASCII, 0x20 to 0x7E, at most 1000 characters, no space at either end, or empty?"}
+    T3 -->|"yes"| T4["the text. The empty text passes"]
+    T3 -->|"no: a control character, a letter outside ASCII, too long, null, an object"| T5["null"]
+    M1["learn of the tools listTools gave"] --> M2["the marks of the last list are dropped"]
+    M2 --> M3["headerMarks of each tool: the properties of its inputSchema, both objects, that have x-mcp-header"]
+    M3 --> M4["header: the x-mcp-header text when it is 1 to 64 letters, digits, dashes or underscores, else null, so a call that gives that argument is refused"]
+    M4 --> M5["kept by tool name when there is at least one"]
+```
+
+The refusal has two texts, with WHAT filled in: one for a header name of the server that is not valid, one for a value that cannot go in a header.
+
+| WHAT | When |
+|---|---|
+| `the tool name` | the tool name cannot go in `Mcp-Name` |
+| `the argument NAME` | the argument NAME, through `infoText`, so with the hidden texts hidden, cleaned and clipped to 64 characters |
+
+| Refusal | When |
+|---|---|
+| `ksproxy cannot send this call: the MCP server wants WHAT in a header, but the header name it gives is not 1 to 64 letters, digits, _ or -` | the mark's header name is not valid |
+| `ksproxy cannot send this call: the MCP server wants WHAT in a header, and its value is not printable ASCII of at most 1000 characters without a space at either end` | the value cannot go in a header as it is |
+
+### readAnswer and bodyReader
+
+```mermaid
+flowchart TD
+    A1["readAnswer of a 2xx response and the id"] --> A2{"a body?"}
+    A2 -->|"no: 204"| A3["cutOff"]
+    A2 -->|"yes"| A4{"content-type text/event-stream, in any letter case?"}
+    A4 -->|"yes"| A5["eventReader"]
+    A4 -->|"no: application/json, none, anything else"| A6["bodyReader"]
+    A5 --> A7["read chunk by chunk, each one to the reader"]
+    A6 --> A7
+    A7 -->|"an outcome"| A8["that outcome. Nothing more is read"]
+    A7 -->|"the end of the body"| A9["the reader's end"]
+    A7 -->|"a read fails: the connection broke, or a stop"| A3
+    B1["bodyReader: each chunk adds to the size"] --> B2{"over maxMessageBytes?"}
+    B2 -->|"yes"| B3["tooLarge, at once"]
+    B2 -->|"no"| B4["kept"]
+    B4 -->|"the end"| B5{"only blanks?"}
+    B5 -->|"yes: 202 and no body"| B6["cutOff"]
+    B5 -->|"no"| B7["parsed, and cutOff when it is not the answer"]
+```
+
+### eventReader: an SSE stream
+
+```mermaid
+flowchart TD
+    V1["eventReader of the id: lineReader with maxMessageBytes splits each chunk into lines"] --> V2{"an outcome already?"}
+    V2 -->|"yes"| V3["the line is not read: what follows the answer in the same chunk"]
+    V2 -->|"no"| V4["the line as UTF-8, without a CR at its end"]
+    V4 --> V5{"empty: the end of an event?"}
+    V5 -->|"yes"| V6["the data kept joined by newlines, then none kept"]
+    V6 --> V7{"only blanks?"}
+    V7 -->|"yes"| V8["nothing, a keep-alive"]
+    V7 -->|"no"| V9["parsed: the answer, notJson, or read on"]
+    V5 -->|"no"| V10{"a data line?"}
+    V10 -->|"no: a comment, event, id or retry"| V11["ignored"]
+    V10 -->|"yes"| V12["the event's size grows by the whole line, with data: and without the newline"]
+    V12 --> V13{"over maxMessageBytes?"}
+    V13 -->|"yes"| V14["tooLarge: data lines without an end cannot grow memory"]
+    V13 -->|"no"| V15["kept: what follows data and its colon, less one space"]
+    V1 -->|"a line over maxMessageBytes"| V16{"an outcome already?"}
+    V16 -->|"no"| V14
+    V16 -->|"yes"| V3
+    V1 -->|"the stream ends without the answer"| V17["cutOff: an SSE stream closed before its answer, also when an event is still open: no empty line after its data"]
+```
+
+### parsed, take and answerServer
+
+```mermaid
+flowchart TD
+    Q1["parsed of a text and the id"] --> Q2{"JSON.parse works?"}
+    Q2 -->|"no"| Q3["notJson"]
+    Q2 -->|"yes"| J1["take of the message, and the bytes of the text as received"]
+    J1 --> J2{"an object?"}
+    J2 -->|"no: 42, null, a batch"| J3["null: read on"]
+    J2 -->|"yes"| J4{"a text method?"}
+    J4 -->|"yes"| J5{"isId: a text or a number id?"}
+    J5 -->|"yes"| J6["a request from the server: answerServer. Read on"]
+    J5 -->|"no"| J3
+    J4 -->|"no"| J7{"its id the request's?"}
+    J7 -->|"no: an answer to another request, even one in flight"| J3
+    J7 -->|"yes"| J8["answerOf the message and its bytes, the message of a JSON-RPC error through hide"]
+    S1["answerServer of a request"] --> S2{"MAX_ANSWERS, 8, on their way already?"}
+    S2 -->|"yes"| S3["dropped: a flood of requests cannot start a flood of POSTs"]
+    S2 -->|"no"| S4["one more on its way: note of serverAnswer, ping an empty result, anything else -32601, within NOTE_LIMIT_MS"]
+    S4 --> S5["when the note is done: one less on its way"]
+```
+
+### note, cancel, close and endSession
+
+```mermaid
+flowchart TD
+    N1["note of a message and signals"] --> N2["fetchOnce: POST with ownHeaders, the message's JSON, the close signal and the signals"]
+    N2 --> N3["whatever comes back, a status or a failure, is not read: done"]
+    N4["cancel of an id"] --> N5["note of notifications/cancelled with requestId and the reason, within NOTE_LIMIT_MS, 2 seconds"]
+    C1["close"] --> C2{"closed already?"}
+    C2 -->|"yes"| C3["the same promise"]
+    C2 -->|"no"| C4["ended, code and signal null. Every request in live settles with ended"]
+    C4 --> C5["the close controller aborts every POST and note on its way"]
+    C5 --> C6["watchEnd tells each onEnd callback"]
+    C6 --> C7["endSession"]
+    C7 --> C8{"a session?"}
+    C8 -->|"no: the 2026-07-28 era, or a server without sessions"| C9["nothing sent"]
+    C8 -->|"yes"| C10["DELETE with MCP-Protocol-Version and Mcp-Session-Id, within NOTE_LIMIT_MS. Any status, 405 too, or a failure is fine"]
+    C9 --> C11["the promise settles with the end"]
+    C10 --> C11
+```
+
+## src/kinds/mcp/index.js
+
+The `mcp` kind: an MCP server that `ksproxy start` runs (`command`, over stdio) or reaches (`url`, over HTTP) with the credential it holds, and whose allowed tools the agent calls. It is brokered and has no `flag` (the owner's rule: no new flag): its names are `mcp` for the key, the label and the word, `MCP server` for the noun. `open` starts the server, lists its tools and keeps the live client in the opened entry (`extras.live`); `perform`, `probe`, `downMessage`, `close` and the `doctor` hook reach it there. Its tool `mcp_call { target, tool, arguments }` has `listed: false`: `toolDefinitions` never lists it, the agent sees each allowed tool as `TARGET__TOOL` from `mcp-tools.json` instead, and it still answers when called; a call of `TARGET__TOOL` is routed to it (`callDirect` in the `src/tools.js` section). `listFields` gives `list_targets` the exported tools of a target under the same names. The rules are in `src/kinds/mcp/rules.js`, the pinned-version check in `src/kinds/mcp/pin.js`, what is exported in `src/kinds/mcp/export.js` and the answer of a call in `src/kinds/mcp/answer.js`.
+
+`limits` holds the time limits and the size limits (`startMs` 120000 for a local start and its tools, `connectMs` 30000 for a remote one, `probeMs` 10000, `pingEveryMs` 300000, `maxMessageBytes` 16 MiB for one message, `maxListBytes` 16 MiB, `MAX_LIST_BYTES` of the engine, for all the pages of `tools/list`); `connectors` holds how a target reaches its server, `stdio` (`connectStdio` of the engine) and `http`. Tests may change both. `connectors.http` is `connectHttp` of the engine. Both get `hiddenOf` the target as `hidden`, so the engine hides each secret in a server text before it clips it. The server's stderr never reaches the audit log: its last lines go to the terminal through `ctx.say`, each secret of the target hidden first (`sayTail`, `tailLines`).
+
+The sample of `ksproxy init` runs `uvx mcp-atlassian@0.24.8` with `JIRA_URL` `https://jira.example.com`, a reserved name, so a user who starts the sample unchanged with a token set sends it to no real site.
+
+### validate and checkCommand
+
+```mermaid
+flowchart TD
+    V1["validate of an entry"] --> V2["checkKeys: name, description, allow, review, command, env, url, login, tokenEnv, userEnv, arguments, timeoutSeconds"]
+    V2 --> V3{"review given?"}
+    V3 -->|"yes"| E1["ERROR: review is not supported"]
+    V3 -->|"no"| V4{"exactly one of command and url?"}
+    V4 -->|"no"| E2["ERROR: give exactly one of command and url"]
+    V4 -->|"yes"| V5["allow: checkMcpAllow. arguments: checkPinned. timeoutSeconds: 1 to 600, default 60"]
+    V5 --> V6{"command?"}
+    V6 -->|"yes, with login, tokenEnv or userEnv"| E3["ERROR: NAME is only for a remote MCP server"]
+    V6 -->|"yes"| C1["checkCommand: 1 to 50 words, each at most 1024 bytes, no control characters"]
+    C1 -->|"no"| E4["ERROR: command must be a list of 1 to 50 words"]
+    C1 -->|"yes"| C2["the program, word 0: checkProgram of the command kind, then pinProblem of the words"]
+    C2 -->|"a problem"| E5["ERROR: command and the problem, which says how to pin"]
+    C2 -->|"none"| N1["checkServerEnv, next diagram"]
+    V6 -->|"no, url, with env"| E6["ERROR: env is only for a local MCP server"]
+    V6 -->|"no, url"| U1["checkUrl and checkLogin, the diagram after next"]
+```
+
+### checkServerEnv
+
+```mermaid
+flowchart TD
+    N1["checkServerEnv of env"] --> N2{"absent?"}
+    N2 -->|"yes"| N3["OK: no variable"]
+    N2 -->|"no"| N4{"an object of at most 50 variables?"}
+    N4 -->|"no"| E1["ERROR: env must be an object of at most 50 variables"]
+    N4 -->|"yes"| N5{"each name: 1 to 128 characters, letters, digits and _, not a digit first?"}
+    N5 -->|"no"| E2["ERROR: env NAME must be the name of an environment variable"]
+    N5 -->|"yes"| N6{"the name starts with LD_ or DYLD_?"}
+    N6 -->|"yes"| E3["ERROR: env NAME changes how programs are loaded"]
+    N6 -->|"no"| N7{"the value a text?"}
+    N7 -->|"yes"| N8{"at most 4096 bytes, no control character?"}
+    N8 -->|"no"| E4["ERROR: env NAME a text value is at most 4096 bytes"]
+    N8 -->|"yes"| N9["kept as written: a URL, a user name, a proxy or certificate setting"]
+    N7 -->|"no"| N10{"an object whose only key is fromEnv?"}
+    N10 -->|"no"| E5["ERROR: env NAME must be a text or a fromEnv object"]
+    N10 -->|"yes"| N11["checkSecretVariable of its name: start reads it as a secret"]
+```
+
+| Error | When |
+|---|---|
+| `review: is not supported for mcp targets in this version` | `review` is given |
+| `give exactly one of command (a local MCP server) and url (a remote one)` | both or neither |
+| `command: must be a list of 1 to 50 words, ...` | not a list, empty, too long, a word too long or with a control character |
+| `command[0]: program: must be an absolute path, ...` | the program as the command kind refuses it |
+| `command: ...` | the text of `pinProblem` |
+| `login: is only for a remote MCP server (url)`, and the same for `tokenEnv` and `userEnv` | with `command` |
+| `env: must be an object of at most 50 variables, each a text or {"fromEnv": NAME}` | not an object, or too many |
+| `env["N"]: must be the name of an environment variable: letters, digits and "_", not starting with a digit` | a name that is not 1 to 128 characters of that form |
+| `env["N"]: N changes how programs are loaded; name another variable` | `LD_` or `DYLD_` first |
+| `env["N"]: a text value is at most 4096 bytes, without control characters` | a text value too long or with a control character |
+| `env["N"]: must be a text or {"fromEnv": NAME}` | a value that is not a text and not an object whose only key is `fromEnv` |
+| `env: is only for a local MCP server (command)` | with `url` |
+
+### checkUrl and checkLogin
+
+```mermaid
+flowchart TD
+    U1["checkUrl of the value"] --> U2{"new URL of it works?"}
+    U2 -->|"no"| E1["ERROR: url: must be a URL"]
+    U2 -->|"yes"| U3{"https, or http on localhost, 127.0.0.1 or the IPv6 loopback?"}
+    U3 -->|"no"| E2["ERROR: url: must use https (http is accepted for localhost only)"]
+    U3 -->|"yes"| U4{"a user name, a password or a fragment?"}
+    U4 -->|"yes"| E3["ERROR: url: must not contain a user name, a password or a fragment"]
+    U4 -->|"no"| U5["OK: the href. A query stays, for example tools=all, unlike the generic service URL check"]
+    L1["checkLogin"] --> L2{"login none, token or basic, none when absent?"}
+    L2 -->|"no"| E4["ERROR: login: must be none, token or basic"]
+    L2 -->|"yes"| L3["tokenEnv and userEnv through checkSecretVariable when given, else null"]
+    L3 --> L4{"token or basic without tokenEnv?"}
+    L4 -->|"yes"| E5["ERROR: login LOGIN needs tokenEnv"]
+    L4 -->|"no"| L5{"none with tokenEnv?"}
+    L5 -->|"yes"| E6["ERROR: tokenEnv needs login token or basic"]
+    L5 -->|"no"| L6{"userEnv given exactly when login is basic?"}
+    L6 -->|"no"| E7["ERROR: userEnv goes with login basic, and login basic needs it"]
+    L6 -->|"yes"| L7["OK: login, tokenEnv, userEnv"]
+    A1["engineAuth of a target"] --> A2["token: bearerEnv tokenEnv. basic: basicUserEnv userEnv and basicPasswordEnv tokenEnv. none: null"]
+```
+
+### The names, the secrets and the warnings
+
+```mermaid
+flowchart TD
+    H1["hint"] --> H2["serverText: commandText of the command, the base name of the program then its words, clipped to 80, or the host of the url"]
+    H2 --> H3["then a dash and the description when there is one"]
+    O1["openingMessage"] --> O2{"url?"}
+    O2 -->|"yes"| O3["its origin and path, never the query, then loginText: no login, token from TOKENENV, basic auth from USERENV and TOKENENV"]
+    O2 -->|"no"| O4["commandText clipped to 120, then N variables"]
+    S1["secrets"] --> S2{"url?"}
+    S2 -->|"yes"| S3["authSecrets of engineAuth: the user of basic auth also in users, so it gets no short secret warning"]
+    S2 -->|"no"| S4["env: each name of a fromEnv value of env, once. files: none"]
+    F1["hiddenForms of the target and its secrets"] --> F2["url: encodedForms of engineAuth, the base64 credential of basic auth"]
+    F1 --> F3["escapedForms: each value as JSON writes it inside a string, where that differs from every value"]
+    F2 --> F4["the core hides these with the values. hiddenOf: the values and these forms, for what the kind hides itself"]
+    F3 --> F4
+```
+
+### ruleWarnings, urlWarnings and commandWarnings
+
+```mermaid
+flowchart TD
+    W1["ruleWarnings of the target, for start and check"] --> W2["regexWarnings of the rules"]
+    W1 --> W6{"a remote target?"}
+    W6 -->|"yes"| W7["urlWarnings: each query name of the url that holds key, token, secret, password, passwd, auth or sig, in any letter case"]
+    W6 -->|"no"| W3{"a text value of env whose name holds TOKEN, PASSWORD, PASSWD, SECRET or KEY anywhere in it, in any letter case?"}
+    W3 -->|"yes"| W4["one warning for each such variable, the plain text warning of the table"]
+    W6 -->|"no"| W8["commandWarnings, one for each word at most"]
+    W8 --> W9{"the word holds a URL with a user and a password: a scheme, then :// and USER:PASSWORD@?"}
+    W9 -->|"yes"| W10["the user and password warning of the table"]
+    W9 -->|"no"| W11{"an option, a dash first, whose name before any = holds token, password, passwd, secret, apikey,<br/>api-key or api_key, in any letter case: --token, --api-key=VALUE, --jira-token?"}
+    W11 -->|"yes"| W12["the option warning of the table"]
+    W11 -->|"no"| W14{"the word, or an option's value after its =, a header NAME: VALUE whose name holds<br/>auth, token, secret, key, password or passwd, in any letter case?"}
+    W14 -->|"yes"| W15["the header warning of the table"]
+    W14 -->|"no"| W16{"a setting NAME=VALUE, with a value, whose name holds one of the five words of env?"}
+    W16 -->|"yes"| W17["the setting warning of the table: docker run -e NAME=VALUE"]
+    W15 --> W13
+    W17 --> W13
+    W7 --> W13["each warning names the field and the index, never a name or a value: neither field is hidden,<br/>as the url and the command go whole to session.json, and the command and the url's origin and path to the OPENING line"]
+    W10 --> W13
+    W12 --> W13
+```
+
+| Warning | When |
+|---|---|
+| `env.NAME: holds a plain text, but its name looks like a secret; write {"fromEnv": NAME} so that start holds it and hides it` | a local target, a text value, a name that holds one of the five words |
+| `url.query[N]: its name looks like a secret; the url is written whole to session.json, so give the secret through login "token" or "basic" with tokenEnv, which start holds and hides` | a remote target whose query name N, from 0, holds one of the seven words. A remote target has no `env`, so the advice is its login |
+| `command[N]: holds a URL with a user name and a password; the command is written whole to session.json and shown on the OPENING line, so put the secret in env with {"fromEnv": NAME}` | a local target whose word N holds such a URL |
+| `command[N]: looks like an option that gives a secret; the command is written whole to session.json and shown on the OPENING line, so put the secret in env with {"fromEnv": NAME}` | a local target whose word N is such an option, with or without `=VALUE` |
+| `command[N]: looks like a header that gives a secret; the command is written whole to session.json and shown on the OPENING line, so put the secret in env with {"fromEnv": NAME}` | a local target whose word N, or the value of the option after its `=`, is a header line whose name holds a secret word (`Authorization: Bearer ...`, `X-Api-Key: ...`) |
+| `command[N]: sets a variable whose name looks like a secret; the command is written whole to session.json and shown on the OPENING line, so put the secret in env with {"fromEnv": NAME}` | a local target whose word N, or the value of the option after its `=`, is `NAME=VALUE` with a value and a name that holds one of the five words (`-e GH_TOKEN=...`; `-e GH_TOKEN` alone passes the variable on and is fine) |
+| `allow[N].arguments.NAME: this pattern can be very slow on some inputs` | a regex value of a rule that `ruleWarning` finds slow |
+
+### open, openLocal and serverEnv
+
+```mermaid
+flowchart TD
+    P1["open of the target and ctx"] --> P2["hiddenOf the target and ctx.secrets"]
+    P2 --> P3{"url?"}
+    P3 -->|"yes"| R1["openRemote, next diagram"]
+    P3 -->|"no"| L1["openLocal: resolveProgram of the program, on the PATH of start"]
+    P1 -->|"anything throws"| E0["OK false: the failed text of the table. Never a rejection"]
+    L1 -->|"an error"| E1["OK false: program NAME was not found on PATH, or is not an executable file, or is inside ksproxy's own folders"]
+    L1 --> L2["mkdtemp of mcp- in workRoot of the command engine, the run folder of the state folder, mode 0700"]
+    L2 -->|"fails"| E2["OK false: could not make the private folder of the MCP server"]
+    L2 --> L3["serverEnv: minimalEnv without the own variables: PATH, HOME, LANG, LC_ALL, TMPDIR"]
+    L3 --> L4["then XDG_CACHE_HOME, UV_CACHE_DIR and npm_config_cache when start has them"]
+    L4 --> L5["then env of the target, each fromEnv value from the secrets. No other variable of start"]
+    L5 --> L6["connectors.stdio: the resolved program and the words, that env, the folder as cwd,<br/>ctx.signal, limitMs startMs, maxMessageBytes, maxListBytes, hidden"]
+    L6 -->|"rejects"| L7["the folder removed, then failure with the stderrTail the error carries, local"]
+    L6 -->|"a client"| L8["finishOpen with the deadline startMs after the start"]
+```
+
+### openRemote and failure
+
+```mermaid
+flowchart TD
+    R1["openRemote"] --> R2["authProblem of engineAuth and the secrets"]
+    R2 -->|"a problem"| E1["OK false: VAR holds a character that is not allowed"]
+    R2 -->|"none"| R3["connectors.http, connectHttp of the engine: url, headers, a function that gives authHeader,<br/>Bearer token or Basic base64 of user and token, ctx.signal, limitMs connectMs, maxMessageBytes, maxListBytes, hidden"]
+    R3 -->|"rejects"| R4["failure, not local, no stderr"]
+    R3 -->|"a client"| R5["finishOpen with the deadline connectMs after the start, no folder"]
+    F1["failure of the error"] --> F2{"ctx.signal aborted: a stop was asked?"}
+    F2 -->|"yes"| F3["OK false: the start of the MCP server was stopped. Nothing is said"]
+    F2 -->|"no"| F4["say: the MCP server failed: the message, every secret hidden"]
+    F4 --> F5["sayTail: the last 20 lines of stderr through tailLines, each said as stderr: LINE"]
+    F5 --> F6{"local?"}
+    F6 -->|"yes"| F7["OK false, the failed text of the table, fixed, for the SKIPPED line and the log"]
+    F6 -->|"no"| F8["OK false: the unreached text of the table"]
+```
+
+| Text | Used when |
+|---|---|
+| `the MCP server failed; its last lines are in the start terminal` | a local start fails, or anything throws in `open` |
+| `the MCP server could not be reached; the reason is in the start terminal` | a remote start fails |
+| `the start of the MCP server was stopped` | a stop was asked meanwhile |
+
+### finishOpen, onEnd and tailLines
+
+```mermaid
+flowchart TD
+    O1["finishOpen of the target and the client"] --> O2["listTools with ctx.signal or a timer of what is left of the deadline"]
+    O2 -->|"throws"| O3["closeQuietly the client, remove the folder, failure with stderrTail of the client"]
+    O2 -->|"tools and capped"| O4["indexTools, then exportTools with hiddenOf: the exported tools and the notes"]
+    O4 --> O5["capped: the first note is the capped text of the table"]
+    O5 --> O6["live: the client, the folder, say, the hidden texts, the listed tools by name, how many, the exported tools,<br/>toolNames, ended null, closing false, the time of the last ping and its state up"]
+    O6 --> O7["onEnd of the client: ended is the exit. Unless closing: say END TEXT, the target is down, then sayTail"]
+    O7 --> O8["say: N tools listed, M exported. The UP line of the core has no text"]
+    O8 --> O9["OK true: extras live, notes as WARN lines, which go to the log too: they hold only names the rules hold"]
+    T1["tailLines of lines and the hidden texts"] --> T2["each line: hideSecrets first"]
+    T2 --> T3["the first line: dropCut at the start, a piece of 4 or more characters that ends a hidden text: the 64 KiB ring may have cut it"]
+    T3 --> T4["the last line: dropCut at the end, a piece of 4 or more characters that starts a hidden text"]
+    T4 --> T5["each line clipped to 500 characters"]
+    D1["dropCut of the engine, src/kinds/engines/mcp-client.js"] --> D2["the longest piece from the size of the longest value less one down to 4 that a value longer than it ends or starts with is cut off"]
+```
+
+| Note or line | When |
+|---|---|
+| `the MCP server lists more than 2000 tools; only the first 2000 were read` | the first note, when `listTools` was capped |
+| `the MCP server failed: the list of tools of the MCP server takes more than N bytes over all its pages` | said when the pages of `tools/list` pass `maxListBytes`; the target is skipped |
+| `N tools listed, M exported` | said at the end of a good open |
+| `END TEXT; the target is down` | said when the server ends, unless `close` was asked |
+
+### close, record and sessionFiles
+
+```mermaid
+flowchart TD
+    C1["close of the opened entry, bounded by closeMs 10000, closeLimit mcpCloseMs"] --> C2["closing true, so the end of the server says nothing"]
+    C2 --> C3["closeQuietly: close of the client. A failure is ignored"]
+    C3 --> C5["a local server: stdin closed, SIGTERM after 2 s, SIGKILL after 2 more"]
+    C3 --> C6["a remote one: every request ended, and DELETE of the session when there is one, within 2 seconds"]
+    C5 --> C4["removeFolder: the private folder removed, none for a remote server. A failure is ignored: the reapStale of the command kind removes the run folder at the next start"]
+    C6 --> C4
+    R1["record"] --> R2["kind, name, description, allow, then command, or url, login, tokenEnv and userEnv,<br/>arguments, timeoutSeconds, tools, state up. No value of a secret"]
+    R2 --> R3["tools is toolNames of the live object itself, the list sessionFiles may still shorten before session.json and AGENT.md are written"]
+    F1["sessionFiles of the opened entries of the kind"] --> F2{"none?"}
+    F2 -->|"yes"| F3["no file: a session without an mcp target gets no mcp-tools.json"]
+    F2 -->|"no"| F4["toolsFileText with process.pid and processStartTime of it, the start time session.json holds"]
+    F4 --> F5["for each target that lost tools to the budget: its toolNames shortened in place,<br/>and its say: N more tools are not exported, the tools of a session take at most 1 MiB"]
+    F5 --> F6["OK: mcp-tools.json"]
+```
+
+### perform
+
+```mermaid
+flowchart TD
+    P1["perform of the recorded target, the decision and ctx with the opened entry"] --> P2["readCall of ctx.input again: decide allowed it"]
+    P2 --> P3{"the tool among the tools the server listed at open?"}
+    P3 -->|"no"| E1["exit 1, stderr: the first text of the table"]
+    P3 -->|"listed twice"| E2["exit 1, stderr: the second text of the table"]
+    P3 -->|"yes"| P4["the pinned arguments of the target that the schema declares, all when it has no top-level properties,<br/>added over the call's arguments"]
+    P4 --> P5{"the schema has top-level properties and an argument is not one of them?"}
+    P5 -->|"yes"| E3["exit 1, stderr: the third text of the table"]
+    P5 -->|"no"| P9{"a pinned argument left out, as the tool does not declare it?"}
+    P9 -->|"yes"| P10{"allowingRule of the rules, the tool and the arguments that are sent: a rule?"}
+    P10 -->|"no: decide matched a rule only through a pinned value that is not sent"| E4["exit 1, stderr: the fourth text of the table"]
+    P10 -->|"yes"| P6
+    P9 -->|"no: the arguments decide matched"| P6["the time limit: the smaller of the call's and timeoutSeconds of the target"]
+    P6 --> P7["callTool of the live client with that limit, ctx.maxBytes and ctx.signal"]
+    P7 --> P8["OK: answerOf the outcome, with maxBytes, the limit in seconds and the hidden texts of live"]
+```
+
+| Exit 1, stderr | When |
+|---|---|
+| `the MCP server did not list the tool T when the target opened; the call was not sent` | the tool is not among those listed at open |
+| `the MCP server lists the tool T more than once; the call was not sent` | the server listed the tool twice |
+| `the tool T declares no argument "NAME"; the call was not sent` | an argument the schema does not declare. NAME is JSON-quoted and clipped to 64 characters before the quotes are added |
+| `no rule allows T without the pinned arguments it does not declare (NAMES), which ksproxy does not send; the call was not sent` | with `"arguments": {"project": "SANDBOX"}` and only the rule `{"tool": "delete_issue", "arguments": {"project": "SANDBOX"}}`, a `delete_issue` that does not declare `project`. NAMES are the pinned arguments left out, joined by commas. The warning at start, `allow[N]: the tool T declares no argument NAME`, says so before any call |
+
+### probe, downMessage, doctor, decide and checkInput
+
+```mermaid
+flowchart TD
+    Q1["probe with the opened entry"] --> Q2{"the server ended?"}
+    Q2 -->|"yes"| Q3["down"]
+    Q2 -->|"no"| Q4{"local?"}
+    Q4 -->|"yes"| Q5["up: free, on every tick"]
+    Q4 -->|"no"| Q6{"pinged less than pingEveryMs ago?"}
+    Q6 -->|"yes"| Q7["the state of that ping"]
+    Q6 -->|"no"| Q8["ping with a limit of probeMs: an answer, or a 429 the transport counts as one, is up, else down"]
+    D1["downMessage"] --> D2["the end text when the server ended, else: the MCP server did not answer a ping"]
+    D1 --> D3["backMessage: the MCP server answers again"]
+    K1["doctor of the opened entry"] --> K2["OK: N tools listed, M exported. A local server adds:<br/>the credential is checked only by a call. Doctor never calls a tool"]
+    X1["decide"] --> X2["decideCall of src/kinds/mcp/rules.js, on the recorded or the inventory target"]
+    I1["checkInput of the words after the name"] --> I2["the first word is the tool. The rest, joined by spaces, as JSON for arguments, or the text when it is not JSON, which decide refuses"]
+```
+
+### mcp_call: auditedDetail, detailText and the agent notes
+
+```mermaid
+flowchart TD
+    T1["the tool mcp_call: target, tool, arguments, timeout_seconds. detailShape object, detailKey request, listed false"] --> T2["auditedDetail of the call"]
+    T2 --> T3["tool clipped to 128, or null. arguments: at most 50, each name clipped to 64, each value through auditedValue, or null"]
+    T3 --> T4["auditedValue: a text clipped to 500, anything else as sortedJson clipped to 500"]
+    T1 --> T5["detailText of what the audit recorded: the tool and its arguments as sorted JSON clipped to 2000 characters, the tool alone without any, else invalid"]
+    A1["agentSection through agentLines"] --> A2["the heading with the description, then the tools in the tool list as TARGET__TOOL, or none"]
+    A2 --> A3["the allowed tools from describeRules, the pinned argument names to leave out"]
+    A3 --> A4["that a rule on a query argument does not limit what the query reads, that answers are text, the time limit"]
+    A1 --> A5["toolBullet: TARGET__TOOL, and mcp_call reaches the same tools"]
+    F1["listFields of the recorded target, for list_targets"] --> F2["tools: each text of its tools, none when it has no list, as TARGET__TOOL, the names of the tool list and of AGENT.md"]
+```
+
+## src/kinds/mcp/rules.js
+
+The rules of an `mcp` target and its pinned arguments. A rule is a tool name, which allows that tool with any arguments, or `{ "tool": NAME, "arguments": { NAME: VALUE } }`, which also requires each named top-level argument to be present and to match. Arguments a rule does not name are free. The generic rule checks are not used: they refuse `regex(` inside a rule. `TOOL_NAME` is the form of a tool name (letters, digits and `_ . -`, 1 to 128 characters), `MAX_ARGUMENT_BYTES` the most JSON a call's arguments may take (192 KiB). `ruleTool` and `ruleArguments` give the tool and the named arguments of a rule of either form.
+
+### checkMcpAllow, checkRule, checkNamed and checkPinned
+
+```mermaid
+flowchart TD
+    A1["checkMcpAllow of the entry"] --> A2{"allow absent?"}
+    A2 -->|"yes"| A3["OK: an empty list, which the core warns about"]
+    A2 -->|"no"| A4{"any?"}
+    A4 -->|"yes"| E1["ERROR: allow any is not supported, the table gives the text"]
+    A4 -->|"no"| A5{"a list?"}
+    A5 -->|"no"| E2["ERROR: allow must be a list of rules"]
+    A5 -->|"yes"| R1["checkRule of each"]
+    R1 --> R2{"a text?"}
+    R2 -->|"yes"| R3{"TOOL_NAME?"}
+    R3 -->|"no"| E3["ERROR: allow[N] must be a tool name, or an object"]
+    R3 -->|"yes"| R4["kept as written"]
+    R2 -->|"an object"| R5["checkKeys: tool and arguments only. tool: TOOL_NAME, else the tool ERROR of the table"]
+    R5 --> R6["arguments through checkNamed with checkRuleValue: tool and arguments, an empty object when absent"]
+    R2 -->|"anything else"| E3
+    N1["checkNamed"] --> N2{"an object of at most 50 names?"}
+    N2 -->|"no"| E4["ERROR: arguments: must be an object of at most 50 arguments"]
+    N2 -->|"yes"| N3["checkArgumentName of each: __proto__, constructor and prototype are refused,<br/>then letters, digits and _ . -, at most 64, not . or - first"]
+    N3 --> N4["each value checked. Object.fromEntries makes the copy, so no key can set a prototype"]
+    P1["checkPinned of arguments"] --> P2["absent: none. Else checkNamed: each value a text of at most 1000 characters, a number or a boolean"]
+```
+
+| Error | When |
+|---|---|
+| `allow: "any" is not supported for mcp targets; list the tools` | `allow` is `any` |
+| `allow: must be a list of rules: a tool name, or {"tool": NAME, "arguments": {...}}` | `allow` is not a list |
+| `allow[N]: must be a tool name of letters, digits and _ . - (at most 128 characters), or {"tool": NAME, "arguments": {...}}` | a rule that is a text but not a tool name, or neither a text nor an object |
+| `allow[N]: tool: must be a tool name of letters, digits and _ . - (at most 128 characters)` | the `tool` of an object rule is not a tool name |
+
+### checkRuleValue
+
+```mermaid
+flowchart TD
+    V1["checkRuleValue"] --> V2{"a number or a boolean?"}
+    V2 -->|"yes"| V3["OK: equal values match"]
+    V2 -->|"no"| V4{"a text of at most 1000 characters?"}
+    V4 -->|"no"| E1["ERROR: must be a string of at most 1000 characters, a number, true or false"]
+    V4 -->|"yes"| V5{"trimmed, it starts with regex open?"}
+    V5 -->|"no"| V6["OK: the star is present with any value, backslash star is the text star, anything else is equal text"]
+    V5 -->|"yes"| V7{"a whole regex rule: it ends with the closing parenthesis?"}
+    V7 -->|"no"| E2["ERROR: regex must be the whole value"]
+    V7 -->|"yes"| V8{"the pattern empty?"}
+    V8 -->|"yes"| E3["ERROR: the regex pattern is empty"]
+    V8 -->|"no"| V9{"it compiles alone and wrapped in a group from start to end?"}
+    V9 -->|"no"| E4["ERROR: the regex does not compile: the message"]
+    V9 -->|"yes"| V10["OK"]
+```
+
+### readCall and decideCall
+
+```mermaid
+flowchart TD
+    C1["readCall of the input"] --> C2{"an object?"}
+    C2 -->|"no"| E1["REFUSE: the call must be an object with tool and arguments, invalid call"]
+    C2 -->|"yes"| C3{"a field other than tool and arguments?"}
+    C3 -->|"yes"| E2["REFUSE: the call has the unknown field F, invalid call"]
+    C3 -->|"no"| C4{"tool a TOOL_NAME?"}
+    C4 -->|"no"| E3["REFUSE: tool must be the name of a tool, invalid tool name"]
+    C4 -->|"yes"| C5{"arguments absent or null, an empty object then, or an object?"}
+    C5 -->|"no"| E4["REFUSE: arguments must be a JSON object, invalid arguments"]
+    C5 -->|"yes"| C6{"JSON.stringify works?"}
+    C6 -->|"no, nested too deeply"| E5["REFUSE: the arguments cannot be written as JSON, invalid arguments"]
+    C6 -->|"yes"| C7{"at most MAX_ARGUMENT_BYTES?"}
+    C7 -->|"no"| E6["REFUSE: the arguments are larger than 196608 bytes of JSON, arguments too large"]
+    C7 -->|"yes"| C8["OK: tool and arguments"]
+    D1["decideCall of the target and the input"] --> D2["readCall, its refusal as it is"]
+    D2 --> D3{"a pinned argument given with another value?"}
+    D3 -->|"yes"| E7["REFUSE: the argument N is fixed to V for this target, leave it out, fixed argument differs"]
+    D3 -->|"no"| D4{"allow empty?"}
+    D4 -->|"yes"| E8["REFUSE: the allowlist for this target is empty, so every call is refused, allowlist is empty"]
+    D4 -->|"no"| D5["allowingRule: the first rule that matches, the pinned arguments added over the call's"]
+    D5 -->|"one"| D6["ALLOW: rule is describeRule of it"]
+    D5 -->|"none"| E9["REFUSE: no rule allows T, with these arguments when a rule names T, then Allowed: describeRules, not on allowlist"]
+```
+
+The two texts the diagram shortens:
+
+| Reason | When |
+|---|---|
+| `the call has the unknown field "F"; give tool and arguments` | F is JSON-quoted, after it is clipped to 64 characters |
+| `tool must be the name of a tool of this MCP server: letters, digits and _ . -` | `tool` is not a text of that form |
+
+### allowingRule, matches, matchValue, sortedJson, describeRule and regexWarnings
+
+```mermaid
+flowchart TD
+    G1["allowingRule of allow, the tool and the arguments"] --> G2["the first rule that matches, or none. decideCall asks it with the pinned arguments added,<br/>perform of src/kinds/mcp/index.js asks it again with the arguments that are sent"]
+    M1["matches of a rule, the tool and the arguments"] --> M2{"ruleTool is the tool?"}
+    M2 -->|"no"| M3["no"]
+    M2 -->|"yes"| M4["every named argument through matchValue, present only as an own key: a prototype is never read"]
+    V1["matchValue of present, actual, expected"] --> V2{"expected the star?"}
+    V2 -->|"yes"| V3["present"]
+    V2 -->|"no"| V4{"present?"}
+    V4 -->|"no"| V5["no"]
+    V4 -->|"yes"| V6{"expected backslash star?"}
+    V6 -->|"yes"| V7["actual is the text star"]
+    V6 -->|"no"| V8{"a regex rule?"}
+    V8 -->|"yes"| V9["matchRuleDetail of src/allowlist.js on one text: a text as it is, else sortedJson.<br/>The whole text, at most 1000 characters, 100 ms, a slow match does not match"]
+    V8 -->|"no"| V10["actual equals expected, the same type"]
+    S1["sortedJson of a value and max"] --> S2["compact JSON, the keys of each object sorted, written until it passes max characters, then cut:<br/>no recursion past that, however deep the value"]
+    R1["describeRule"] --> R2["the tool, then its named arguments as compact JSON. describeRules: joined by semicolons, clipped to 1000, or nothing (empty allowlist) for an empty list"]
+    W1["regexWarnings of allow"] --> W2["for each regex value that ruleWarning finds slow: the allow[N].arguments.NAME warning, with the text of ruleWarning"]
+```
+
+### Short reasons in the log
+
+| Short | Reason |
+|---|---|
+| `invalid call` | the call is not an object, or it has a field other than `tool` and `arguments` |
+| `invalid tool name` | `tool` is not a tool name |
+| `invalid arguments` | `arguments` is not an object, or cannot be written as JSON |
+| `arguments too large` | the arguments are larger than 196608 bytes of JSON |
+| `fixed argument differs` | a pinned argument given with another value |
+| `allowlist is empty` | the target has no rule |
+| `not on allowlist` | no rule allows the tool with these arguments |
+
+## src/kinds/mcp/pin.js
+
+The pinned-version check of a local server's command, `pinProblem(argv)`: `null` when the command may run, else why not and how to pin it. `argv[0]` is compared by its base name in lower case, since a disk that ignores case runs `npx` for `NPX`. A runner that downloads a package at every start must name an exact version; each runner reads its options from a table, and an option the table does not hold is refused (failing closed), so nothing unpinned slips in through an option ksproxy cannot read. `nerdctl` and `finch` are read as `docker`, and `go run` needs an exact module version. `npm`, `pnpm`, `pnpx`, `yarn`, `bun`, `uv`, `deno`, `dnx`, `pixi`, `mise` and `corepack` are refused whatever their words, and so are `python -m pipx` and `python -m uv`: each can download and run a package in a way the check cannot read (a subcommand after an option's value, an abbreviation such as `npm exe`, `create` and `init`, a script's own list of packages, a missing import fetched when it runs). Any other program is the owner's own and is not checked. A package's own dependencies are not pinned by any of these (`uvx --exclude-newer DATE` fixes them to a date). `pinnedNpm` tests `name@1.2.3` or `@scope/name@1.2.3` (an exact version, with a pre-release or build part); `pinnedPython` tests `name==VERSION` or `name@VERSION`, extras allowed, never a wildcard, `latest`, a range, or a git, URL or path spec. A VERSION is one or more numbers joined by dots (`1`, `1.2`, `1.2.3`), then at most one of `aN`, `bN` or `rcN`, then at most `.postN`, then at most `.devN`. An image tag is at most 128 characters of letters, digits, `_`, `.` and `-`, not starting with `.` or `-`.
+
+| Runner | Options with a value | Options without | Refused | Must be pinned |
+|---|---|---|---|---|
+| `npx` | `-p`, `--package` | `-y`, `--yes`, `--no`, `-q`, `--quiet` | `-c`, `--call` | each `-p` value; else the package word |
+| `bunx` | `-p`, `--package` | `--bun`, `--silent`, `--verbose`, `--no-install` | | each `-p` value; else the package word |
+| `uvx` | `--from`, `--with`, `--python`, `-p`, `--exclude-newer` | `--isolated`, `--no-cache`, `-n`, `--quiet`, `-q`, `--verbose`, `-v`, `--offline`, `--refresh`, `--no-progress`, `--native-tls` | `--with-requirements`, `--with-editable` | `--from` and each `--with`; without `--from`, the word is `name@1.2.3` |
+| `pipx run` | `--spec`, `--python` | `--no-cache`, `--verbose`, `-v`, `--quiet`, `-q`, `--system-site-packages` | `--pip-args`; any subcommand but `run` | `--spec`; without it, the word is `name==1.2.3` |
+| `docker run`, `podman run`, `nerdctl run`, `finch run` | `-e`, `--env`, `--env-file`, `-v`, `--volume`, `--mount`, `--name`, `--network`, `--net`, `-w`, `--workdir`, `-u`, `--user`, `--entrypoint`, `--platform`, `--pull`, `-m`, `--memory`, `--cpus`, `-l`, `--label`, `--add-host`, `--cap-add`, `--cap-drop`, `--security-opt`, `--tmpfs`, `-h`, `--hostname`, `--dns`, `--ulimit`, `--shm-size`, `--log-driver`, `--log-opt`, `--userns`, `--pids-limit` | `-i`, `--interactive`, `--rm`, `--init`, `--read-only`, `-q`, `--quiet`, `--privileged`, `--no-healthcheck` | `-t`, `--tty`, `-d`, `--detach`; any subcommand but `run`; `-i` and `--rm` are required | the image: a tag other than `latest` after the last `/`, or `@sha256:` and 64 hex digits |
+| `go run`, the function `go` | | | | each word that is a module query (a host with a dot, a path, then `@VERSION`) names `vX.Y.Z`; a word such as an email address is not one, and any other `go` command is not checked |
+| `python`, `python3`, `python3.N` with `-m pipx` or `-m uv` among the options before the script (`-W` and `-X` take a value) | | | always: `PYTHON -m MODULE is not accepted: it can download and run a package that ksproxy cannot see pinned; use X`, X is `pipx run with an exact version` or `uvx with an exact version`; any other module is not checked | |
+| `npm`, `pnpm`, `pnpx`, `yarn`, `bun`, `uv`, `deno`, `dnx`, `pixi`, `mise`, `corepack` | | | always, whatever the words: `PROGRAM is not accepted: it can download and run a package that ksproxy cannot see pinned; use X`, where PROGRAM is the base name as written and X is in the table below | |
+
+| Program | X |
+|---|---|
+| `npm`, `pnpm`, `pnpx`, `yarn` | `npx with an exact version` |
+| `bun` | `bunx with an exact version` |
+| `uv` | `uvx with an exact version, or python for a script of your own` |
+| `deno` | `npx with an exact version, or node for a script of your own` |
+| `dnx`, `pixi`, `mise`, `corepack` | `npx, bunx, uvx or pipx run with an exact version, or a program you installed` |
+
+### pinProblem and readOptions
+
+```mermaid
+flowchart TD
+    P1["pinProblem of argv"] --> P2["the base name of argv 0, in lower case"]
+    P2 --> P3{"npx, bunx, uvx, pipx, docker, podman, nerdctl, finch or go?"}
+    P3 -->|"yes"| P4["the check of that runner on the other words"]
+    P3 -->|"no"| P5{"npm, pnpm, pnpx, yarn, bun, uv, deno, dnx, pixi, mise or corepack?"}
+    P5 -->|"yes"| E1["PROBLEM: PROGRAM is not accepted, it can download and run a package unseen, use X"]
+    P5 -->|"no"| P7{"a Python, and pythonModule finds -m pipx or -m uv before its script?"}
+    P7 -->|"yes"| E4["PROBLEM: PYTHON -m MODULE is not accepted, use pipx run or uvx"]
+    P7 -->|"no"| P6["OK null: the owner's own program"]
+    R1["readOptions of the words, the table and the runner"] --> R2{"for each word: --?"}
+    R2 -->|"yes"| R3["the options end, the next word is the positional"]
+    R2 -->|"no"| R4{"does not start with a dash, or is a lone dash?"}
+    R4 -->|"yes"| R3b["the options end at this word, the positional"]
+    R4 -->|"no"| R5["the name: up to = for a long option"]
+    R5 --> R6{"refused?"}
+    R6 -->|"yes"| E2["PROBLEM: RUNNER NAME and the reason"]
+    R6 -->|"no"| R7{"takes a value?"}
+    R7 -->|"yes"| R8["the value after =, or the next word. None: PROBLEM: RUNNER NAME needs a value"]
+    R7 -->|"no"| R9{"a flag of the table, without =?"}
+    R9 -->|"yes"| R10["kept"]
+    R9 -->|"no"| E3["PROBLEM: ksproxy does not know the option WORD of RUNNER, it reads every option so that nothing unpinned runs"]
+```
+
+### npmRunner, uvx, pipx, containerRunner and imageProblem
+
+```mermaid
+flowchart TD
+    N1["npmRunner of a table and the runner, for npx and bunx"] --> N2["readOptions. unpinnedSpec: the first -p or --package value that pinnedNpm refuses"]
+    N2 -->|"one"| E1["PROBLEM: RUNNER -p VALUE has no exact version, write the package as name@1.2.3"]
+    N2 --> N3{"a positional word?"}
+    N3 -->|"no"| E2["PROBLEM: RUNNER names nothing to run"]
+    N3 -->|"yes"| N4{"no -p given and the word not pinnedNpm?"}
+    N4 -->|"yes"| E3["PROBLEM: RUNNER runs WORD without an exact version"]
+    N4 -->|"no"| N5["OK null"]
+    U1["uvx"] --> U2["readOptions. unpinnedSpec of --from and every --with with pinnedPython"]
+    U2 --> U3["then a positional, and without --from it must be name@version, else the same PROBLEM texts with the uvx hint"]
+    X1["pipx"] --> X2{"the first word run?"}
+    X2 -->|"no"| E4["PROBLEM: pipx is accepted only as pipx run"]
+    X2 -->|"yes"| X3["readOptions of the rest. --spec through pinnedPython. Without --spec the word must be name==version"]
+    C1["containerRunner, for docker and podman"] --> C2{"the first word run?"}
+    C2 -->|"no"| E5["PROBLEM: RUNNER is accepted only as RUNNER run -i --rm IMAGE:TAG"]
+    C2 -->|"yes"| C3["readOptions. -i or --interactive needed, so the server reads its messages. --rm needed, so no container stays"]
+    C3 --> C4["no image word: PROBLEM: RUNNER run names no image. Else imageProblem"]
+    I1["imageProblem"] --> I2{"an at sign in the image?"}
+    I2 -->|"yes"| I3["OK only with sha256 and 64 hex digits at the end"]
+    I2 -->|"no"| I4["the tag: after the colon of the part after the last slash. None, latest or an odd tag:<br/>PROBLEM: RUNNER runs the image IMAGE without a fixed tag"]
+```
+
+The exact texts. RUNNER is `npx`, `bunx`, `uvx`, `pipx run`, `docker run` or `podman run` as the table above names it, except in the two rows marked bare, where it is `docker` or `podman` alone. NAME is the option and VALUE its value. WORD is the option or the package word as written. Each text that ends in `HINT` is followed by `; ` and the hint of its runner.
+
+| Text | When |
+|---|---|
+| `PROGRAM is not accepted: it can download and run a package that ksproxy cannot see pinned; use X` | the program is `npm`, `pnpm`, `pnpx`, `yarn`, `bun`, `uv`, `deno`, `dnx`, `pixi`, `mise` or `corepack`, whatever its words |
+| `PYTHON -m MODULE is not accepted: it can download and run a package that ksproxy cannot see pinned; use X` | a Python with `-m pipx` or `-m uv` before its script |
+| `go run runs WORD without an exact version; write the module as path@v1.2.3` | a module query of `go run` without `vX.Y.Z` |
+| `RUNNER NAME REASON` | an option the table refuses, with the reason of the table |
+| `RUNNER NAME needs a value` | an option with a value that is last |
+| `ksproxy does not know the option WORD of RUNNER; it reads every option so that nothing unpinned runs` | an option the table does not hold |
+| `RUNNER NAME VALUE has no exact version; HINT` | a `-p`, `--package`, `--from`, `--with` or `--spec` value that is not pinned |
+| `RUNNER names nothing to run; HINT` | `npx`, `bunx`, `uvx` or `pipx run` with options, or with nothing, and no package word |
+| `RUNNER runs WORD without an exact version; HINT` | the package word is not pinned, and no `-p`, `--from` or `--spec` was given |
+| `pipx is accepted only as pipx run; HINT` | `pipx` with another first word |
+| `RUNNER is accepted only as RUNNER run -i --rm IMAGE:TAG` | `docker` or `podman` (bare RUNNER) with another first word |
+| `RUNNER needs -i, so that the server reads its messages` | `docker run` without `-i` or `--interactive` |
+| `RUNNER needs --rm, so that no container is left behind` | `docker run` without `--rm` |
+| `RUNNER names no image; HINT` | `docker run` with options and no image word |
+| `RUNNER runs the image IMAGE without a fixed tag; HINT` | (bare RUNNER) the image has no tag, `latest`, a tag that is not valid, or `@` without a `sha256` digest |
+
+The four hints:
+
+| Runner | Hint |
+|---|---|
+| `npx`, `bunx` | `write the package as name@1.2.3 or @scope/name@1.2.3` |
+| `uvx` | `write name@1.2.3, or --from 'name==1.2.3' and the command` |
+| `pipx run` | `write --spec name==1.2.3 and the command, or name==1.2.3` |
+| `docker run`, `podman run` | `write the image with a tag other than latest (name:1.2.3) or a digest (name@sha256:...)` |
+
+## src/kinds/mcp/export.js
+
+What an `mcp` target gives the agent's tool list, and the file `mcp-tools.json` that `ksproxy mcp` reads it from. Only a tool a rule names is exported, and only when its definition is safe for the agent's API. The limits: `MAX_EXPORTED` (200 tools a target), `MAX_NAME` (50 characters of `TARGET__TOOL`, as Claude Code adds `mcp__ksproxy__` and the API takes at most 64), `MAX_SCHEMA_BYTES` (64 KiB), `MAX_DESCRIPTION` (1000 characters), `SESSION_BUDGET` (1 MiB of definitions a session) and `TOOLS_FILE` (`mcp-tools.json`). `isDuplicate` tells an entry of `indexTools` for a name listed more than once.
+
+### indexTools and exportTools
+
+```mermaid
+flowchart TD
+    I1["indexTools of the listed tools"] --> I2["each object with a text name, by name. A name seen again: listed twice, for every later look-up"]
+    I2 --> I3["each kept tool with properties: the names of the top-level properties of its schema, or null"]
+    X1["exportTools of the target, the index and the hidden texts"] --> X2["for each rule, in order: its tool"]
+    X2 --> X3{"listed?"}
+    X3 -->|"no"| N1["note: the server does not list the tool"]
+    X3 -->|"yes, with properties"| N2["for each argument the rule names that is not a property: note: the tool declares no argument"]
+    N2 --> X4{"seen already in an earlier rule?"}
+    X4 -->|"yes"| X5["nothing more"]
+    X4 -->|"listed twice"| N3["note: tool T is not exported, listed more than once"]
+    X4 -->|"no"| D1["definitionOf, next diagram"]
+    D1 -->|"a reason"| N4["note: tool T is not exported: REASON"]
+    D1 -->|"a definition"| X6{"MAX_EXPORTED exported already?"}
+    X6 -->|"yes"| X7["counted. At the end, note: N more tools are not exported"]
+    X6 -->|"no"| X8["exported: the tool and its definition"]
+```
+
+| Note | When |
+|---|---|
+| `allow[N]: the MCP server does not list the tool T` | the rule N names a tool the server did not list |
+| `allow[N]: the tool T declares no argument A` | the rule N names an argument that is not a top-level property of the tool |
+| `tool T is not exported: the MCP server lists it more than once` | the server listed the tool twice |
+| `tool T is not exported: REASON` | `definitionOf` gave a reason, the next table |
+| `N more tools that the rules name are not exported: a target exports at most 200` | N tools that the rules name could not be exported because 200 were exported already |
+
+### definitionOf
+
+```mermaid
+flowchart TD
+    D1["definitionOf of the target, the tool and the hidden texts"] --> D2{"the name of letters, digits, _ and -?"}
+    D2 -->|"no"| R1["REASON: the name"]
+    D2 -->|"yes"| D3{"TARGET__TOOL at most MAX_NAME?"}
+    D3 -->|"no"| R2["REASON: the full name is too long"]
+    D3 -->|"yes"| D4{"the schema an object with type object?"}
+    D4 -->|"no"| R3["REASON: no type object at the top"]
+    D4 -->|"yes"| D5{"oneOf, anyOf or allOf at the top?"}
+    D5 -->|"yes"| R4["REASON: a combiner at the top"]
+    D5 -->|"no"| D6{"nested more than 64 levels, by tooDeep?"}
+    D6 -->|"yes"| R5["REASON: nested too deep"]
+    D6 -->|"no"| D11{"schemaHidesText: a hidden character in a key or in a value the server checks?"}
+    D11 -->|"yes"| R7["REASON: a hidden character"]
+    D11 -->|"no"| D7["agentSchema, then copySchema: the cleaned copy, after the pinned arguments are taken out"]
+    D7 --> D8{"the copy larger than MAX_SCHEMA_BYTES?"}
+    D8 -->|"yes"| R6["REASON: larger than 64 KiB"]
+    D8 -->|"no"| D9["the description through shownText of the engine with cleaned, at most MAX_DESCRIPTION, then the prefix and trimEnd"]
+    D9 --> D10["the definition: name TARGET__TOOL, description, inputSchema. Never outputSchema, annotations or title"]
+    R1 --> N1["every reason goes to the note: tool T is not exported: REASON"]
+    R2 --> N1
+    R3 --> N1
+    R4 --> N1
+    R5 --> N1
+    R6 --> N1
+    R7 --> N1
+```
+
+| Reason, in the order they are tried | When |
+|---|---|
+| `its name holds characters other than letters, digits, _ and -` | the tool name has any other character |
+| `TARGET__TOOL is longer than 50 characters` | the full name, with the real target and tool, is longer than `MAX_NAME` |
+| `its input schema does not have type "object" at the top` | the schema is not an object, or its `type` is not `object` |
+| `its input schema has oneOf, anyOf or allOf at the top` | the schema has any of the three keys |
+| `its input schema is nested more than 64 levels deep` | `tooDeep` of the schema with the limit 64 |
+| `its input schema holds a hidden character (a control, format or variation selector character) in a key or in a value other than a description or a title` | `schemaHidesText` of the schema: a hidden character in any key, or in any text that is not the value of a `description` or a `title` key |
+| `its input schema is larger than 64 KiB` | the cleaned copy, after the pinned arguments are taken out, is larger than `MAX_SCHEMA_BYTES` as JSON |
+
+The description of a definition is `[from the MCP server "TARGET"] ` and the server's description. The server's description has every secret hidden, is cleaned, has every secret hidden again and is clipped to 1000 characters (`shownText`), in that order, so a secret that crosses the clip shows no piece; the prefix is not counted in the 1000; the whole text is then trimmed at its end.
+
+The hidden characters are one set, `HIDDEN_CHARS`, both for cleaning and for refusing: control characters but the newline and the tab, format characters (direction marks, Unicode tags, zero-width marks), lone surrogates, U+2028, U+2029, and the variation selectors U+FE00 to U+FE0F and U+E0100 to U+E01EF. In a description or a title they are removed, as these are only read; anywhere else in a schema (a property name, a default, an enum value, an example, a pattern) they cannot be removed without changing what the server checks, so the tool is not exported. A newline or a tab in a value is not hidden.
+
+### cleanText, schemaHidesText, tooDeep, agentSchema and copySchema
+
+```mermaid
+flowchart TD
+    T1["cleanText of a text and the hidden texts"] --> T2["every hidden text replaced by the hidden marker first, so a tab or a hidden character inside a secret does not save it"]
+    T2 --> T4["cleaned: tabs as spaces, then every character of HIDDEN_CHARS removed"]
+    T4 --> T3["then every hidden text replaced again: removing a character can join the pieces of one"]
+    H1["schemaHidesText of a schema, with a stack, no recursion"] --> H2{"a key, at any level, that holdsHidden: a character of HIDDEN_CHARS?"}
+    H2 -->|"yes"| H3["true"]
+    H2 -->|"no"| H4{"a text that holdsHidden and is not the value of a description or a title key?"}
+    H4 -->|"yes"| H3
+    H4 -->|"no, for every value"| H5["false"]
+    D1["tooDeep of a value and a limit"] --> D2["a stack, no recursion: an object or array deeper than the limit is too deep"]
+    A1["agentSchema of the schema and the pinned arguments"] --> A2["a shallow copy, the pinned names out of the top-level properties and required"]
+    C1["copySchema of a value"] --> C2{"an array?"}
+    C2 -->|"yes"| C3["each item copied"]
+    C2 -->|"no"| C4{"an object?"}
+    C4 -->|"yes"| C5["Object.fromEntries: each key hidden, a key such as __proto__ stays an ordinary key"]
+    C5 --> C6["a text under description or title through cleanText, every other value copied"]
+    C4 -->|"no"| C7["a text hidden, anything else as it is"]
+    E1["the description of a definition"] --> E2["the server's description through cleanText, clipped to MAX_DESCRIPTION, then the prefix from the MCP server TARGET in brackets, then trimmed at the end"]
+```
+
+### toolsFileText
+
+```mermaid
+flowchart TD
+    F1["toolsFileText of the opened entries, the pid and start time, and cut"] --> F2{"no entry?"}
+    F2 -->|"yes"| F3["null: no file"]
+    F2 -->|"no"| F4["for each entry in list order, each exported tool in order"]
+    F4 --> F5["the bytes of its definition as JSON added to what is used"]
+    F5 --> F6{"over SESSION_BUDGET, or a definition before was?"}
+    F6 -->|"yes"| F7["the list ends here: this and every later tool left out"]
+    F6 -->|"no"| F8["kept: target, tool, timeoutSeconds of the target, definition"]
+    F7 --> F9["each entry that lost tools: cut of the entry and how many"]
+    F8 --> F9
+    F9 --> F10["OK: one line of compact JSON: version 1, pid, processStartedAt, tools, then a newline"]
+```
+
+`mcp-tools.json` is `{ "version": 1, "pid": PID, "processStartedAt": MS or null, "tools": [{ "target", "tool", "timeoutSeconds", "definition": { "name", "description", "inputSchema" } }] }`: the pid and the start time are those of the process that runs `start`, as `session.json` holds them, so a reader can tell a file left by an earlier run.
+
+## src/kinds/mcp/answer.js
+
+One outcome of `callTool` as the result that `perform` gives the core, `answerOf(outcome, { maxBytes, seconds })`: `{ exitCode, stdout, stderr, timedOut?, truncated? }`. The core writes it as `exit code: N` and the two streams, hides every secret value of the target and fits the output to its limit. `exitCode` is 0 for a result, 1 for a result with `isError` and for every failure except a time limit, which gives `null` with `timedOut`. `endText`, exported from the engine `src/kinds/engines/mcp-client.js` and used here, gives the end of a server as a sentence, `cutBytes` the first bytes of a text, `INPUT_REQUIRED` the text of a server that asked for input. `plain` passes a text of the server that is not the answer itself through `shownText` of the engine, with the hidden texts that `perform` gives (the secret values of the target and their forms): each hidden first, then `asSpaces` turns each control character, U+2028, U+2029 and each direction mark into a space, each hidden again, a cut piece at the end dropped, and only then the clip. The clip edge moves with the length of the agent's own arguments when a server echoes them, so a secret clipped before it was hidden would show all but its last character. `failed` makes a failure with exit code 1. The answer itself is cut only at its end, where the core drops a piece of a secret it cut.
+
+### answerOf
+
+```mermaid
+flowchart TD
+    A1["answerOf of the outcome"] --> A2{"a result?"}
+    A2 -->|"yes"| R1["resultText, next diagram"]
+    A2 -->|"no"| A3{"timedOut?"}
+    A3 -->|"yes"| A4["exit null, timedOut, stderr: the MCP server did not answer within N seconds"]
+    A3 -->|"no"| A5{"rpcError?"}
+    A5 -->|"yes"| A6["the message through plain, hidden then clipped, 1000 characters. Empty after cleaning: the without a message text.<br/>It starts ksproxy cannot send this call: as it is. Else: the MCP server answered with an error: the message"]
+    A5 -->|"no"| A7{"httpError?"}
+    A7 -->|"yes"| A8["the MCP server answered HTTP STATUS, then retry after N seconds for a whole number of seconds. Never the body"]
+    A7 -->|"no"| A9["unreachable: the MCP server could not be reached. cutOff: the answer of the MCP server was cut off"]
+    A9 --> A10["ended: endText of the engine, the MCP server stopped, exit N or signal S, or the connection closed. inputRequired: INPUT_REQUIRED"]
+    A10 --> A11["tooLarge: the answer of the MCP server was too large to read. Anything else: the MCP server gave an answer that ksproxy cannot read"]
+```
+
+| Stderr | When |
+|---|---|
+| `the MCP server did not answer within N seconds` | `timedOut`, with exit code null |
+| `the MCP server answered with an error: MESSAGE` | `rpcError`, whatever the code. This includes the engine's own errors, `the MCP server sent a line that is not JSON` (-32700) and `the MCP server sent an answer without a result` (-32603) |
+| `the MCP server answered with an error, without a message` | `rpcError` whose message is empty after `plain` and trimming |
+| `ksproxy cannot send this call: ...` | `rpcError` whose message starts so: given as it is, without the prefix |
+| `the MCP server answered HTTP STATUS` and `, retry after N seconds` | `httpError`, the second part for a whole number of seconds that is 0 or more. STATUS is `?` when it is not a whole number |
+| `the MCP server could not be reached` | `unreachable` |
+| `the answer of the MCP server was cut off` | `cutOff` |
+| `the MCP server stopped (signal S)`, `the MCP server stopped (exit N)` | `ended`, a signal first, then an exit code |
+| `the connection to the MCP server was closed` | `ended` with neither a code nor a signal |
+| `the server asked for input, which ksproxy does not give` | `inputRequired` |
+| `the answer of the MCP server was too large to read` | `tooLarge` |
+| `the MCP server gave an answer that ksproxy cannot read` | none of the above |
+
+### resultText and partText
+
+```mermaid
+flowchart TD
+    R1["resultText of a result, truncated, maxBytes and the hidden texts"] --> R2["the content parts, none when it is not a list, each through partText, joined by newlines"]
+    R2 --> R3{"no part with text, hasText, and a structuredContent?"}
+    R3 -->|"yes"| R4["structuredText: compact JSON added, or a line saying it cannot be written as JSON"]
+    R3 -->|"no"| R5["the parts alone"]
+    R4 --> R6["cutBytes at maxBytes, never in a character"]
+    R5 --> R6
+    R6 --> R7["exit 1 with isError true, else 0. truncated when the engine or the cut left something out"]
+    P1["partText of a part"] --> P2{"type?"}
+    P2 -->|"text"| P3["its text, or a line: a text part without text, not shown"]
+    P2 -->|"image or audio"| P4["one line: TYPE, mimeOf, decodedBytes of the base64 data, not shown"]
+    P2 -->|"resource"| P5["its text, or one line: resource, mimeOf, decodedBytes of the blob, not shown"]
+    P2 -->|"resource_link"| P6["one line: link, the URI through plain, hidden then clipped, 1000 characters"]
+    P2 -->|"anything else"| P7["one line: a part of type T through plain, 100 characters, not shown. Not an object: a part that is not an object, not shown"]
+    M1["mimeOf: the MIME type through plain, hidden then clipped, 100 characters, or no type"] --> P4
+    B1["decodedBytes: three quarters of the length less the padding, without decoding"] --> P4
+```

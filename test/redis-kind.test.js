@@ -134,7 +134,7 @@ async function cli(args, env) {
 }
 
 test('redis is a brokered kind at the end of the list and meets the contract', () => {
-  assert.deepEqual(KINDS.map((kind) => kind.key), ['ssh', 'kubernetes', 'local', 'http', 'command', 'elasticsearch', 'rabbitmq', 'redis', 'postgres', 'mysql', 'mongodb', 'kafka']);
+  assert.deepEqual(KINDS.map((kind) => kind.key), ['ssh', 'kubernetes', 'local', 'http', 'command', 'elasticsearch', 'rabbitmq', 'redis', 'postgres', 'mysql', 'mongodb', 'kafka', 'mcp']);
   assert.equal(kindByKey('redis'), redisKind);
   checkKind(redisKind, KINDS);
   assert.equal(redisKind.brokered, true);

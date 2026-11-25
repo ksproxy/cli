@@ -6,7 +6,9 @@ import {
 import { allowWarnings } from './allowlist.js';
 import { doctor } from './doctor.js';
 import { InventoryError, loadInventory, sampleInventory } from './inventory.js';
-import { KINDS, kindByFlag, kindByKey } from './kinds/index.js';
+import {
+  KINDS, cliName, flaggedKinds, kindByCliName, kindByKey,
+} from './kinds/index.js';
 import { listenerLines } from './listen-status.js';
 import { serve, SERVER_INFO } from './mcp.js';
 import {
@@ -37,9 +39,10 @@ const START_LIKE = ['start', 'doctor'];
 const NAMES_OF_ONE = 'target names belong to one project; use them with a single --project';
 
 // The start line of the usage, from the list of kinds: the flag of each kind that is not brokered, then --all and
-// --verbose, then the flags of the brokered kinds and --project on lines of their own, wrapped at USAGE_WIDTH.
+// --verbose, then the flags of the brokered kinds and --project on lines of their own, wrapped at USAGE_WIDTH. A kind
+// without a flag shows none.
 function startUsage() {
-  const shown = KINDS.map((kind, i) => ({ brokered: kind.brokered === true, text: `[--${kind.flag} ${i % 2 === 0 ? 'a,b' : 'x,y'}]` }));
+  const shown = flaggedKinds().map((kind, i) => ({ brokered: kind.brokered === true, text: `[--${kind.flag} ${i % 2 === 0 ? 'a,b' : 'x,y'}]` }));
   const first = shown.filter((s) => !s.brokered).map((s) => s.text);
   const lines = [`  start ${[...first, '[--all]', '[-v|--verbose]'].join(' ')}`];
   let line = '';
@@ -54,10 +57,10 @@ function startUsage() {
   return lines.join('\n');
 }
 
-// The flags check takes, from the list of kinds: <ssh|kube|local|...>.
-const checkKinds = () => `<${KINDS.map((kind) => kind.flag).join('|')}>`;
+// The kind names check takes, from the list of kinds: <ssh|kube|local|...>, the key of a kind without a flag.
+const checkKinds = () => `<${KINDS.map(cliName).join('|')}>`;
 
-// The check lines of the usage: the project flag, then the flags of every kind, then the name and the command, each on a line of their own.
+// The check lines of the usage: the project flag, then the kind names of checkKinds, then the name and the command, each on a line of their own.
 const checkUsage = () => `  check ${PROJECT_USAGE}\n${START_INDENT}${checkKinds()}\n${START_INDENT}<name> <command...>`;
 
 const usage = () => `Usage: ksproxy <command>
@@ -145,16 +148,17 @@ const VALUE_FLAG = /^(--listen|--tls-cert|--tls-key)(?:=(.*))?$/;
 // The arguments of start: options, the object start takes as before, and for the listener the --listen values, whether
 // --new-token was given, and the TLS files or null. count is the number of projects: a kind flag names targets of one.
 // command is start or doctor: doctor takes the same arguments, and a word that does not start with a dash is a target
-// name for it, kept in names; start refuses such a word as before.
+// name for it, kept in names; start refuses such a word as before. Only the kinds that have a flag give an option.
 function parseStartArgs(args, count, command = 'start') {
+  const flagged = flaggedKinds();
   const options = {
-    ...Object.fromEntries(KINDS.map((kind) => [kind.flag, null])), all: false, verbose: false,
+    ...Object.fromEntries(flagged.map((kind) => [kind.flag, null])), all: false, verbose: false,
   };
   const listen = [];
   const plain = [];
   const files = { '--tls-cert': null, '--tls-key': null };
   let newToken = false;
-  const flagPattern = new RegExp(`^(--(?:${KINDS.map((kind) => kind.flag).join('|')}))(?:=(.*))?$`);
+  const flagPattern = new RegExp(`^(--(?:${flagged.map((kind) => kind.flag).join('|')}))(?:=(.*))?$`);
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     if (arg === '--all') {
@@ -208,7 +212,7 @@ function parseStartArgs(args, count, command = 'start') {
     return { error: '--new-token, --tls-cert and --tls-key work only with --listen' };
   }
   if ((cert === null) !== (key === null)) return { error: '--tls-cert and --tls-key go together' };
-  const named = count > 1 ? KINDS.find((kind) => options[kind.flag] !== null) : undefined;
+  const named = count > 1 ? flagged.find((kind) => options[kind.flag] !== null) : undefined;
   if (named !== undefined) return { error: `--${named.flag} names targets of one project; use it with a single --project` };
   if (count > 1 && plain.length > 0) return { error: NAMES_OF_ONE };
   return {
@@ -358,7 +362,8 @@ async function status(env, { out }) {
 function check(args, env, ctx) {
   const { out, err } = ctx;
   const [kindArg, name, ...rest] = args;
-  const kindOfArg = kindByFlag(kindArg);
+  // The flag of a kind, or the key of a kind without a flag.
+  const kindOfArg = kindByCliName(kindArg);
   if (kindOfArg === undefined || name === undefined || rest.length === 0) {
     return usageError(ctx, `usage: ksproxy check ${PROJECT_USAGE} ${checkKinds()} <name> <command...>`);
   }

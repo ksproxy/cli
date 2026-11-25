@@ -19,7 +19,7 @@ const MAX_ARGS = 50;
 const MAX_ARG_BYTES = 1024;
 const MAX_ENV = 50;
 const CONTROL_CHAR = /[\u0000-\u001f\u007f]/;
-const LOADER_PREFIXES = ['LD_', 'DYLD_'];
+export const LOADER_PREFIXES = ['LD_', 'DYLD_'];
 const HOME_PREFIX = '~/';
 const LOOKAROUNDS = ['(?=', '(?!', '(?<=', '(?<!'];
 
@@ -27,7 +27,7 @@ const LOOKAROUNDS = ['(?=', '(?!', '(?<=', '(?<!'];
 const withHome = (text) => (text.startsWith(HOME_PREFIX) ? expandHome(text) : text);
 
 // The program: a plain name, looked up on PATH when the target opens, or an absolute path, written or after ~/.
-function checkProgram(value, where) {
+export function checkProgram(value, where) {
   const message = `${where}: program: must be an absolute path, a path that starts with "~/", or a program name of letters, digits and _ . + - that is looked up on PATH`;
   if (typeof value !== 'string' || Buffer.byteLength(value) > MAX_PROGRAM_BYTES || CONTROL_CHAR.test(value)) {
     throw new InventoryError(message);

@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { validateInventory } from '../src/inventory.js';
+import { cliName } from '../src/kinds/index.js';
 
+// flag may be left out: such a kind is chosen with the picker, --all or a target name of doctor, and check takes its key.
 const NAME_FIELDS = ['key', 'flag', 'label', 'word', 'noun', 'countNoun'];
+const OPTIONAL_NAMES = ['flag'];
 const NAME_RE = /^[a-z][a-z0-9-]*$/;
 const RESERVED_FLAGS = ['all', 'verbose', 'help', 'version'];
 const MAX_LABEL = 4;
@@ -9,7 +12,7 @@ const FUNCTIONS = ['decide', 'agentSection', 'validate', 'hint', 'openingMessage
 const OPTIONAL_FUNCTIONS = [
   'wordsNotForReview', 'notForReview', 'reviewServerCheck', 'scrubDirs', 'scrubText', 'forCheck', 'checkExtra', 'secretFiles',
   'reapStale', 'prepare', 'close', 'onCloseTimeout', 'sessionFiles', 'secrets', 'checkInput', 'ruleWarnings', 'hiddenForms',
-  'ports', 'freeSample', 'doctor',
+  'ports', 'freeSample', 'doctor', 'listFields',
 ];
 const DETAIL_SHAPES = ['object'];
 // A brokered kind is carried out inside ksproxy start by perform; every other kind names the one process to start with command.
@@ -22,13 +25,18 @@ const identifiers = (kind) => [kind.key, kind.label, kind.tool.name];
 export function checkKind(kind, list) {
   const at = (what) => `${kind.key}: ${what}`;
   for (const name of NAME_FIELDS) {
+    if (OPTIONAL_NAMES.includes(name) && kind[name] === undefined) continue;
     assert.equal(typeof kind[name], 'string', at(name));
     assert.notEqual(kind[name], '', at(name));
     assert.equal(list.filter((other) => other[name] === kind[name]).length, 1, at(`${name} must be unique`));
   }
-  for (const name of ['key', 'flag', 'label']) assert.match(kind[name], NAME_RE, at(name));
+  for (const name of ['key', 'flag', 'label']) {
+    if (kind[name] !== undefined) assert.match(kind[name], NAME_RE, at(name));
+  }
   assert.ok(kind.label.length <= MAX_LABEL, at(`label is at most ${MAX_LABEL} characters`));
   assert.ok(!RESERVED_FLAGS.includes(kind.flag), at('flag is an option of its own'));
+  // check takes the flag, or the key of a kind without one: no two kinds may share that name.
+  assert.equal(list.filter((other) => cliName(other) === cliName(kind)).length, 1, at(`${cliName(kind)} names another kind on the command line`));
   for (const other of list.filter((item) => item !== kind)) {
     for (const value of identifiers(kind)) {
       assert.ok(!identifiers(other).includes(value), at(`${value} is also a key, a label or a tool name of ${other.key}`));
@@ -66,6 +74,8 @@ export function checkKind(kind, list) {
   assert.equal(typeof tool.detailKey, 'string', at('tool.detailKey'));
   assert.equal(typeof tool.detailIsArray, 'boolean', at('tool.detailIsArray'));
   assert.equal(tool.definition.name, tool.name, at('definition name'));
+  // listed false: the tool is never in tools/list, though it answers when called (mcp_call).
+  assert.ok(tool.listed === undefined || tool.listed === false, at('tool.listed is false or left out'));
   assert.ok(tool.definition.inputSchema.properties[tool.nameKey], at('definition has the name argument'));
   // detailShape 'object': the call is every argument but the name and timeout_seconds, and detailKey only names the
   // field of the audit entry, which auditedDetail fills and detailText shows. Without it the call is one argument.

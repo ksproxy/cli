@@ -12,7 +12,7 @@ import {
 import { checkbox } from './select.js';
 import { liveSession } from './session.js';
 import {
-  chooseTargets, credentialVariables, start, withoutVariables,
+  chooseTargets, credentialVariables, namesByKind, start, withoutVariables,
 } from './start.js';
 import {
   expiryWarning, newToken, tokenPath, tokenState,
@@ -199,19 +199,21 @@ function checkListen(plan, env, now, terminal) {
 }
 
 // Pre-check 7: the options each start gets. --all or kind flags go to every start as given. Else the picker runs here,
-// once per project, one after the other, its titles with the prefix of the project, and the names picked become the
-// kind flags of that project, so start never runs a picker of its own.
+// once per project, one after the other, its titles with the prefix of the project, and the names picked go to the
+// start of that project by kind key, as named, which reaches a kind without a flag too, so start never runs a picker
+// of its own.
 async function chooseAll(projects, inventories, options, proc, pick, label) {
-  if (options.all || KINDS.some((kind) => options[kind.flag])) return { chosen: projects.map(() => options) };
+  const given = namesByKind(options);
+  if (options.all || KINDS.some((kind) => given[kind.key])) return { chosen: projects.map(() => options) };
   if (projects.length > 1 && !proc.stdin.isTTY) return { error: 'several projects need --all when not running in a terminal' };
   const chosen = [];
   for (const [i, project] of projects.entries()) {
     const ask = (request) => pick({ ...request, title: `${label(project)}${request.title}` });
     const picked = await chooseTargets(inventories[i], options, proc, ask);
     if (picked.error !== undefined) return { error: picked.error };
-    const names = Object.fromEntries(KINDS.map((kind) => [kind.flag, picked.selection[kind.key].map((t) => t.name)]));
-    if (Object.values(names).every((list) => list.length === 0)) return { error: `${label(project)}nothing selected` };
-    chosen.push({ ...options, ...names });
+    const named = Object.fromEntries(KINDS.map((kind) => [kind.key, picked.selection[kind.key].map((t) => t.name)]));
+    if (Object.values(named).every((list) => list.length === 0)) return { error: `${label(project)}nothing selected` };
+    chosen.push({ ...options, named });
   }
   return { chosen };
 }

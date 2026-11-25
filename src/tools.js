@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { run } from './exec.js';
 import { appendAudit } from './audit.js';
 import { liveSession } from './session.js';
+import { readSessionTools } from './session-tools.js';
 import { KINDS, kindByKey, kindByTool } from './kinds/index.js';
 import { hideSecrets } from './kinds/engines/http.js';
 import { askReview } from './review.js';
@@ -53,9 +54,39 @@ const LIST_TARGETS = {
 
 // The tools to list: list_targets and the tool of every kind that is not brokered, always; the tool of a brokered
 // kind when the inventory holds a target of that kind, and every one when the inventory is null (it could not be read).
-export function toolDefinitions(inventory = {}) {
-  const listed = (kind) => kind.brokered !== true || inventory === null || (inventory[kind.key] ?? []).length > 0;
-  return [LIST_TARGETS, ...KINDS.filter(listed).map((kind) => kind.tool.definition)];
+// A tool with listed false (mcp_call) is never listed, though it answers when called. direct: the tools of the live
+// session from directTools, listed after those in their own order; none by default.
+export function toolDefinitions(inventory = {}, direct = []) {
+  const listed = (kind) => kind.tool.listed !== false
+    && (kind.brokered !== true || inventory === null || (inventory[kind.key] ?? []).length > 0);
+  return [LIST_TARGETS, ...KINDS.filter(listed).map((kind) => kind.tool.definition), ...direct.map((item) => item.definition)];
+}
+
+// The fixed tool that a tool of the session is routed to: the unlisted tool of the mcp kind.
+const ROUTED_TOOL = 'mcp_call';
+
+// The live session of env with the tools its MCP servers give the agent directly: { session, dir, tools }, the tools
+// from readSessionTools in the order of mcp-tools.json, less any whose name is that of a fixed tool (list_targets or
+// the tool of a kind, listed or not) or comes more than once. No live session, or anything that goes wrong, gives no
+// tools: it never throws.
+function sessionTools(env) {
+  try {
+    const dir = sessionDirOf(env);
+    const session = liveSession(dir);
+    if (session === null || !Array.isArray(session.targets)) return { tools: [] };
+    const read = readSessionTools(dir, session);
+    const fixed = new Set([LIST_TARGETS.name, ...KINDS.map((kind) => kind.tool.name)]);
+    const count = new Map();
+    for (const { definition } of read) count.set(definition.name, (count.get(definition.name) ?? 0) + 1);
+    return { session, dir, tools: read.filter(({ definition }) => !fixed.has(definition.name) && count.get(definition.name) === 1) };
+  } catch {
+    return { tools: [] };
+  }
+}
+
+// The tools that the live session of env gives the agent directly, as tools/list adds them after the fixed tools.
+export function directTools(env = process.env) {
+  return sessionTools(env).tools;
 }
 
 // The call socket of the session, or null when its path cannot be used.
@@ -261,6 +292,12 @@ function listOpen(session, kind) {
   return names.length > 0 ? names.join(', ') : 'none';
 }
 
+// The fields that the kind of a target adds to it in list_targets, from its listFields: none for a kind without it.
+function listFieldsOf(target) {
+  const listFields = kindByKey(target.kind)?.listFields;
+  return listFields === undefined ? {} : listFields(target);
+}
+
 async function listTargets(session, dir, env, stderr, origin) {
   audit(env, { event: 'list', ...originFields(origin) }, stderr);
   const targets = await Promise.all(session.targets.map(async (t) => ({
@@ -271,6 +308,7 @@ async function listTargets(session, dir, env, stderr, origin) {
     allow: t.allow,
     ...(t.review === true ? { review: true } : {}),
     ...(outputKiB(t) === DEFAULT_OUTPUT_KIB ? {} : { outputLimit: `${outputKiB(t)} KiB per stream` }),
+    ...listFieldsOf(t),
   })));
   return { text: JSON.stringify({ startedAt: session.startedAt, targets }, null, 2), isError: false };
 }
@@ -446,8 +484,9 @@ const LATE = {
 };
 const STOPPED = Symbol('stopped');
 
-// perform of the kind, with the call's time limit, the output limit and a signal that fires at the limit or when the
-// session stops. A perform that is still busy GRACE_MS after the limit counts as timed out; a stop ends the wait at once.
+// perform of the kind, with the call's time limit, the output limit, a signal that fires at the limit or when the
+// session stops, and the opened entry of the target, with what its open kept. A perform that is still busy GRACE_MS
+// after the limit counts as timed out; a stop ends the wait at once.
 function performWithin(kindObject, open, decision, {
   env, timeoutMs, maxBytes, signal, input,
 }) {
@@ -467,7 +506,7 @@ function performWithin(kindObject, open, decision, {
     }, timeoutMs);
   });
   const work = Promise.resolve().then(() => kindObject.perform(open.target, decision, {
-    env, secrets: open.secrets, timeoutMs, maxBytes, signal: controller.signal, input,
+    env, secrets: open.secrets, timeoutMs, maxBytes, signal: controller.signal, input, opened: open.opened,
   }));
   return Promise.race([work, cut]).finally(() => {
     clearTimeout(timer);
@@ -596,11 +635,34 @@ export async function answerCall(request, {
   return answer;
 }
 
+// A tool of the live session's list: mcp_call with its target and its tool, the agent's arguments whole as the
+// arguments (nothing taken out or added, timeout_seconds included), and the target's timeoutSeconds as the time limit.
+// The audit entry is the one of mcp_call. A name that is not in that list is an unknown tool, as any other; a name
+// without __ is never one, so it is answered without reading the session.
+async function callDirect(name, args, env, {
+  stderr, review, origin, signal,
+}) {
+  const unknown = { text: `unknown tool: ${name}`, isError: true };
+  if (typeof name !== 'string' || !name.includes('__')) return unknown;
+  const { session, dir, tools } = sessionTools(env);
+  const item = tools.find(({ definition }) => definition.name === name);
+  if (item === undefined) return unknown;
+  if (!isPlainObject(args)) return { text: 'invalid arguments: expected an object', isError: true };
+  const routed = {
+    target: item.target, tool: item.tool, arguments: args, timeout_seconds: item.timeoutSeconds,
+  };
+  return execTool(ROUTED_TOOL, routed, session, dir, env, stderr, review, origin, signal);
+}
+
 export async function callTool(name, args, env = process.env, {
   stderr = process.stderr, review = askReview, origin, signal,
 } = {}) {
   try {
-    if (name !== LIST_TARGETS.name && kindByTool(name) === undefined) return { text: `unknown tool: ${name}`, isError: true };
+    if (name !== LIST_TARGETS.name && kindByTool(name) === undefined) {
+      return await callDirect(name, args, env, {
+        stderr, review, origin, signal,
+      });
+    }
     const dir = sessionDirOf(env);
     const session = liveSession(dir);
     if (session === null || !Array.isArray(session.targets)) {

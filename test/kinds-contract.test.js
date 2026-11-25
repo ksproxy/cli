@@ -8,7 +8,7 @@ import { checkKind } from './kind-contract.js';
 
 const OPTIONAL = [
   'wordsNotForReview', 'notForReview', 'reviewServerCheck', 'scrubDirs', 'scrubText', 'forCheck', 'checkExtra', 'secretFiles',
-  'reapStale', 'prepare', 'close', 'onCloseTimeout', 'sessionFiles', 'secrets', 'checkInput', 'ports', 'freeSample',
+  'reapStale', 'prepare', 'close', 'onCloseTimeout', 'sessionFiles', 'secrets', 'checkInput', 'ports', 'freeSample', 'listFields',
 ];
 
 test('every built-in kind meets the contract', () => {
@@ -46,6 +46,7 @@ test('the contract check refuses each kind of mistake', () => {
   assert.throws(() => bad({ reapStale: 'x' }), /reapStale/);
   assert.throws(() => bad({ toolBullet: 'nothing' }), /names the tool/);
   assert.throws(() => bad({ tool: { ...ssh.tool, detailShape: 'string' } }), /tool.detailShape is object or left out/);
+  assert.throws(() => bad({ tool: { ...ssh.tool, listed: true } }), /tool.listed is false or left out/);
   assert.throws(() => bad({ tool: { ...ssh.tool, auditedDetail: () => null } }), /auditedDetail is only for an object call/);
   assert.throws(() => bad({ tool: { ...ssh.tool, detailText: () => '' } }), /detailText is only for an object call/);
 });
@@ -108,7 +109,7 @@ test('the opening line, the DOWN and UP texts and the session fields are today\'
   assert.equal(kubernetes.downMessage({ name: 'lab' }, 'auth'), 'token rejected by the cluster');
   assert.equal(kubernetes.downMessage({ name: 'lab' }, 'fail'), 'cluster did not answer, see kube-lab.log');
   assert.equal(kubernetes.downMessage({ name: 'lab' }, 'down'), 'proxy is not answering');
-  assert.deepEqual(KINDS.map((kind) => kind.backMessage), ['connection is back', 'connection is back', 'folder is back', 'the call service is back', 'the call service is back', 'the call service is back', 'the call service is back', 'the call service is back', 'the call service is back', 'the call service is back', 'the call service is back', 'the call service is back']);
+  assert.deepEqual(KINDS.map((kind) => kind.backMessage), ['connection is back', 'connection is back', 'folder is back', 'the call service is back', 'the call service is back', 'the call service is back', 'the call service is back', 'the call service is back', 'the call service is back', 'the call service is back', 'the call service is back', 'the call service is back', 'the MCP server answers again']);
 
   const common = { name: 'n', description: 'd', allow: ['x'] };
   const sshTarget = { ...common, host: 'h', jumps: ['ssh j'] };
@@ -177,7 +178,7 @@ test('secretFilesOf collects the credential files of every kind that names them,
 
 test('the list holds the kinds in their fixed order', () => {
   assert.ok(Array.isArray(KINDS));
-  assert.deepEqual(KINDS.map((kind) => kind.key), ['ssh', 'kubernetes', 'local', 'http', 'command', 'elasticsearch', 'rabbitmq', 'redis', 'postgres', 'mysql', 'mongodb', 'kafka']);
+  assert.deepEqual(KINDS.map((kind) => kind.key), ['ssh', 'kubernetes', 'local', 'http', 'command', 'elasticsearch', 'rabbitmq', 'redis', 'postgres', 'mysql', 'mongodb', 'kafka', 'mcp']);
 });
 
 test('the sample inventory holds the sample of every kind, in list order', () => {
@@ -193,7 +194,7 @@ test('the sample inventory holds the sample of every kind, in list order', () =>
 test('the lookups return the kind for each of its names and undefined for an unknown name', () => {
   for (const kind of KINDS) {
     assert.equal(kindByKey(kind.key), kind);
-    assert.equal(kindByFlag(kind.flag), kind);
+    assert.equal(kindByFlag(kind.flag), kind.flag === undefined ? undefined : kind);
     assert.equal(kindByTool(kind.tool.name), kind);
   }
   assert.equal(kindByKey('nope'), undefined);

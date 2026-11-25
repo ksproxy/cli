@@ -135,7 +135,7 @@ const decideWith = (extra, input) => kafkaKind.decide(decideTarget(extra), input
 
 test('kafka is a brokered kind appended to the list and meets the contract', () => {
   assert.equal(KINDS[11], kafkaKind);
-  assert.equal(KINDS.at(-1), kafkaKind);
+  assert.equal(KINDS[12], kindByKey('mcp'), 'the mcp kind comes after it');
   assert.equal(kindByKey('kafka'), kafkaKind);
   assert.equal(kindByFlag('kafka'), kafkaKind);
   assert.equal(kindByTool('kafka_exec'), kafkaKind);

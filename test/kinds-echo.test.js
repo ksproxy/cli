@@ -36,7 +36,7 @@ function runMain(world, argv) {
 }
 
 test('the list holds echo after the three built-in kinds and the lookups find it', () => {
-  assert.deepEqual(KINDS.map((kind) => kind.key), ['ssh', 'kubernetes', 'local', 'http', 'command', 'elasticsearch', 'rabbitmq', 'redis', 'postgres', 'mysql', 'mongodb', 'kafka', 'echo']);
+  assert.deepEqual(KINDS.map((kind) => kind.key), ['ssh', 'kubernetes', 'local', 'http', 'command', 'elasticsearch', 'rabbitmq', 'redis', 'postgres', 'mysql', 'mongodb', 'kafka', 'mcp', 'echo']);
   assert.equal(kindByKey('echo'), echo);
   assert.equal(kindByFlag('echo'), echo);
   assert.equal(kindByTool('echo_exec'), echo);
@@ -44,7 +44,7 @@ test('the list holds echo after the three built-in kinds and the lookups find it
 
 test('an inventory with an echo entry validates and a bad one is refused with a message that names it', () => {
   const inventory = validateInventory({ echo: [{ name: 'x', description: 'd', allow: ['say *'] }] });
-  assert.deepEqual(Object.keys(inventory), ['ssh', 'kubernetes', 'local', 'http', 'command', 'elasticsearch', 'rabbitmq', 'redis', 'postgres', 'mysql', 'mongodb', 'kafka', 'echo', 'reviewers']);
+  assert.deepEqual(Object.keys(inventory), ['ssh', 'kubernetes', 'local', 'http', 'command', 'elasticsearch', 'rabbitmq', 'redis', 'postgres', 'mysql', 'mongodb', 'kafka', 'mcp', 'echo', 'reviewers']);
   assert.deepEqual(inventory.echo, [{ kind: 'echo', name: 'x', description: 'd', allow: ['say *'] }]);
   assert.throws(() => validateInventory({ echo: [{ name: 'x', allow: 'nope' }] }), (err) => {
     assert.ok(err instanceof InventoryError);
@@ -54,7 +54,7 @@ test('an inventory with an echo entry validates and a bad one is refused with a 
   assert.throws(() => validateInventory({ echo: [{ name: 'x', host: 'h' }] }), /echo "x": unknown key "host"/);
   assert.throws(() => validateInventory({ echo: [{ name: 'x' }, { name: 'x' }] }), /echo "x": name: duplicate name/);
   assert.throws(() => validateInventory({ echo: 'x' }), /inventory: echo: must be an array/);
-  assert.deepEqual(Object.keys(sampleInventory()), ['ssh', 'kubernetes', 'local', 'http', 'command', 'elasticsearch', 'rabbitmq', 'redis', 'postgres', 'mysql', 'mongodb', 'kafka', 'echo']);
+  assert.deepEqual(Object.keys(sampleInventory()), ['ssh', 'kubernetes', 'local', 'http', 'command', 'elasticsearch', 'rabbitmq', 'redis', 'postgres', 'mysql', 'mongodb', 'kafka', 'mcp', 'echo']);
 });
 
 test('echo meets the contract of a kind', () => {

@@ -287,3 +287,17 @@ export function formatLogLine(entry, { width = DEFAULT_WIDTH, color = false, ver
 }
 
 export const formatAuditLine = formatLogLine;
+
+// A line that a kind says about one of its targets through ctx.say: the time, kind and target columns of a log line,
+// the status and duration columns left empty, then the text, cleaned of control characters, so that it stays one line.
+// It is never clipped and never coloured, and it is never an audit entry.
+export function formatSaidLine({ ts, kind, target, text }) {
+  return [
+    clock(ts),
+    pad(kind, 4),
+    pad(clip(sanitizeForTerminal(target), 10), 10),
+    pad('', 8),
+    pad('', 6),
+    sanitizeForTerminal(text),
+  ].join(' ').trimEnd();
+}

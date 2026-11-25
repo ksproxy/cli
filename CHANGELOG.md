@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-25
+
+### Added
+
+- The `mcp` kind: `ksproxy start` starts a local MCP server (`uvx`, `npx`, `pipx`, `bunx`, `docker run -i` or any program) or connects to a remote one (https, with no login, a bearer token or basic auth), holds its credential, and the allowed tools appear in the agent's tool list as `TARGET__TOOL`. Rules are tool names or objects with argument values, `"allow": "any"` is refused, `arguments` pins values, `timeoutSeconds` sets the time limit of a call, and `env` takes plain values or `{ "fromEnv": NAME }`. Package runners must name an exact version, and `npm`, `pnpm`, `yarn`, `bun`, `uv`, `deno`, `dnx`, `pixi`, `mise`, `corepack`, `python -m pipx` and `python -m uv` are refused as a server's program. It adds no command and no flag: choose `mcp` targets with the picker or `--all`, check them with `ksproxy check mcp NAME TOOL [JSON]`, and see them in `ksproxy doctor`. `ksproxy mcp` tells the agent when the tools appear or go (`notifications/tools/list_changed`, for an inventory with an `mcp` target), and `list_targets` shows the exported tools of an `mcp` target. See "MCP servers" in the README and "What the MCP server changes" in SECURITY.md.
+
 ## [0.6.0] - 2026-11-25
 
 ### Added
@@ -101,6 +107,7 @@ First release.
 - `ksproxy init`, `ksproxy status` and `ksproxy check <ssh|kube|local> <name> <command...>` to create an inventory, inspect the session, and test a rule without opening anything.
 - No npm dependencies. Requires Node.js 24 or later, on macOS or Linux.
 
+[0.7.0]: https://github.com/ksproxy/cli/releases/tag/v0.7.0
 [0.6.0]: https://github.com/ksproxy/cli/releases/tag/v0.6.0
 [0.5.0]: https://github.com/ksproxy/cli/releases/tag/v0.5.0
 [0.4.0]: https://github.com/ksproxy/cli/releases/tag/v0.4.0

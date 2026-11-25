@@ -12,6 +12,7 @@
     "mysql": [],
     "mongodb": [],
     "kafka": [],
+    "mcp": [],
     "reviewers": {}
   },
   "full": {
@@ -135,6 +136,7 @@
     "mysql": [],
     "mongodb": [],
     "kafka": [],
+    "mcp": [],
     "reviewers": {
       "fast": {
         "name": "fast",

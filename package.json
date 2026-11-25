@@ -1,6 +1,6 @@
 {
   "name": "@ksproxy/cli",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Let AI agents run allowlisted ssh, kubectl, local, database, queue and HTTP API calls without your credentials.",
   "keywords": [
     "mcp",

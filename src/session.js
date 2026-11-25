@@ -3,16 +3,16 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { ensureDir, writeFileAtomic } from './paths.js';
 
-const FILE = 'session.json';
+export const SESSION_FILE = 'session.json';
 
 export function writeSession(dir, session) {
   ensureDir(dir);
-  writeFileAtomic(path.join(dir, FILE), `${JSON.stringify(session, null, 2)}\n`);
+  writeFileAtomic(path.join(dir, SESSION_FILE), `${JSON.stringify(session, null, 2)}\n`);
 }
 
 export function readSession(dir) {
   try {
-    const parsed = JSON.parse(fs.readFileSync(path.join(dir, FILE), 'utf8'));
+    const parsed = JSON.parse(fs.readFileSync(path.join(dir, SESSION_FILE), 'utf8'));
     return parsed !== null && typeof parsed === 'object' ? parsed : null;
   } catch {
     return null;
@@ -37,14 +37,21 @@ export function processStartTime(pid) {
   return parseLstart(out.stdout);
 }
 
-export function isLive(session) {
-  const pid = session?.pid;
+// Whether a process has this pid: a positive integer to which signal 0 can be sent, or is refused with EPERM (the
+// process of another user). It does not tell a reused pid; isLive does, with the start time.
+export function pidAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
+    return true;
   } catch (err) {
-    if (err.code !== 'EPERM') return false;
+    return err.code === 'EPERM';
   }
+}
+
+export function isLive(session) {
+  const pid = session?.pid;
+  if (!pidAlive(pid)) return false;
   if (!Number.isFinite(session.processStartedAt)) return true;
   const started = processStartTime(pid);
   return started === null || Math.abs(started - session.processStartedAt) <= 5000;
@@ -56,5 +63,5 @@ export function liveSession(dir) {
 }
 
 export function clearSession(dir) {
-  fs.rmSync(path.join(dir, FILE), { force: true });
+  fs.rmSync(path.join(dir, SESSION_FILE), { force: true });
 }

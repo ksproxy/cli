@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
-import { formatLogLine, logOptionsFor } from './audit.js';
+import { formatLogLine, formatSaidLine, logOptionsFor } from './audit.js';
 import { makeDoctorFolder, reapDoctorFolders } from './doctor-folder.js';
 import { hideSecrets } from './kinds/engines/http.js';
 import { KINDS } from './kinds/index.js';
@@ -13,7 +13,7 @@ import {
   LineStream, listenerProblem, loadProject, nameOf, parseAddresses, readTls, runningSession, tokenProblem,
 } from './start-many.js';
 import {
-  chooseTargets, closeTarget, credentialVariables, openTarget, prepareTargets, withoutVariables,
+  chooseTargets, closeTarget, credentialVariables, namesByKind, openTarget, prepareTargets, stopSignals, withoutVariables,
 } from './start.js';
 import { clip } from './text.js';
 import { tokenState } from './token.js';
@@ -45,20 +45,21 @@ function bindOnce(address, text) {
   });
 }
 
-// The selection of one project as start makes it from the options, without the picker: each plain name is added to
-// the flag of every kind that holds a target of that name, and with neither --all nor a kind flag every target is
-// chosen. Gives { selection } or { error }.
+// The selection of one project as start makes it from the options, without the picker: the names of the kind flags,
+// by kind key, and each plain name added to every kind that holds a target of that name, a kind without a flag too;
+// with neither --all nor a name every target is chosen. Gives { selection } or { error }.
 async function selectionOf(inventory, options, names, proc) {
-  const merged = { ...options };
+  const named = namesByKind(options);
   for (const name of names) {
     const kinds = KINDS.filter((kind) => inventory[kind.key].some((t) => t.name === name));
     if (kinds.length === 0) {
       const known = [...new Set(KINDS.flatMap((kind) => inventory[kind.key].map((t) => t.name)))];
       return { error: `unknown target "${name}"; known targets: ${known.join(', ') || 'none'}` };
     }
-    for (const kind of kinds) merged[kind.flag] = [...(merged[kind.flag] ?? []), name];
+    for (const kind of kinds) named[kind.key] = [...(named[kind.key] ?? []), name];
   }
-  const given = merged.all || KINDS.some((kind) => merged[kind.flag]);
+  const merged = { ...options, named };
+  const given = options.all || KINDS.some((kind) => named[kind.key]);
   return chooseTargets(inventory, given ? merged : { ...merged, all: true }, proc, null);
 }
 
@@ -118,10 +119,13 @@ export async function doctor(plan, env, host) {
   let reason = null;
   let wake;
   const stopped = new Promise((resolve) => { wake = resolve; });
+  // ctx.signal of each open, as start gives it: it fires when a stop is asked.
+  const signals = stopSignals();
   const requestStop = (why) => {
     if (stopping) return;
     stopping = true;
     reason = why;
+    signals.fire();
     wake();
   };
   let alive = true;
@@ -171,7 +175,8 @@ export async function doctor(plan, env, host) {
   };
 
   // One target: opened as start opens it, with start's WARN and SKIPPED lines, then its check, OK or FAIL, then closed.
-  // Every credential of the project, the target's own secrets and their hidden forms are hidden in each line.
+  // Every credential of the project, the target's own secrets and their hidden forms are hidden in each line, also in
+  // a line the kind says through ctx.say, which goes with the other lines of the target, never clipped.
   const checkTarget = async (kind, t, {
     stream, held, heldValues, ports, context,
   }) => {
@@ -180,6 +185,9 @@ export async function doctor(plan, env, host) {
     const lifecycle = (entry) => {
       if (SHOWN.includes(entry.event)) show(stream, entry, hide);
     };
+    const say = (text) => write(stream, `${formatSaidLine({
+      ts: new Date().toISOString(), kind: kind.label, target: t.name, text: hideSecrets(String(text), hide),
+    })}\n`);
     // A kind with close is closed again when a stop arrived while it opened, as start does.
     const open = async (call, secrets) => {
       hide = [...heldValues, ...Object.values(secrets), ...formsOf(kind, t, secrets)];
@@ -189,7 +197,7 @@ export async function doctor(plan, env, host) {
       return { ok: false, late: true };
     };
     const result = await openTarget(kind, t, {
-      held, ports, context, lifecycle, open, onOpened: () => {},
+      held, ports, context: { ...context, signal: signals.signal(), say }, lifecycle, open, onOpened: () => {},
     });
     if (result.skipped !== undefined) {
       report(stream, false, { kind: kind.label, target: t.name, message: result.skipped }, hide);

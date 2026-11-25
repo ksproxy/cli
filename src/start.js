@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { StringDecoder } from 'node:string_decoder';
 import {
-  adoptOldLogs, appendAudit, formatLogLine, logOptionsFor, MAX_LOG_BYTES, rotateAudit,
+  adoptOldLogs, appendAudit, formatLogLine, formatSaidLine, logOptionsFor, MAX_LOG_BYTES, rotateAudit,
 } from './audit.js';
 import { agentMdText, mcpConfig } from './agent-md.js';
 import { allowWarnings } from './allowlist.js';
@@ -14,7 +14,9 @@ import {
   rootStateDir, sessionDir as sessionDirOf, socketDir as socketDirOf, stateDir as stateDirOf, writeFileAtomic,
 } from './paths.js';
 import { startCallServer } from './broker.js';
-import { KINDS, kindByKey } from './kinds/index.js';
+import {
+  KINDS, cliName, flaggedKinds, kindByKey,
+} from './kinds/index.js';
 import {
   everySecretFile, otherInventories, portProblem, usedPorts,
 } from './projects.js';
@@ -82,24 +84,38 @@ function pickByName(label, names, list) {
 // The selection has one list per kind, under the kind's key, in list order.
 const NOTHING = () => ({ selection: Object.fromEntries(KINDS.map((kind) => [kind.key, []])) });
 
+// The target names given for each kind, by kind key, or null. The command line gives them under the flag of each kind
+// that has one; startMany (the picks) and doctor (the target names) give them by kind key in named, which reaches a
+// kind without a flag too.
+export function namesByKind(options) {
+  return Object.fromEntries(KINDS.map((kind) => {
+    let given;
+    if (options.named !== undefined) given = options.named[kind.key];
+    else if (kind.flag !== undefined) given = options[kind.flag];
+    return [kind.key, given ?? null];
+  }));
+}
+
 export async function chooseTargets(inventory, options, proc, pick) {
   if (options.all) {
     return { selection: Object.fromEntries(KINDS.map((kind) => [kind.key, inventory[kind.key]])) };
   }
 
-  if (KINDS.some((kind) => options[kind.flag])) {
+  const named = namesByKind(options);
+  if (KINDS.some((kind) => named[kind.key])) {
     const selection = {};
     for (const kind of KINDS) {
-      const named = pickByName(kind.flag, options[kind.flag] ?? [], inventory[kind.key]);
-      if (named.error) return named;
-      selection[kind.key] = named.list;
+      const picked = pickByName(cliName(kind), named[kind.key] ?? [], inventory[kind.key]);
+      if (picked.error) return picked;
+      selection[kind.key] = picked.list;
     }
     return { selection };
   }
 
   if (!proc.stdin.isTTY) {
-    // The flag of every kind that is not brokered, and of each brokered kind the inventory holds a target of.
-    const flags = KINDS.filter((kind) => kind.brokered !== true || inventory[kind.key].length > 0).map((kind) => `--${kind.flag}`);
+    // The flag of every kind that is not brokered, and of each brokered kind the inventory holds a target of; a kind
+    // without a flag is named by none.
+    const flags = flaggedKinds().filter((kind) => kind.brokered !== true || inventory[kind.key].length > 0).map((kind) => `--${kind.flag}`);
     return { error: `no targets selected: use ${flags.join(', ')} or --all when not running in a terminal` };
   }
 
@@ -344,6 +360,25 @@ export function closeTarget(kind, o, env, limits) {
   );
 }
 
+// The signals that open gets as ctx.signal, one per target, so that no signal gathers the listeners of many targets:
+// signal() gives a new one, and fire(), when a stop is asked, fires every one given so far and each one given later.
+export function stopSignals() {
+  const controllers = [];
+  let fired = false;
+  return {
+    signal() {
+      const controller = new AbortController();
+      if (fired) controller.abort();
+      controllers.push(controller);
+      return controller.signal;
+    },
+    fire() {
+      fired = true;
+      for (const controller of controllers) controller.abort();
+    },
+  };
+}
+
 // Opens one selected target as start opens it, and prints start's lines for it through lifecycle, which gets one
 // entry at a time: the warnings of its rules, OPENING, then SKIPPED for a port another file names or for a secret that
 // cannot be read, else open. open(call, secrets) gets the call of the kind's open with the context and the target's
@@ -422,10 +457,13 @@ export async function start(options, startEnv = process.env, host = {}) {
   let closeReason = null;
   let wake;
   const stopRequested = new Promise((resolve) => { wake = resolve; });
+  // ctx.signal of each open: it fires when a stop is asked, so that an open that waits can end.
+  const signals = stopSignals();
   const requestStop = (reason) => {
     if (reason !== undefined && closeReason === null) closeReason = reason;
     if (stopping) return;
     stopping = true;
+    signals.fire();
     wake();
   };
   // startMany stops a session with a close reason of its own, such as another project stopped.
@@ -441,6 +479,11 @@ export async function start(options, startEnv = process.env, host = {}) {
   };
   const say = (text) => write('stderr', `${text}\n`);
   const out = (text) => write('stdout', text);
+  // ctx.say of the open of one target: a line about it on stderr, never clipped and never in the audit log. The kind
+  // may keep it and call it later.
+  const sayAbout = (kind, t) => (text) => write('stderr', `${formatSaidLine({
+    ts: new Date().toISOString(), kind: kind.label, target: t.name, text,
+  })}\n`);
 
   const onSigint = () => requestStop('Ctrl-C');
   const onSigterm = () => requestStop('terminated');
@@ -586,13 +629,15 @@ export async function start(options, startEnv = process.env, host = {}) {
       kind: logKind(o.kind),
       name: o.target.name,
       target: sessionTargets[i],
+      opened: o,
       secrets: secretsOf.get(`${o.kind}:${o.target.name}`),
       up: sessionTargets[i].state === 'up',
     }));
-    // A kind with probe is asked with the target's secrets; every other target goes through targetState.
+    // A kind with probe is asked with the target's secrets and its opened entry; every other target goes through
+    // targetState.
     const stateNow = (item) => (item.of.probe === undefined
       ? stateOf(item.target, env)
-      : item.of.probe(item.target, { env, secrets: item.secrets }));
+      : item.of.probe(item.target, { env, secrets: item.secrets, opened: item.opened }));
     const checkOnce = async () => {
       for (const item of items) {
         if (stopping) return;
@@ -615,7 +660,7 @@ export async function start(options, startEnv = process.env, host = {}) {
           });
         } else {
           lifecycle({
-            event: 'target_down', kind: item.kind, target: item.name, message: item.of.downMessage(item.target, state),
+            event: 'target_down', kind: item.kind, target: item.name, message: item.of.downMessage(item.target, state, item.opened),
           });
         }
       }
@@ -733,7 +778,13 @@ export async function start(options, startEnv = process.env, host = {}) {
             held,
             ports,
             context: {
-              env, sessionDir, secretFiles, secretFilesProblem, prepared: prepared.get(kind.key).get(t.name),
+              env,
+              sessionDir,
+              secretFiles,
+              secretFilesProblem,
+              prepared: prepared.get(kind.key).get(t.name),
+              signal: signals.signal(),
+              say: sayAbout(kind, t),
             },
             lifecycle,
             open: (call) => openGuarded(
@@ -805,12 +856,13 @@ export async function start(options, startEnv = process.env, host = {}) {
         env, selected: selection[o.kind], secretFiles, reviewed: reviewed.has(`${o.kind}:${o.target.name}`),
       }), o.target));
 
-      // The brokered targets as this run opened and recorded them: the only ones the call service acts on.
+      // The brokered targets as this run opened and recorded them: the only ones the call service acts on. perform gets
+      // the opened entry too, with what open kept in its extras, which no file ever holds.
       const calls = new Map();
       opened.forEach((o, i) => {
         if (kindByKey(o.kind).brokered !== true) return;
         const key = `${o.kind}:${o.target.name}`;
-        calls.set(key, { target: sessionTargets[i], secrets: secretsOf.get(key) });
+        calls.set(key, { target: sessionTargets[i], secrets: secretsOf.get(key), opened: o });
       });
       if (calls.size > 0) {
         const context = {

@@ -126,7 +126,7 @@ async function cli(args, env) {
 }
 
 test('http is a brokered kind after the three original kinds and meets the contract', () => {
-  assert.deepEqual(KINDS.map((kind) => kind.key), ['ssh', 'kubernetes', 'local', 'http', 'command', 'elasticsearch', 'rabbitmq', 'redis', 'postgres', 'mysql', 'mongodb', 'kafka']);
+  assert.deepEqual(KINDS.map((kind) => kind.key), ['ssh', 'kubernetes', 'local', 'http', 'command', 'elasticsearch', 'rabbitmq', 'redis', 'postgres', 'mysql', 'mongodb', 'kafka', 'mcp']);
   assert.equal(kindByKey('http'), httpKind);
   checkKind(httpKind, KINDS);
   assert.equal(httpKind.brokered, true);

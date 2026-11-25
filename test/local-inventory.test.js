@@ -69,7 +69,7 @@ test('defaults: allow and description', () => {
 
 test('an empty inventory has an empty local list, and the folder is tidied', () => {
   assert.deepEqual(validateInventory({}), {
-    ssh: [], kubernetes: [], local: [], http: [], command: [], elasticsearch: [], rabbitmq: [], redis: [], postgres: [], mysql: [], mongodb: [], kafka: [], reviewers: {},
+    ssh: [], kubernetes: [], local: [], http: [], command: [], elasticsearch: [], rabbitmq: [], redis: [], postgres: [], mysql: [], mongodb: [], kafka: [], mcp: [], reviewers: {},
   });
   assert.equal(validateInventory({ local: [{ name: 'a', cwd: '/srv/a/' }] }).local[0].cwd, '/srv/a');
   assert.equal(validateInventory({ local: [{ name: 'a', cwd: '/srv/b/../a' }] }).local[0].cwd, '/srv/a');

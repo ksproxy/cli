@@ -17,7 +17,7 @@ Commands:
   log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]
                                             show the last N log entries (default 50)
   check [--project NAME]
-        <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
+        <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka|mcp>
         <name> <command...>
                                             say whether a command would be allowed
   mcp [--project NAME]                      run the MCP server on stdio (started by the agent)
@@ -51,7 +51,7 @@ Commands:
   log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]
                                             show the last N log entries (default 50)
   check [--project NAME]
-        <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
+        <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka|mcp>
         <name> <command...>
                                             say whether a command would be allowed
   mcp [--project NAME]                      run the MCP server on stdio (started by the agent)
@@ -84,7 +84,7 @@ Commands:
   log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]
                                             show the last N log entries (default 50)
   check [--project NAME]
-        <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
+        <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka|mcp>
         <name> <command...>
                                             say whether a command would be allowed
   mcp [--project NAME]                      run the MCP server on stdio (started by the agent)
@@ -117,7 +117,7 @@ Commands:
   log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]
                                             show the last N log entries (default 50)
   check [--project NAME]
-        <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
+        <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka|mcp>
         <name> <command...>
                                             say whether a command would be allowed
   mcp [--project NAME]                      run the MCP server on stdio (started by the agent)
@@ -150,7 +150,7 @@ Commands:
   log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]
                                             show the last N log entries (default 50)
   check [--project NAME]
-        <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
+        <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka|mcp>
         <name> <command...>
                                             say whether a command would be allowed
   mcp [--project NAME]                      run the MCP server on stdio (started by the agent)
@@ -183,7 +183,7 @@ Commands:
   log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]
                                             show the last N log entries (default 50)
   check [--project NAME]
-        <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
+        <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka|mcp>
         <name> <command...>
                                             say whether a command would be allowed
   mcp [--project NAME]                      run the MCP server on stdio (started by the agent)
@@ -216,7 +216,7 @@ Commands:
   log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]
                                             show the last N log entries (default 50)
   check [--project NAME]
-        <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
+        <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka|mcp>
         <name> <command...>
                                             say whether a command would be allowed
   mcp [--project NAME]                      run the MCP server on stdio (started by the agent)
@@ -419,7 +419,7 @@ unknown local target "nope"; known: infra, bad, broad, plainl
 code: 2
 --- stdout
 --- stderr
-usage: ksproxy check [--project NAME] <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka> <name> <command...>
+usage: ksproxy check [--project NAME] <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka|mcp> <name> <command...>
 Usage: ksproxy <command>
 
 Commands:
@@ -436,7 +436,7 @@ Commands:
   log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]
                                             show the last N log entries (default 50)
   check [--project NAME]
-        <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
+        <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka|mcp>
         <name> <command...>
                                             say whether a command would be allowed
   mcp [--project NAME]                      run the MCP server on stdio (started by the agent)
@@ -452,7 +452,7 @@ Options:
 code: 2
 --- stdout
 --- stderr
-usage: ksproxy check [--project NAME] <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka> <name> <command...>
+usage: ksproxy check [--project NAME] <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka|mcp> <name> <command...>
 Usage: ksproxy <command>
 
 Commands:
@@ -469,7 +469,7 @@ Commands:
   log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]
                                             show the last N log entries (default 50)
   check [--project NAME]
-        <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
+        <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka|mcp>
         <name> <command...>
                                             say whether a command would be allowed
   mcp [--project NAME]                      run the MCP server on stdio (started by the agent)
@@ -485,7 +485,7 @@ Options:
 code: 2
 --- stdout
 --- stderr
-usage: ksproxy check [--project NAME] <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka> <name> <command...>
+usage: ksproxy check [--project NAME] <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka|mcp> <name> <command...>
 Usage: ksproxy <command>
 
 Commands:
@@ -502,7 +502,7 @@ Commands:
   log [-n N] [--denied] [--json] [--from ADDRESS] [--project NAME]
                                             show the last N log entries (default 50)
   check [--project NAME]
-        <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka>
+        <ssh|kube|local|http|command|es|mq|redis|pg|mysql|mongo|kafka|mcp>
         <name> <command...>
                                             say whether a command would be allowed
   mcp [--project NAME]                      run the MCP server on stdio (started by the agent)
