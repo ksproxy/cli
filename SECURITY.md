@@ -1,5 +1,17 @@
 # Security policy
 
+**Contents**
+
+- [Reporting a vulnerability](#reporting-a-vulnerability)
+- [Supported versions](#supported-versions)
+- [What is in scope](#what-is-in-scope)
+- [What the broker changes](#what-the-broker-changes)
+- [What the MCP server changes](#what-the-mcp-server-changes)
+- [What local listed programs and `ksproxy doctor` change](#what-local-listed-programs-and-ksproxy-doctor-change)
+- [What the network listener changes](#what-the-network-listener-changes)
+- [What is not in scope](#what-is-not-in-scope)
+- [Hardening the agent](#hardening-the-agent)
+
 ## Reporting a vulnerability
 
 Please report vulnerabilities privately through GitHub private vulnerability reporting:
@@ -66,7 +78,7 @@ An `mcp` target (see "MCP servers" in the README) runs or reaches an MCP server 
 
 ## What is not in scope
 
-These are documented limits in the README, not vulnerabilities:
+These are documented limits, not vulnerabilities:
 
 - The allowlist binds only the MCP path. An agent that also has an unrestricted local shell can use the sockets and proxy ports directly, or edit the inventory and session files.
 - A process that runs as the same user and can inspect processes or read the user's files can read the credentials that `ksproxy start` holds: the environment `start` was started with stays visible to such a process (`ps -E`, `/proc/<pid>/environ`), exactly as the user's private keys and cluster configuration are. `ksproxy` keeps the Node inspector closed on `SIGUSR1` (Node runs with `--disable-sigusr1`, and the process also ignores the signal), which removes only the route through a debugger. The agent must therefore run without a shell of that user, inside a sandbox, or under another user.
@@ -82,9 +94,29 @@ These are documented limits in the README, not vulnerabilities:
 - For ssh, Kubernetes and local targets, `ksproxy mcp` reads the output limit of a target from `session.json`, so a session file edited by hand can raise it, but never past 4 MiB per stream, the largest value the inventory accepts; for a service target `ksproxy start` uses the limit of its own inventory.
 - A reviewer on `localhost` is whatever program listens on that port. If your model server is not running, another local program can answer in its place and receives the key if `keyEnv` is set.
 - Connections and proxies can outlive a process killed with SIGKILL until the next `ksproxy start`.
+- `diff` runs the `diff` program found on `PATH`, and kubectl keeps a discovery cache under your home folder.
+- A manifest can be swapped between the path check and kubectl opening it, by a process with local write access, which is already outside this tool's protection.
+- Removing ports and paths from output is cosmetic: an agent with a local shell can find them anyway.
 - The rights of the database or service account that a target uses are the real boundary. The fixed refusals and the read-only settings of the service kinds are a second lock.
 - Secrets that a service returns in its own output, such as a password stored in a table, reach the agent as they are. Only the credentials that ksproxy holds are hidden.
 - Hiding covers the exact value of each credential that ksproxy holds and the encoded forms a kind sends or shows, such as the base64 credential of basic auth or an escaped password. It does not cover other encodings of a value, or output that the agent can shape to test a guess, which is why `ksproxy start` warns about a secret shorter than 8 characters.
 - Rules do not understand what a request does. They match the words of a request, a statement or a command, so a search body, a filter or a SQL function that is not on a fixed list is allowed when a rule matches.
 - A `regex(...)` rule that can be very slow is only warned about, at `ksproxy start` and `ksproxy check`. It still runs, but every match stops after 100 ms and then counts as no match, so a slow rule refuses a call instead of stopping `ksproxy start`.
-- Creating server users, sudoers rules, RBAC, tokens or kubeconfigs, file transfer, interactive shells, and Windows are out of scope for the tool.
+- Creating server users, sudoers rules, RBAC, tokens or kubeconfigs, file transfer, interactive shells, port forwarding for the agent, and Windows are out of scope for the tool.
+
+## Hardening the agent
+
+The allowlist binds the MCP path only, so what else the agent can run matters. The reliable setups:
+
+- **No general shell:** the MCP tools are the only way the agent runs anything.
+- **A sandboxed shell** that cannot read `~/.ksproxy` or `~/.config/ksproxy`, cannot reach local sockets and ports, and cannot see the other processes of your user.
+- **A shell that runs as another user.**
+
+Deny rules are best effort: `Bash(ssh *)` does not stop `/usr/bin/ssh` or `curl 127.0.0.1:<port>`, and `Read(...)` rules do not stop a shell command from reading a file. For Claude Code they still raise the bar. Put them in `.claude/settings.json` (one project) or `~/.claude/settings.json` (everywhere):
+
+```json
+{ "permissions": { "deny": [
+  "Read(~/.ksproxy/**)", "Edit(~/.ksproxy/**)", "Read(~/.config/ksproxy/**)", "Edit(~/.config/ksproxy/**)",
+  "Bash(ssh *)", "Bash(kubectl *)"
+] } }
+```

@@ -269,7 +269,7 @@ test('the environment a server gets through start: no other variable of start re
   const extraEnv = {
     XDG_CACHE_HOME: '/c/xdg', UV_CACHE_DIR: '/c/uv', npm_config_cache: '/c/npm', SOME_OTHER: 'never', GITHUB_TOKEN: 'never-either',
   };
-  const world = await mcpWorld([mcpTarget('env', server, { env: { JIRA_URL: 'https://example.atlassian.net', JIRA_API_TOKEN: { fromEnv: SECRET_VAR } } })], extraEnv);
+  const world = await mcpWorld([mcpTarget('env', server, { env: { JIRA_URL: 'https://jira.example.com', JIRA_API_TOKEN: { fromEnv: SECRET_VAR } } })], extraEnv);
   const run = start(world);
   await ready(run);
   const [first] = fs.readFileSync(server.record, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
@@ -277,7 +277,7 @@ test('the environment a server gets through start: no other variable of start re
   const env = Object.fromEntries(Object.entries(first.env).filter(([name]) => !system.includes(name)));
   const expected = Object.fromEntries(['PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR'].filter((name) => world.env[name] !== undefined).map((name) => [name, world.env[name]]));
   assert.deepEqual(env, {
-    ...expected, XDG_CACHE_HOME: '/c/xdg', UV_CACHE_DIR: '/c/uv', npm_config_cache: '/c/npm', JIRA_URL: 'https://example.atlassian.net', JIRA_API_TOKEN: SECRET,
+    ...expected, XDG_CACHE_HOME: '/c/xdg', UV_CACHE_DIR: '/c/uv', npm_config_cache: '/c/npm', JIRA_URL: 'https://jira.example.com', JIRA_API_TOKEN: SECRET,
   });
   run.proc.emit('SIGINT');
   assert.equal(await run.done, 0);

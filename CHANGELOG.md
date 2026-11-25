@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-25
+
+### Changed
+
+- **A short README.** The README is a short guide in bullets (807 lines down to 162). The detail moved to pages under `docs/`: rules and the inventory, `doctor`, the session folder and the log, projects, network access, MCP servers and development. "Hardening the agent" moved to SECURITY.md.
+- **Examples for every kind.** `docs/EXAMPLES.md` gives a read-only and a read-and-write target for each kind, with allowed and refused calls, all checked by a test.
+- **Contents lists.** The README, SECURITY.md and each page under `docs/` open with a list of their sections, kept in step by a test.
+- **The homepage** now covers every kind of target, MCP servers, projects, network access and `ksproxy doctor`.
+
 ## [0.7.0] - 2026-11-25
 
 ### Added
@@ -107,6 +116,7 @@ First release.
 - `ksproxy init`, `ksproxy status` and `ksproxy check <ssh|kube|local> <name> <command...>` to create an inventory, inspect the session, and test a rule without opening anything.
 - No npm dependencies. Requires Node.js 24 or later, on macOS or Linux.
 
+[0.7.1]: https://github.com/ksproxy/cli/releases/tag/v0.7.1
 [0.7.0]: https://github.com/ksproxy/cli/releases/tag/v0.7.0
 [0.6.0]: https://github.com/ksproxy/cli/releases/tag/v0.6.0
 [0.5.0]: https://github.com/ksproxy/cli/releases/tag/v0.5.0

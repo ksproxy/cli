@@ -12,12 +12,26 @@ Every call is still default-deny. A call runs only when all of these hold, in th
 
 Then the call runs, with the time and output limits below, and one entry is written to the audit log.
 
+**Contents**
+
+- [What every service kind has in common](#what-every-service-kind-has-in-common)
+- [http](#http)
+- [command](#command)
+- [elasticsearch](#elasticsearch)
+- [rabbitmq](#rabbitmq)
+- [redis](#redis)
+- [postgres](#postgres)
+- [mysql](#mysql)
+- [mongodb](#mongodb)
+- [kafka](#kafka)
+- [What these kinds do not protect against](#what-these-kinds-do-not-protect-against)
+
 ## What every service kind has in common
 
 - **Inventory.** Each kind is a top-level array in `inventory.json`, named after the kind: `"postgres": [ ... ]`. Unknown keys are errors. `name`, `description`, `allow` and `review` work as for the other kinds. The value of a field that names a secret is always the name of an environment variable: capital letters, digits and `_`, not starting with `KSPROXY_` and not a variable the session needs (`PATH`, `HOME`, `SSH_*` and similar).
 - **A missing secret.** When the variable is not set or is empty, the target is `SKIPPED` with `<VAR> is not set`, and the other targets still open.
-- **Allow rules.** `*` is one word (for `postgres` and `mysql`, one value: see there), `...` is the rest of the words and may only be the last word, `\*` is a literal star (written `\\*` in the inventory file, because JSON uses the backslash itself), and `regex(...)` as the whole rule is a pattern tried on the words joined by single spaces. A regex rule is not tried on a command longer than 1000 characters. A `*` never matches a word that starts with `-`. A rule is words or one `regex(...)`, never both. The full table is in the README under "Allowlist rules".
-- **`"allow": "any"`.** It is an error for `command`, `postgres`, `mysql`, `mongodb` and `kafka`. It is accepted for `http`, `elasticsearch`, `rabbitmq` and `redis`: then every call that passes the strict reader and the fixed refusals is allowed. Use a list.
+- **Allow rules.** `*` is one word (for `postgres` and `mysql`, one value: see there), `...` is the rest of the words and may only be the last word, `\*` is a literal star (written `\\*` in the inventory file, because JSON uses the backslash itself), and `regex(...)` as the whole rule is a pattern tried on the words joined by single spaces. A regex rule is not tried on a command longer than 1000 characters. A `*` never matches a word that starts with `-`. A rule is words or one `regex(...)`, never both. The full table is in [RULES.md](RULES.md#rule-tokens).
+- **`"allow": "any"`.** It is an error for `command`, `postgres`, `mysql`, `mongodb`, `kafka` and `mcp` targets (and ssh targets with `jumps`). It is accepted for `http`, `elasticsearch`, `rabbitmq` and `redis`: then every call that passes the strict reader and the fixed refusals is allowed. Use a list.
 - **Time limit.** `timeout_seconds` is an integer from 1 to 600, default 60. The call ends at that limit.
 - **Output limit.** Standard output and standard error are each cut at 262144 bytes (256 KiB), and the reply says so. The optional `maxOutputKiB` of a target, an integer from 256 to 4096, raises this limit for that target, up to 4 MiB per stream; the reply then names that limit in bytes. `ksproxy start` takes the limit from its own inventory, so a session file edited by hand cannot raise it. The limits of a kind on the size of a result (100 documents for MongoDB, 1,000 rows for MySQL) do not change.
 - **Reply.** The reply starts with `exit code: N` (or a note that the call timed out), then the standard output and the standard error. When an output was cut, the reply ends with a line that says so. Every secret value of the target is replaced by `[hidden]` in the reply (the Kafka client configuration file is not a secret value that ksproxy holds, so nothing of it is hidden). A secret shorter than 8 characters gives a `WARN` line at `ksproxy start` that names its variable or file: hiding so short a value also hides ordinary text that matches it, which can give it away.

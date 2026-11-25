@@ -1,5 +1,17 @@
 # Releasing ksproxy
 
+**Contents**
+
+- [One-time setup](#one-time-setup)
+- [First release (by hand)](#first-release-by-hand)
+- [Later releases](#later-releases)
+- [Pinned actions](#pinned-actions)
+- [Why the workflows look the way they do](#why-the-workflows-look-the-way-they-do)
+  - [All workflows](#all-workflows)
+  - [ci.yml](#ciyml)
+  - [release.yml](#releaseyml)
+  - [pages.yml](#pagesyml)
+
 ## One-time setup
 
 1. Create the GitHub repository `ksproxy/cli` and push `main`.

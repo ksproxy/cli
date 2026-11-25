@@ -16,6 +16,26 @@ Folders that cannot be a local target: when `start` opens the target (and in `ks
 
 The program runs with `cwd` as its working folder and with only the minimal environment (`PATH`, `HOME`, `LANG`, `LC_ALL` and `TMPDIR`). Its `PATH` is built from the `PATH` that `ksproxy start` had, keeping only the absolute entries that are not inside the folder of any local target of the session: relative and empty entries (which would resolve against the folder), and entries that lie in a local target's folder or that a link leads into one, are dropped; if nothing is left it is `/usr/bin:/bin`. So a file named `git` in the folder is never the `git` that runs, but a rule that names a program with a slash (`./run.sh`, `venv/bin/python`) runs exactly that file. No `KSPROXY_*` variable and nothing else from your environment reaches the program. The folder and the state folder are replaced in the output by `<folder>` and `<ksproxy>`, as configured, as resolved and as the system spells it, and on macOS and Windows whatever the letter case; a path is replaced only where no letter, digit, `_`, `.` or `-` follows it (a folder `/work/app` is not replaced inside `/work/apple` or `/work/app.log`); a path is replaced whole even where the output limit (256 KiB, or the `maxOutputKiB` of the target) cuts the text. `list_targets` never shows `cwd`. If the folder disappears the health check logs `DOWN` with `folder is gone`, and `UP` with `folder is back` when it returns.
 
+**Contents**
+
+- [Listed programs inside chosen paths](#listed-programs-inside-chosen-paths)
+  - [The inventory rules](#the-inventory-rules)
+  - [Which checks apply](#which-checks-apply)
+  - [When a path is inside `paths`](#when-a-path-is-inside-paths)
+  - [Which arguments are paths](#which-arguments-are-paths)
+  - [Options that are always refused](#options-that-are-always-refused)
+  - [Programs that can act as you](#programs-that-can-act-as-you)
+  - [Review](#review)
+  - [What the owner and the agent are told](#what-the-owner-and-the-agent-are-told)
+  - [Limits of this mode](#limits-of-this-mode)
+- [Protected paths and secret-looking names](#protected-paths-and-secret-looking-names)
+  - [The `protect` field](#the-protect-field)
+  - [Names that usually hold secrets](#names-that-usually-hold-secrets)
+  - [The warning at start](#the-warning-at-start)
+  - [To open one file](#to-open-one-file)
+  - [What the agent sees](#what-the-agent-sees)
+- [The honest limits](#the-honest-limits)
+
 ## Listed programs inside chosen paths
 
 A `programs` list lets the agent run the programs you name, with any flags and arguments, as long as every path the command names stays inside the `paths` you chose. You name programs, not command patterns. This is "trust the agent with these programs inside these paths": a program can do more than its arguments say, and the agent can write a file and have a program read it as instructions. The checks below limit what a command names, not what a program does.

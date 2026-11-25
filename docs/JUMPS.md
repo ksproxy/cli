@@ -13,6 +13,14 @@ Some servers are only reachable from another server, with a key that is stored t
 }
 ```
 
+**Contents**
+
+- [What is sent](#what-is-sent)
+- [How a jump must be written](#how-a-jump-must-be-written)
+- [What ksproxy guarantees](#what-ksproxy-guarantees)
+- [What it depends on](#what-it-depends-on)
+- [Limits](#limits)
+
 ## What is sent
 
 `ksproxy start` opens the connection to `host`. For the call `uptime`, ksproxy sends exactly this over it:

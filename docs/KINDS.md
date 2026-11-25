@@ -6,6 +6,27 @@ Kinds are files in this repository. Nothing loads a kind from the inventory, fro
 
 This page describes the interface as the code implements it. `test/kind-contract.js` holds the checks that every kind must pass, `test/kinds-contract.test.js` runs them for the kinds in the list, and `test/kinds-echo.test.js` takes a test-only kind (`test/fixtures/kind-echo.js`) through the whole core. A kind may also be brokered: carried out inside `ksproxy start`; see "Brokered kinds".
 
+**Contents**
+
+- [Layout](#layout)
+- [The list and the order](#the-list-and-the-order)
+- [The interface](#the-interface)
+- [Brokered kinds](#brokered-kinds)
+- [The engines and the service kinds](#the-engines-and-the-service-kinds)
+- [The http engine and the custom http kind](#the-http-engine-and-the-custom-http-kind)
+- [The elasticsearch and rabbitmq kinds](#the-elasticsearch-and-rabbitmq-kinds)
+- [The command engine and the custom command kind](#the-command-engine-and-the-custom-command-kind)
+- [The resp engine and the redis kind](#the-resp-engine-and-the-redis-kind)
+- [The SQL reader](#the-sql-reader)
+- [The postgres and mysql kinds](#the-postgres-and-mysql-kinds)
+- [The mongodb kind](#the-mongodb-kind)
+- [The kafka kind](#the-kafka-kind)
+- [The mcp kind and its client engine](#the-mcp-kind-and-its-client-engine)
+- [What a kind may import](#what-a-kind-may-import)
+- [Adding a kind](#adding-a-kind)
+- [What a new kind must watch for](#what-a-new-kind-must-watch-for)
+- [What the core still names](#what-the-core-still-names)
+
 ## Layout
 
 ```text

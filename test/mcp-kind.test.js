@@ -175,7 +175,7 @@ test('the names, the secrets, their hidden forms, the warnings and the agent not
   const local = validated({
     command: ['/usr/local/bin/uvx', 'mcp-atlassian@0.24.8'],
     env: {
-      JIRA_URL: 'https://example.atlassian.net', JIRA_API_TOKEN: { fromEnv: 'JIRA_TOKEN' }, OTHER_TOKEN: { fromEnv: 'JIRA_TOKEN' }, PLAIN_KEY: 'k',
+      JIRA_URL: 'https://jira.example.com', JIRA_API_TOKEN: { fromEnv: 'JIRA_TOKEN' }, OTHER_TOKEN: { fromEnv: 'JIRA_TOKEN' }, PLAIN_KEY: 'k',
     },
     description: 'Jira',
     allow: ['get_issue', { tool: 'add', arguments: { k: 'regex((a+)+)' } }],
@@ -266,7 +266,7 @@ test('open: the exact environment and the empty private folder of a local server
   const record = path.join(base, 'record.jsonl');
   const target = validated({
     command: standIn({ record }),
-    env: { JIRA_URL: 'https://example.atlassian.net', JIRA_API_TOKEN: { fromEnv: 'JIRA_TOKEN' }, NODE_EXTRA_CA_CERTS: '/etc/ca.pem' },
+    env: { JIRA_URL: 'https://jira.example.com', JIRA_API_TOKEN: { fromEnv: 'JIRA_TOKEN' }, NODE_EXTRA_CA_CERTS: '/etc/ca.pem' },
   });
   const startEnv = {
     ...env, XDG_CACHE_HOME: '/c/xdg', UV_CACHE_DIR: '/c/uv', npm_config_cache: '/c/npm', LC_ALL: 'C',
@@ -285,7 +285,7 @@ test('open: the exact environment and the empty private folder of a local server
     XDG_CACHE_HOME: '/c/xdg',
     UV_CACHE_DIR: '/c/uv',
     npm_config_cache: '/c/npm',
-    JIRA_URL: 'https://example.atlassian.net',
+    JIRA_URL: 'https://jira.example.com',
     JIRA_API_TOKEN: SECRET,
     NODE_EXTRA_CA_CERTS: '/etc/ca.pem',
   });
@@ -294,7 +294,7 @@ test('open: the exact environment and the empty private folder of a local server
   assert.deepEqual(fs.readdirSync(started.cwd), []);
   assert.equal(fs.statSync(started.cwd).mode & 0o777, 0o700);
   assert.deepEqual(serverEnv(target, { HOME: '/h' }, { JIRA_TOKEN: 't' }), {
-    HOME: '/h', JIRA_URL: 'https://example.atlassian.net', JIRA_API_TOKEN: 't', NODE_EXTRA_CA_CERTS: '/etc/ca.pem',
+    HOME: '/h', JIRA_URL: 'https://jira.example.com', JIRA_API_TOKEN: 't', NODE_EXTRA_CA_CERTS: '/etc/ca.pem',
   });
   await mcp.close(opened);
   assert.equal(fs.existsSync(started.cwd), false);

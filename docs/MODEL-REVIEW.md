@@ -4,6 +4,74 @@ The README has the short version. This page lists every check and every limit.
 
 Model review is optional. When no allow rule matches a command and the target has `review`, ksproxy asks a model whether the command fits your policy. Fixed refusals and allow rules always run first, and the model can never override them.
 
+**Contents**
+
+- [Setting it up](#setting-it-up)
+- [How a command is handled](#how-a-command-is-handled)
+- [What is checked before the model is asked](#what-is-checked-before-the-model-is-asked)
+- [What the agent is told](#what-the-agent-is-told)
+- [In the log](#in-the-log)
+- [Answers, repeats and the call budget](#answers-repeats-and-the-call-budget)
+- [The key and the policy](#the-key-and-the-policy)
+- [What is sent to the provider](#what-is-sent-to-the-provider)
+- [Limits](#limits)
+
+## Setting it up
+
+Any provider with an OpenAI-compatible chat API works. Review is off by default and set per target.
+
+```json
+{
+  "reviewers": {
+    "groq": {
+      "baseUrl": "https://api.groq.com/openai/v1",
+      "model": "<model id>",
+      "keyEnv": "GROQ_API_KEY"
+    }
+  },
+  "ssh": [
+    {
+      "name": "web1",
+      "host": "web1.example.com",
+      "allow": ["uptime", "df -h"],
+      "review": {
+        "reviewer": "groq",
+        "policy": "read-only diagnostics, no restarts, no file contents",
+        "accept": ["sure"]
+      }
+    }
+  ],
+  "local": [
+    {
+      "name": "infra",
+      "cwd": "~/projects/infra",
+      "allow": ["git status"],
+      "review": { "reviewer": "groq", "policy": "read-only", "programs": ["ls", "wc"] }
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `reviewers.<name>.baseUrl` | `https://`, or `http://` for localhost only. |
+| `reviewers.<name>.model` | The model id. |
+| `reviewers.<name>.keyEnv` | Optional. The environment variable that holds the API key when you run `ksproxy start`. It may not be a variable the session needs (`PATH`, `HOME`, `SSH_*` and similar; the full list is under "The key and the policy" below). It is removed from the environment of every program the session starts. |
+| `reviewers.<name>.timeoutSeconds`, `maxCalls` | Optional. Defaults 10 and 200 calls per session. Failed calls count. |
+| `review.reviewer` | A name from `reviewers`. |
+| `review.policy` | What the agent may do, in plain words. Up to 1000 characters. |
+| `review.accept` | Optional. `sure`, `likely` or both. Default `["sure"]`. |
+| `review.programs` | Local targets only, required there. The programs the model may approve. |
+
+## How a command is handled
+
+1. Fixed refusals and your `allow` rules run first. A match runs the command, and the model is not asked.
+2. If no rule matches and the target has `review`, ksproxy checks that the command may be reviewed at all (the checks below). If not, it is refused, and the refusal says why it was not reviewed.
+3. The model answers allow or refuse, and how certain it is: sure, likely or unsure. The command runs only on allow with a certainty listed in `accept`.
+4. Anything else is a refusal: a timeout, a bad answer, a missing key, a spent call budget, a review service that does not answer.
+
+A command that is never sent to the model can still be put on the allow list.
+
 ## What is checked before the model is asked
 
 A command that fails one of these checks is refused like any unlisted command. The model is not asked.
@@ -11,13 +79,14 @@ A command that fails one of these checks is refused like any unlisted command. T
 | Target | Check |
 |---|---|
 | All | At most 64 words. Each word is at most 200 characters and has no space, control character or double quote. |
-| ssh | The first word has no `=`. No word starts with `=`. A server's shell would read these as an assignment or expand them. |
+| ssh | The first word has no `=` (so `VAR=x uptime` is not reviewed). No word starts with `=`. A server's shell would read these as an assignment or expand them. |
 | kubernetes | The verb is a read verb: `get`, `describe`, `logs`, `top`, `explain`, `api-resources`, `api-versions`, `version`, `events`, `cluster-info`. |
 | local | The folder exists. |
 | local | The first word is in `review.programs`. |
 | local | A flag looks like `-x` or `--word-word`: letters, digits and `-` only. A flag with a value (`--format=x`), `--` and a lone `-` are refused. |
 | local | Every other argument is a plain name or path that passes the folder checks: no `..`, links followed, inside `cwd`, not a ksproxy file, not a protected path and not a secret-looking name. See [LOCAL-TARGETS.md](LOCAL-TARGETS.md). |
 | local | A value glued to a flag (`-oout`) passes the same folder checks when its tail (`out`) names an existing entry in the folder or a `protect` entry. |
+| SQL kinds | A comma, a bracket and a dot are words of their own, and a quoted string or name is one word, so a statement with a quoted text that holds a space is refused instead of reviewed. See [SERVICES.md](SERVICES.md). |
 
 ## What the agent is told
 
@@ -35,6 +104,16 @@ Other endings:
 - `this target's folder does not exist`
 
 When the model was asked and did not approve, the agent only gets `The reviewer did not approve it.` The model's reason goes to your log, not into the reply.
+
+## In the log
+
+A reviewed call in the log shows the model's reason, or why the review failed:
+
+```
+14:02:11 ssh  web1       ok       0.4s journalctl -u k3s -n 50  (model: read-only log view)
+14:02:40 ssh  web1       DENIED        systemctl restart k3s  [model refused: restarts a service]
+14:03:30 ssh  web1       DENIED        ps aux  [review failed: reviewer timed out]
+```
 
 ## Answers, repeats and the call budget
 
