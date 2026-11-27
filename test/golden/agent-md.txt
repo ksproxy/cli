@@ -125,6 +125,16 @@ Every call is checked against the target's allowlist and written to an audit log
 - A bare program name is found through the user's absolute PATH entries only; a file in this folder is never found by name, so a rule that runs one names it with its path (for example `./run.sh`).
 - A command that is not on this list is reviewed before it runs and may be refused. Only these programs can be reviewed: git, ls. Flags must be simple (`-x`, `--word`), with any value as a separate argument.
 
+## When output is cut
+
+- Each stream of a call is cut at 256 KiB, or at the limit that its target names above. The answer then says so in a line right after the exit code.
+- On an ssh server, a Kubernetes cluster or a local folder, the line says how much of the stream the answer shows, and the answer also shows the last 16 KiB of the stream, after a line such as `[... 9.1 MiB cut here ...]`. The sizes are close, not exact.
+- On every other target, the answer shows the start of the stream up to the limit, with no end part, and the line says `cut at 256 KiB: the rest was left out`.
+- On those other targets, a call that did not end on its own (the time limit, a reply that broke off, a program stopped at the limit) also loses the end of each stream: its last 1 KiB at least, back to the end of a line, so a short output is not shown at all. The line then says `its end was left out`. Make such a call end on its own, for example with a limit on what it reads or a shorter wait of its own.
+- Narrow the call rather than reading more of its output. These are hints only: the rules of each target still decide what may run.
+  - `ssh_exec`, `local_exec`: tail -n 200, head -n 200, grep -m 50 PATTERN, or wc -l first
+  - `kubectl`: logs --tail=200 or --since=10m, -l to select, -o name
+
 ## Off limits
 
 - Do not run `ssh`, `kubectl`, `curl` or any other program to reach these targets yourself; use the tools above.
@@ -187,6 +197,16 @@ Every call is checked against the target's allowlist and written to an audit log
 - A bare program name is found through the user's absolute PATH entries only; a file in this folder is never found by name, so a rule that runs one names it with its path (for example `./run.sh`).
 - The folder is not available (`down`): calls may fail until the user fixes it.
 - A command that is not on this list is reviewed before it runs and may be refused. Only these programs can be reviewed: ls. Flags must be simple (`-x`, `--word`), with any value as a separate argument.
+
+## When output is cut
+
+- Each stream of a call is cut at 256 KiB, or at the limit that its target names above. The answer then says so in a line right after the exit code.
+- On an ssh server, a Kubernetes cluster or a local folder, the line says how much of the stream the answer shows, and the answer also shows the last 16 KiB of the stream, after a line such as `[... 9.1 MiB cut here ...]`. The sizes are close, not exact.
+- On every other target, the answer shows the start of the stream up to the limit, with no end part, and the line says `cut at 256 KiB: the rest was left out`.
+- On those other targets, a call that did not end on its own (the time limit, a reply that broke off, a program stopped at the limit) also loses the end of each stream: its last 1 KiB at least, back to the end of a line, so a short output is not shown at all. The line then says `its end was left out`. Make such a call end on its own, for example with a limit on what it reads or a shorter wait of its own.
+- Narrow the call rather than reading more of its output. These are hints only: the rules of each target still decide what may run.
+  - `ssh_exec`, `local_exec`: tail -n 200, head -n 200, grep -m 50 PATTERN, or wc -l first
+  - `kubectl`: logs --tail=200 or --since=10m, -l to select, -o name
 
 ## Off limits
 

@@ -46,6 +46,7 @@ export async function runClient({
       stderr: result.stderr,
       timedOut: result.timedOut || signal?.aborted === true,
       truncated: result.truncated,
+      cutOff: result.cutOff,
     };
   } finally {
     fs.rmSync(cwd, { recursive: true, force: true });

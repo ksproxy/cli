@@ -11,7 +11,10 @@ import { tempDir } from './temp.js';
 
 const VISIBLE = 262144;
 const TOKEN = 'pw-Zq9X7kLm4R2tV8nB-unmistakable';
-const NOTE = '[output truncated at 262144 bytes per stream]';
+// The cut lines of a brokered stream: one that shows its first bytes up to the visible limit, and one that did not end
+// on its own and lost its end (the last 1 KiB here, back to a newline).
+const AT_LIMIT = (name = 'stdout') => `[${name} cut at 256 KiB: the rest was left out]`;
+const END_LEFT_OUT = (name = 'stdout') => `[${name} cut: the stream did not end on its own, so its end was left out]`;
 
 const root = fs.realpathSync(tempDir('ks-core-', os.tmpdir()));
 fs.mkdirSync(path.join(root, 'st', 'logs'), { recursive: true, mode: 0o700 });
@@ -64,8 +67,8 @@ function ask(input = 'show', { signal = new AbortController().signal, review = a
 
 function stdoutOf(text) {
   const from = text.indexOf('--- stdout ---\n') + 15;
-  const ends = [text.indexOf('\n--- stderr ---'), text.indexOf(`\n${NOTE}`)].filter((at) => at !== -1);
-  return text.slice(from, ends.length === 0 ? text.length : Math.min(...ends));
+  const end = text.indexOf('\n--- stderr ---');
+  return text.slice(from, end === -1 ? text.length : end);
 }
 
 function assertNoPiece(text) {
@@ -86,12 +89,15 @@ test('the forms a kind gives are hidden with the values, leave the read limit as
     return [FORM];
   };
   try {
+    // The call was cut, so both streams lose their last 1 KiB: stdout has a line of 1 KiB after its hidden texts.
     state.perform = ({ maxBytes }) => ({
-      exitCode: 0, stdout: `${FORM} and ${TOKEN}\n`, stderr: `${'x'.repeat(maxBytes - 50)}${FORM}`.slice(0, maxBytes), truncated: true,
+      exitCode: 0, stdout: `${FORM} and ${TOKEN}\n${'p'.repeat(1024)}`, stderr: `${'x'.repeat(maxBytes - 50)}${FORM}`.slice(0, maxBytes), truncated: true,
     });
     const answer = await ask();
     assert.equal(state.calls[0].maxBytes, VISIBLE + 8 * 4096);
-    assert.ok(answer.text.startsWith('exit code: 0\n--- stdout ---\n[hidden] and [hidden]\n--- stderr ---\nxxx'));
+    assert.equal(answer.text, [
+      'exit code: 0', END_LEFT_OUT(), AT_LIMIT('stderr'), '--- stdout ---', '[hidden] and [hidden]', '--- stderr ---', 'x'.repeat(VISIBLE),
+    ].join('\n'));
     for (let n = 4; n <= FORM.length; n += 1) assert.ok(!answer.text.includes(FORM.slice(0, n)));
     assert.ok(!fs.readFileSync(path.join(root, 'st', 'logs', 'audit.log'), 'utf8').includes('form-'));
   } finally {
@@ -120,16 +126,18 @@ test('a secret cut by the limit of perform is never shown in part', async () => 
   });
   const answer = await ask();
   assertNoPiece(answer.text);
-  assert.equal(stdoutOf(answer.text), 'x'.repeat(VISIBLE - 5));
-  assert.ok(answer.text.endsWith(NOTE));
+  // A stopped stream needs no margin: its last 1 KiB, where the cut secret lies, is left out, and the stream shows the
+  // whole visible limit.
+  assert.equal(answer.text, `exit code: 0\n${AT_LIMIT()}\n--- stdout ---\n${'x'.repeat(VISIBLE)}`);
 });
 
-test('a secret that crosses the visible limit is hidden whole before the cut', async () => {
+test('a secret that crosses the visible limit is hidden whole before the cut, and nothing of the end is shown', async () => {
   state.perform = () => ({ exitCode: 0, stdout: `${'x'.repeat(VISIBLE - 5)}${TOKEN}\n`, stderr: '' });
   const answer = await ask();
   assertNoPiece(answer.text);
-  assert.equal(stdoutOf(answer.text), `${'x'.repeat(VISIBLE - 5)}[hidd`);
-  assert.ok(answer.text.endsWith(NOTE));
+  // The stream is cut at the visible limit once hidden, and its line gives no size, so it tells nothing of the length
+  // of the secret: what is shown is the start of [hidden].
+  assert.equal(answer.text, `exit code: 0\n${AT_LIMIT()}\n--- stdout ---\n${'x'.repeat(VISIBLE - 5)}[hidd`);
 });
 
 test('hiding many secrets cannot pull a cut one into view', async () => {
@@ -138,48 +146,67 @@ test('hiding many secrets cannot pull a cut one into view', async () => {
   });
   const answer = await ask();
   assertNoPiece(answer.text);
-  assert.match(stdoutOf(answer.text).replaceAll('[hidden]', ''), /^z\[?h?i?d?d?e?n?$/);
-  assert.ok(answer.text.endsWith(NOTE));
+  // The stream reached the read limit, so it did not end on its own; hidden, it is far shorter than the visible limit,
+  // has no newline, and shows nothing.
+  assert.equal(answer.text, `exit code: 0\n${END_LEFT_OUT()}`);
 });
 
-test('a secret wholly past the visible limit never appears, and the text is marked as cut', async () => {
+test('a secret wholly past the visible limit never appears, and nothing of the end is shown', async () => {
   state.perform = () => ({ exitCode: 0, stdout: `${'x'.repeat(VISIBLE + 10)}${TOKEN}`, stderr: `${'e'.repeat(VISIBLE + 1)}` });
   const answer = await ask();
   assert.ok(!answer.text.includes(TOKEN));
-  assert.ok(!answer.text.includes('[hidden]'));
-  assert.equal(stdoutOf(answer.text), 'x'.repeat(VISIBLE));
-  assert.ok(answer.text.endsWith(NOTE));
+  assert.equal(answer.text, [
+    'exit code: 0', AT_LIMIT(), AT_LIMIT('stderr'), '--- stdout ---', 'x'.repeat(VISIBLE), '--- stderr ---', 'e'.repeat(VISIBLE),
+  ].join('\n'));
 });
 
 test('output within the limit is not marked, and a kind that says it cut is', async () => {
   state.perform = () => ({ exitCode: 0, stdout: `the token ${TOKEN}\n`, stderr: '' });
   const whole = await ask();
   assert.equal(whole.text, 'exit code: 0\n--- stdout ---\nthe token [hidden]');
+  // A cut stream loses its last 1 KiB back to a newline: a short one shows nothing, and the line says it was cut.
   state.perform = () => ({
     exitCode: 0, stdout: 'cut short', stderr: '', truncated: true,
   });
-  assert.equal((await ask()).text, `exit code: 0\n--- stdout ---\ncut short\n${NOTE}`);
+  assert.equal((await ask()).text, `exit code: 0\n${END_LEFT_OUT()}`);
+  state.perform = () => ({
+    exitCode: 0, stdout: `cut short\n${'z'.repeat(1024)}`, stderr: '', truncated: true,
+  });
+  assert.equal((await ask()).text, `exit code: 0\n${END_LEFT_OUT()}\n--- stdout ---\ncut short`);
 });
 
 test('a secret cut by a time limit or a broken stream, not by the read limit, is never shown in part', async () => {
+  // The last line, with the piece and what comes before it on that line, is left out with the last 1 KiB.
   state.perform = () => ({
-    exitCode: null, stdout: `first line\nthe token ${TOKEN.slice(0, 20)}`, stderr: '', timedOut: true,
+    exitCode: null, stdout: `first line\n${'y'.repeat(1000)} the token ${TOKEN.slice(0, 20)}`, stderr: '', timedOut: true,
   });
   const late = await ask();
-  assert.equal(late.text, 'timed out after 30s\n--- stdout ---\nfirst line\nthe token');
-  state.perform = () => ({ exitCode: 1, stdout: `${TOKEN}\n${TOKEN.slice(0, 5)}`, stderr: 'the reply was cut off\n' });
+  assertNoPiece(late.text);
+  assert.equal(late.text, `timed out after 30s\n${END_LEFT_OUT()}\n--- stdout ---\nfirst line`);
+  // A broken stream cuts both streams of the call: stderr, shorter than 1 KiB, shows nothing.
+  state.perform = () => ({
+    exitCode: 1, stdout: `${TOKEN}\n${'r'.repeat(1030)}${TOKEN.slice(0, 5)}`, stderr: 'the reply was cut off\n', cutOff: true,
+  });
   const broken = await ask();
-  assert.equal(broken.text, 'exit code: 1\n--- stdout ---\n[hidden]\n--- stderr ---\nthe reply was cut off');
+  assertNoPiece(broken.text);
+  assert.equal(broken.text, `exit code: 1\n${END_LEFT_OUT()}\n${END_LEFT_OUT('stderr')}\n--- stdout ---\n[hidden]`);
 });
 
-test('the cut piece is taken from the longest hidden text it starts, and only a proper start of one counts', async () => {
+test('a stream that ended keeps its end even when it starts a hidden text, and a cut one loses its last 1 KiB', async () => {
+  // Before, the end of every stream was dropped when it was a proper start of a hidden text, which told whether a
+  // guess starts a secret. A stream that ended on its own now shows its end as the program wrote it.
   probe.hiddenForms = () => ['ab', 'abcdef-unmistakable', 'q'];
   try {
     state.perform = () => ({ exitCode: 0, stdout: 'keep xyabcd', stderr: 'keep this q' });
     const answer = await ask();
-    assert.equal(answer.text, 'exit code: 0\n--- stdout ---\nkeep xy\n--- stderr ---\nkeep this [hidden]');
+    assert.equal(answer.text, 'exit code: 0\n--- stdout ---\nkeep xy[hidden]cd\n--- stderr ---\nkeep this [hidden]');
     state.perform = () => ({ exitCode: 0, stdout: 'ends in a', stderr: 'ends in ab' });
-    assert.equal((await ask()).text, 'exit code: 0\n--- stdout ---\nends in\n--- stderr ---\nends in');
+    assert.equal((await ask()).text, 'exit code: 0\n--- stdout ---\nends in a\n--- stderr ---\nends in [hidden]');
+    // The same texts in a stream that timed out: the last 1 KiB, counted once hidden, goes back to a newline.
+    state.perform = () => ({
+      exitCode: null, stdout: 'keep xyabcd', stderr: `keep\n${'z'.repeat(1016)}ends in ab`, timedOut: true,
+    });
+    assert.equal((await ask()).text, `timed out after 30s\n${END_LEFT_OUT()}\n${END_LEFT_OUT('stderr')}\n--- stderr ---\nkeep`);
   } finally {
     delete probe.hiddenForms;
   }
@@ -189,9 +216,18 @@ test('a cut secret that a shorter hidden text overlaps, or that ends in a cut ch
   probe.hiddenForms = () => ['bob', 'xbobsecret-unmistakable', 'pässwörd-unmistakable'];
   try {
     state.perform = () => ({ exitCode: 0, stdout: 'user xbobsec', stderr: 'pass pä�' });
-    assert.equal((await ask()).text, 'exit code: 0\n--- stdout ---\nuser\n--- stderr ---\npass');
+    // Streams that ended on their own are shown as written, with each whole hidden text hidden.
+    assert.equal((await ask()).text, 'exit code: 0\n--- stdout ---\nuser x[hidden]sec\n--- stderr ---\npass pä�');
     state.perform = () => ({ exitCode: 0, stdout: 'not a secret �', stderr: '' });
     assert.equal((await ask()).text, 'exit code: 0\n--- stdout ---\nnot a secret �');
+    // The same pieces at the end of streams that timed out are left out with the line they are on. Hiding bob makes
+    // the cut piece 5 bytes longer, and the 1 KiB is counted after that.
+    state.perform = () => ({
+      exitCode: null, stdout: `user\n${'z'.repeat(1007)}user xbobsec`, stderr: `pass\n${'z'.repeat(1013)}pass pä�`, timedOut: true,
+    });
+    const cut = await ask();
+    assert.equal(cut.text, `timed out after 30s\n${END_LEFT_OUT()}\n${END_LEFT_OUT('stderr')}\n--- stdout ---\nuser\n--- stderr ---\npass`);
+    assert.ok(!cut.text.includes('xbob') && !cut.text.includes('pä'));
   } finally {
     delete probe.hiddenForms;
   }
@@ -204,7 +240,7 @@ test('a path that straddles the visible end of a stream that reached the read li
       exitCode: 0, stdout: `${'x'.repeat(VISIBLE - into)}${folder}/file\n${'y'.repeat(VISIBLE)}`.slice(0, maxBytes), stderr: '', truncated: true,
     });
     const answer = await ask();
-    assert.ok(answer.text.endsWith(NOTE), `${into}`);
+    assert.ok(answer.text.startsWith(`exit code: 0\n${AT_LIMIT()}\n--- stdout ---\n${'x'.repeat(VISIBLE - into)}`), `${into}`);
     for (let n = 2; n <= folder.length; n += 1) assert.ok(!answer.text.includes(`x${folder.slice(0, n)}`), `${into}: ${n} characters of the path are shown`);
   }
 });
@@ -249,19 +285,32 @@ test('the command engine: a secret at the limit of perform or at the visible lim
   state.perform = viaEngine(`process.stdout.write('x'.repeat(Number(process.env.LIMIT) - 5) + process.env.TOK + '\\n')${STAY}`);
   const atLimit = await ask();
   assertNoPiece(atLimit.text);
-  assert.equal(stdoutOf(atLimit.text), 'x'.repeat(VISIBLE - 5));
-  assert.ok(atLimit.text.endsWith(NOTE));
+  assert.match(atLimit.text, /^exit code: (?:null|0)\n\[stdout cut at 256 KiB: the rest was left out\]\n--- stdout ---\nx+$/);
+  assert.equal(stdoutOf(atLimit.text), 'x'.repeat(VISIBLE));
 
   state.perform = viaEngine(`process.stdout.write('x'.repeat(${VISIBLE - 15}) + process.env.TOK + '\\n')`);
   const atVisible = await ask();
   assertNoPiece(atVisible.text);
   assert.equal(stdoutOf(atVisible.text), `${'x'.repeat(VISIBLE - 15)}[hidden]`);
-  assert.ok(!atVisible.text.endsWith(NOTE));
+  assert.ok(!atVisible.text.includes(' cut'));
 
   state.perform = viaEngine(`process.stdout.write('z' + process.env.TOK.repeat(Math.ceil(Number(process.env.LIMIT) / process.env.TOK.length)))${STAY}`);
   const shifted = await ask();
   assertNoPiece(shifted.text);
-  assert.ok(shifted.text.endsWith(NOTE));
+  // Hidden, the stream is far shorter than the visible limit and has no newline: nothing of it is shown.
+  assert.match(shifted.text, /^exit code: (?:null|0)\n\[stdout cut: the stream did not end on its own, so its end was left out\]$/);
+});
+
+test('the command engine: a path that a child of the client was writing when the grace period ended is never shown in part', async () => {
+  const folder = path.join(root, 'st');
+  const child = `process.stdout.write(${JSON.stringify(folder.slice(0, folder.length - 2))}); setInterval(() => {}, 1000);`;
+  // done goes out first, then the child starts and writes its piece of a path, and the client exits while the child
+  // still holds the stream, so the grace period ends it with that piece last, whatever the timing. The stream did not
+  // end on its own, so its last 1 KiB, which holds the piece, is left out back to a newline: a line of 1 KiB after done
+  // keeps done in view.
+  state.perform = viaEngine(`process.stdout.write('done\\n' + 'p'.repeat(1024), () => { require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(child)}], { stdio: ['ignore', 'inherit', 'inherit'] }); setTimeout(() => process.exit(0), 300); });`);
+  const answer = await ask();
+  assert.equal(answer.text, `exit code: 0\n${END_LEFT_OUT()}\n--- stdout ---\ndone`);
 });
 
 function auditEntries() {
@@ -293,8 +342,15 @@ test('a call whose escaped answer would be too large is still told it ran, with 
   state.perform = () => ({ exitCode: 3, stdout: '\u0001'.repeat(200000), stderr: '"'.repeat(1000) });
   const answer = await ask();
   assert.equal(answer.isError, true);
-  assert.ok(answer.text.startsWith(`exit code: 3\n--- stdout ---\n${'\u0001'.repeat(131072)}\n--- stderr ---\n${'"'.repeat(1000)}`));
-  assert.ok(answer.text.endsWith('\n[output truncated at 131072 bytes per stream]'));
+  assert.equal(answer.text, [
+    'exit code: 3',
+    '[stdout cut: showing 128 KiB of 195 KiB]',
+    '--- stdout ---',
+    // A brokered stream has no end part: the smaller answer shows its first 128 KiB.
+    '\u0001'.repeat(131072),
+    '--- stderr ---',
+    '"'.repeat(1000),
+  ].join('\n'));
   assert.ok(Buffer.byteLength(JSON.stringify(answer)) + 1 <= 1024 * 1024);
   const entry = auditEntries().at(-1);
   assert.equal(entry.decision, 'allowed');

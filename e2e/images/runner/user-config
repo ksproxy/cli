@@ -1,0 +1,13 @@
+# The ssh client setup of the user node in the runner: the key and the host key of this run, made by the secrets
+# service and mounted at /secrets. It names only the container web1; app1 is reached through web1 (jumps).
+Host web1
+  HostName web1
+  User ops
+  IdentityFile /secrets/id_ed25519
+  IdentitiesOnly yes
+  IdentityAgent none
+  UserKnownHostsFile /secrets/known_hosts
+  GlobalKnownHostsFile /dev/null
+  StrictHostKeyChecking yes
+  BatchMode yes
+  ConnectTimeout 10

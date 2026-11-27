@@ -139,6 +139,8 @@ export function checkInteger(value, fallback, min, max, where) {
 // The output limit of a target, in KiB per stream: the default, and the most maxOutputKiB may set.
 export const DEFAULT_OUTPUT_KIB = 256;
 export const MAX_OUTPUT_KIB = 4096;
+// The end of a stream that a cut answer also shows when the whole stream was read, in KiB.
+export const END_PART_KIB = 16;
 
 // The output limit of a target in KiB per stream: its maxOutputKiB when that is an integer from 256 to 4096, else 256.
 // The inventory refuses any other value, so only a session file edited by hand can hold one, and it gives the default.

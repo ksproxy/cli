@@ -65,7 +65,8 @@ function cleanLine(text) {
   return text.replace(ESCAPES, '').replace(/\t/g, ' ').replace(CONTROLS, '');
 }
 
-// The text without the piece at one end that is a cut hidden text: at the start, a piece of CUT_PIECE characters or more
+// For the lines of a server's stderr in the owner's terminal only (tailLines of the mcp kind), never for a text that the
+// agent gets. The text without the piece at one end that is a cut hidden text: at the start, a piece of CUT_PIECE characters or more
 // that ends a hidden text; at the end, one that starts it. The longest such piece goes.
 export function dropCut(text, hidden, atStart) {
   const longest = hidden.reduce((most, value) => Math.max(most, value.length), 0);
@@ -79,12 +80,13 @@ export function dropCut(text, hidden, atStart) {
 }
 
 // A text of the server as ksproxy may show it, at most max characters. Every hidden text is hidden first, then the text
-// is cleaned, and hidden again (cleaning can join the pieces of one); a piece at the end that starts a hidden text, left
-// by a cut before ksproxy got the text, is dropped; only then is it clipped, and a piece at the clip edge that starts a
-// hidden text is dropped too. A clip therefore never shows a piece of a hidden text, wherever the server put it.
+// is cleaned, and hidden again (cleaning can join the pieces of one); only then is it clipped, so the clip never cuts
+// a hidden text that the server wrote whole. Nothing is dropped at the end or at the clip for being a start of a
+// hidden text: the agent can make a server repeat its own words in an error, and such a drop told whether a guess
+// starts a secret.
 export function shownText(text, { hidden, max, clean }) {
-  const whole = dropCut(hideSecrets(clean(hideSecrets(String(text), hidden)), hidden), hidden, false);
-  return whole.length <= max ? whole : `${dropCut(whole.slice(0, max - 1), hidden, false)}\u2026`;
+  const whole = hideSecrets(clean(hideSecrets(String(text), hidden)), hidden);
+  return whole.length <= max ? whole : `${whole.slice(0, max - 1)}\u2026`;
 }
 
 const infoText = (value, hidden) => (typeof value === 'string' ? shownText(value, { hidden, max: INFO_CHARS, clean: cleanLine }) : '');
@@ -95,6 +97,26 @@ export function endText({ code, signal }) {
   if (signal !== null) return `the MCP server stopped (signal ${signal})`;
   if (code !== null) return `the MCP server stopped (exit ${code})`;
   return 'the connection to the MCP server was closed';
+}
+
+// The reason a request got no response, from a fixed list and chosen by the code of the error only, never by its
+// message, which may hold a header value. Node's fetch keeps the code on the cause of its TypeError.
+const REASONS = new Map([
+  ...[
+    'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'SELF_SIGNED_CERT_IN_CHAIN', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'UNABLE_TO_GET_ISSUER_CERT',
+    'UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'CERT_UNTRUSTED',
+  ].map((code) => [code, "the server's certificate is not trusted (set NODE_EXTRA_CA_CERTS for start to its CA)"]),
+  ...['CERT_HAS_EXPIRED', 'CERT_NOT_YET_VALID'].map((code) => [code, "the server's certificate has expired or is not valid yet"]),
+  ...['ERR_TLS_CERT_ALTNAME_INVALID', 'HOSTNAME_MISMATCH'].map((code) => [code, "the server's certificate is for another host name"]),
+  ['ECONNREFUSED', 'the connection was refused'],
+  ...['ENOTFOUND', 'EAI_AGAIN'].map((code) => [code, 'the host name was not found']),
+  ...['ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT'].map((code) => [code, 'the connection timed out']),
+  ...['ECONNRESET', 'UND_ERR_SOCKET'].map((code) => [code, 'the connection was closed by the other side']),
+]);
+
+// The fixed reason for the error of a failed fetch, or undefined when its code is not in the list.
+export function reachReason(err) {
+  return REASONS.get(err?.cause?.code) ?? REASONS.get(err?.code);
 }
 
 // An HTTP status as a sentence: a redirect is never followed; Retry-After is given in seconds when there is one.
@@ -111,7 +133,7 @@ function failure(what, outcome, { maxMessageBytes, hidden }) {
   if (outcome.tooLarge) return `the answer of the MCP server to ${what} is larger than ${maxMessageBytes} bytes`;
   if (outcome.notJson) return `${NOT_JSON} in answer to ${what}`;
   if (outcome.httpError !== undefined) return httpText(what, outcome.httpError);
-  if (outcome.unreachable) return `the MCP server could not be reached for ${what}`;
+  if (outcome.unreachable) return `the MCP server could not be reached for ${what}${outcome.reason === undefined ? '' : `: ${outcome.reason}`}`;
   if (outcome.cutOff) return `the answer of the MCP server to ${what} ended early`;
   return `the MCP server refused ${what}: ${shownText(outcome.rpcError.message, { hidden, max: ERROR_CHARS, clean: cleanLine })}`;
 }
@@ -319,7 +341,7 @@ function cutUtf8(text, bytes) {
 }
 
 // The texts of a result share maxBytes, in order: the text that passes it is cut and every later part is left out, so
-// the cut is always the end of the answer, where the core drops a piece of a secret it cut; the result is marked
+// the cut is always the end of the answer, which the core leaves out, as a secret can be cut there; the result is marked
 // truncated. Parts without text before the cut, and structuredContent, stay as they are.
 function cutText(result, maxBytes) {
   if (!Array.isArray(result.content)) return { result, truncated: false };
@@ -626,18 +648,20 @@ function createHttpSession({
   };
 
   // One HTTP request that never follows a redirect: the response, or null when fetch failed (out of reach, a header
-  // that cannot be sent, a stop; no text of the error is kept). done releases what was not read.
+  // that cannot be sent, a stop; no text of the error is kept, only reason, from the code of the error, or undefined).
+  // done releases what was not read.
   const fetchOnce = async (init, signals) => {
     const own = new AbortController();
     let response = null;
+    let reason;
     try {
       response = await fetchImpl(url, {
         ...init, headers: headersFor(init.headers), redirect: 'manual', signal: AbortSignal.any([...signals, own.signal]),
       });
-    } catch {
-      // the caller knows from null that nothing came back
+    } catch (err) {
+      reason = reachReason(err);
     }
-    return { response, done: () => own.abort() };
+    return { response, reason, done: () => own.abort() };
   };
 
   // ksproxy's headers of a message: initialize asks LEGACY_VERSION and carries no session; anything else the era, the
@@ -764,10 +788,10 @@ function createHttpSession({
   const post = async (entry, signal) => {
     const named = era === MODERN_VERSION && entry.message.method === 'tools/call' ? callHeaders(entry.message.params, marks, hidden) : {};
     if (typeof named === 'string') return { rpcError: { code: -32602, message: named } };
-    const { response, done } = await fetchOnce({
+    const { response, reason, done } = await fetchOnce({
       method: 'POST', headers: { ...ownHeaders(entry.message), ...named }, body: entry.body,
     }, [closing.signal, signal]);
-    if (response === null) return { unreachable: true };
+    if (response === null) return reason === undefined ? { unreachable: true } : { unreachable: true, reason };
     entry.sessionHeader = response.headers.get('mcp-session-id');
     const outcome = response.ok
       ? await readAnswer(response, entry.id)

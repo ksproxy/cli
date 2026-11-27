@@ -379,7 +379,7 @@ ksproxy speaks the Redis protocol itself. A command is plain words, so a value w
 - **Can do:** read one key, its time to live or one hash, read the `session:` keys page by page, and read the server info.
 - **Allowed:** `ksproxy check redis cache 'SCAN 0 MATCH session:* COUNT 100'`
 - **Refused:** `ksproxy check redis cache DEL session:7f3a`: no rule allows `DEL`.
-- **Safety:** a star inside a word is literal, so `session:*` allows exactly that pattern. Give the Redis user an ACL that allows only these commands.
+- **Safety:** a star inside a word is literal, so `session:*` allows exactly that pattern. Give the Redis user an ACL that allows only these commands, plus `PING` if you use `ksproxy doctor`, which sends it.
 
 **Read and write:** cached pages may be deleted and one feature flag switched.
 
@@ -406,11 +406,11 @@ ksproxy speaks the Redis protocol itself. A command is plain words, so a value w
 - **Allowed:** `ksproxy check redis cache-ops DEL cache:page:home`
 - **Refused:** `ksproxy check redis cache-ops DEL session:7f3a`: the pattern allows `cache:page:` keys only.
 - **Refused:** `ksproxy check redis cache-ops FLUSHDB`: never allowed on a redis target.
-- **Safety:** give the Redis user an ACL limited to these commands and these keys, so that the server enforces the same limits.
+- **Safety:** give the Redis user an ACL limited to these commands and these keys (plus `PING` for `ksproxy doctor`), so that the server enforces the same limits.
 
 ## postgres
 
-One SQL statement per call, run with `psql`. In a rule, `*` is one value (a number or a quoted string, never a name), and `\*` is the SQL star, written `\\*` in the file.
+One SQL statement per call, run with `psql`. In a rule, `*` is one value (a number or a quoted string, never a name), and `\*` is the SQL star, written `\\*` in the file. The connection uses TLS and checks the server's certificate, unless the host is this machine; `caFile` names the CA that signed it (see "TLS" under postgres in [SERVICES.md](SERVICES.md#postgres)).
 
 **Read-only:** read orders.
 
@@ -421,6 +421,7 @@ One SQL statement per call, run with `psql`. In a rule, `*` is one value (a numb
   "database": "shop",
   "user": "agent_ro",
   "passwordEnv": "SHOP_DB_PASSWORD",
+  "caFile": "~/certs/db-ca.pem",
   "description": "shop database, read only",
   "allow": [
     "select \\* from orders where id = *",
@@ -444,6 +445,7 @@ One SQL statement per call, run with `psql`. In a rule, `*` is one value (a numb
   "database": "shop",
   "user": "agent_rw",
   "passwordEnv": "SHOP_DB_RW_PASSWORD",
+  "caFile": "~/certs/db-ca.pem",
   "readOnly": false,
   "description": "shop database, may change the status of an order",
   "allow": [
@@ -461,7 +463,7 @@ One SQL statement per call, run with `psql`. In a rule, `*` is one value (a numb
 
 ## mysql
 
-MySQL and MariaDB, through the `mysql` or `mariadb` client. Rules work as for `postgres`. A result holds at most 1,000 rows.
+MySQL and MariaDB, through the `mysql` or `mariadb` client. Rules, TLS and `caFile` work as for `postgres`. A result holds at most 1,000 rows.
 
 **Read-only:** read customers.
 
@@ -472,6 +474,7 @@ MySQL and MariaDB, through the `mysql` or `mariadb` client. Rules work as for `p
   "database": "crm",
   "user": "agent_ro",
   "passwordEnv": "CRM_DB_PASSWORD",
+  "caFile": "~/certs/db-ca.pem",
   "description": "crm database, read only",
   "allow": ["show tables", "describe customers", "select \\* from customers where id = *"]
 }
@@ -491,6 +494,7 @@ MySQL and MariaDB, through the `mysql` or `mariadb` client. Rules work as for `p
   "database": "crm",
   "user": "agent_rw",
   "passwordEnv": "CRM_DB_RW_PASSWORD",
+  "caFile": "~/certs/db-ca.pem",
   "client": "mariadb",
   "readOnly": false,
   "description": "crm database, may assign and close tickets",
@@ -566,7 +570,7 @@ The Kafka command-line clients that you installed. The first word picks the clie
 - **Can do:** list topics and consumer groups, and describe one of each.
 - **Allowed:** `ksproxy check kafka kafka-prod topics --describe --topic orders`
 - **Refused:** `ksproxy check kafka kafka-prod topics --delete --topic orders`: `writes` is off, so every write flag is refused.
-- **Safety:** the credentials stay in the client file, which ksproxy never reads. The Kafka ACLs of that user are the real boundary: give it the right to describe only.
+- **Safety:** the credentials stay in the client file, which ksproxy never reads. The Kafka ACLs of that user are the real boundary: allow it only Describe on topics and groups, and DescribeConfigs on topics, which `topics --describe` also reads.
 
 **Read and write:** one topic may be created and one group reset.
 

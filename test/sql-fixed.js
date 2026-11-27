@@ -83,3 +83,18 @@ export const MY_FIXED = [
   ['set `transaction_read_only` = 0', 'server setting'],
   ['set @@session.`TX_READ_ONLY` = 0', 'server setting'],
 ];
+
+// The texts of a failed TLS check at open: the short reason of the SKIPPED line, and the way out that open says on a
+// line of its own, which is never cut to the width of the terminal.
+export const TLS_TEXT = {
+  CERT: 'the server\'s TLS certificate did not verify',
+  NO_TLS: 'the server does not offer TLS',
+  OLD_PSQL: 'this psql cannot use the system\'s CAs',
+  MARIADB_REQUIRE: 'the MariaDB client cannot require TLS without a check',
+  SYSTEM_WAY: (host) => `the certificate was checked against the system's CAs and the host name ${host}; name the CA that signed it in "caFile", or set "tls" to "require" or "prefer" to skip the check`,
+  CA_WAY: (host) => `the certificate was checked against the CA in "caFile" and the host name ${host}; check that "caFile" names the CA that signed it, and that the certificate names this host`,
+  NONE_WAY: (mode) => `"tls" is "${mode}", which needs TLS; set "tls" to "prefer" to connect without it`,
+  OLD_WAY: 'using the system\'s CAs needs libpq 16 or later; name the CA that signed the server\'s certificate in "caFile"',
+  MARIADB_WAY: 'set "tls" to "verify" (with "caFile" when this system does not trust the CA), or to "prefer"',
+  VERSION_WAY: (program) => `ksproxy reads the version of the client to choose its TLS options; check that ${program} runs, or set "tls" to "prefer"`,
+};

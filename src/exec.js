@@ -1,9 +1,30 @@
 import { spawn } from 'node:child_process';
 
+// The last size bytes written to it, in one buffer of that size: write(chunk) adds a chunk, bytes() gives them in order.
+function lastBytes(size) {
+  const buffer = Buffer.alloc(size);
+  let at = 0;
+  let total = 0;
+  return {
+    write(chunk) {
+      const piece = chunk.subarray(Math.max(0, chunk.length - size));
+      const first = Math.min(piece.length, size - at);
+      piece.copy(buffer, at, 0, first);
+      piece.copy(buffer, 0, first);
+      at = (at + piece.length) % size;
+      total += piece.length;
+    },
+    bytes: () => (total < size ? buffer.subarray(0, total) : Buffer.concat([buffer.subarray(at), buffer.subarray(0, at)])),
+  };
+}
+
 // signal: an AbortSignal that kills the child at once. stopAtLimit: kill the child as soon as a stream passes maxBytes.
-// Without them run behaves as it always did.
+// tailBytes: keep the last tailBytes bytes of each stream, whatever maxBytes kept, as stdoutTail and stderrTail.
+// Without them run behaves as it always did. cutOff is true when the grace period after the exit ended with a stream
+// still open (a child of the program still writing): the streams were destroyed there, so they did not end on their own.
 export function run(file, args, {
   timeoutMs = 60000, maxBytes = 262144, env = process.env, inherit = false, cwd, graceMs = 500, signal, stopAtLimit = false,
+  tailBytes = 0,
 } = {}) {
   return new Promise((resolve) => {
     const started = Date.now();
@@ -14,7 +35,10 @@ export function run(file, args, {
       stderr: '',
       stdoutBytes: 0,
       stderrBytes: 0,
+      stdoutTail: null,
+      stderrTail: null,
       truncated: false,
+      cutOff: false,
       timedOut: false,
       durationMs: 0,
       spawnError: null,
@@ -56,8 +80,10 @@ export function run(file, args, {
 
     const chunks = { stdout: [], stderr: [] };
     const kept = { stdout: 0, stderr: 0 };
+    const tails = tailBytes > 0 ? { stdout: lastBytes(tailBytes), stderr: lastBytes(tailBytes) } : null;
     const collect = (name) => (chunk) => {
       result[`${name}Bytes`] += chunk.length;
+      tails?.[name].write(chunk);
       const room = maxBytes - kept[name];
       if (room > 0) {
         const piece = chunk.length > room ? chunk.subarray(0, room) : chunk;
@@ -84,6 +110,8 @@ export function run(file, args, {
     const collectOutput = () => {
       result.stdout = Buffer.concat(chunks.stdout).toString('utf8');
       result.stderr = Buffer.concat(chunks.stderr).toString('utf8');
+      result.stdoutTail = tails?.stdout.bytes() ?? null;
+      result.stderrTail = tails?.stderr.bytes() ?? null;
     };
 
     let open = 0;
@@ -127,6 +155,7 @@ export function run(file, args, {
       exited = true;
       if (inherit) return;
       graceTimer = setTimeout(() => {
+        result.cutOff = true;
         child.stdout.destroy();
         child.stderr.destroy();
         collectOutput();

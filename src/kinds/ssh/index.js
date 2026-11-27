@@ -182,6 +182,7 @@ export default {
     return decision.prefix === undefined ? [] : [`sent to ${target.host}: ${decision.prefix} ${decision.command}`];
   },
   toolBullet: '- `ssh_exec { server, command, timeout_seconds? }` - run one command on an ssh server.',
+  cutHint: 'tail -n 200, head -n 200, grep -m 50 PATTERN, or wc -l first',
   agentSection(target) {
     const lines = [
       `### ssh server \`${target.name}\`${target.description ? ` - ${target.description}` : ''}`,

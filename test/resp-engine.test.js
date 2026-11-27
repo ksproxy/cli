@@ -379,7 +379,7 @@ test('a reply over the output limit ends the connection and is marked truncated;
   const { made, connect } = recording();
   const result = await exchange(base(large.port, { maxBytes: 100, connect }));
   assert.deepEqual(result, {
-    exitCode: 1, stdout: '', stderr: 'the reply is larger than the output limit and was cut off\n', truncated: true,
+    exitCode: 1, stdout: '', stderr: 'the reply is larger than the output limit and was cut off\n', truncated: true, ownStderr: true,
   });
   assert.equal(made[0].socket.destroyed, true);
   const long = await server(() => `+${'a'.repeat(200)}\r\n`);

@@ -29,6 +29,16 @@ test('truncates output at maxBytes', async () => {
   assert.equal(r.stdoutBytes, 5000);
 });
 
+test('cutOff says that the grace period after the exit ended with a stream still open', async () => {
+  const child = "process.stdout.write('still writing'); setInterval(() => {}, 1000);";
+  const left = await run(node, ['-e', `require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(child)}], { stdio: ['ignore', 'inherit', 'inherit'] }); setTimeout(() => process.exit(0), 300);`], { graceMs: 200 });
+  assert.equal(left.exitCode, 0);
+  assert.equal(left.cutOff, true);
+  assert.equal(left.stdout, 'still writing');
+  const whole = await run(node, ['-e', 'process.stdout.write("hi")']);
+  assert.equal(whole.cutOff, false);
+});
+
 test('times out and kills the child', async () => {
   const started = Date.now();
   const r = await run(node, ['-e', 'setTimeout(()=>{}, 30000)'], { timeoutMs: 500 });

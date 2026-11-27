@@ -58,7 +58,7 @@ The check is fixed by ksproxy. It is never taken from your `allow` rules, and it
 | `elasticsearch` | `GET /_cluster/health` |
 | `rabbitmq` | `GET /api/whoami` |
 | `redis` | `PING` |
-| `postgres`, `mysql` | `select 1` |
+| `postgres`, `mysql` | `select 1`. With `tls` `verify` or `require`, opening the target already ran one `select 1` to check TLS, and a TLS failure is `FAIL` with its reason. |
 | `mongodb` | The `ping` command. |
 | `kafka` | List the topics. |
 | `mcp` | The server starts and its tools are listed. A local server is never called; see [MCP-SERVERS.md](MCP-SERVERS.md#ksproxy-check-and-ksproxy-doctor). |
@@ -98,5 +98,5 @@ $ ksproxy doctor
 
 - **It writes nothing a session writes.** It uses a temporary socket folder of its own and removes it at the end. It never writes `session.json`, the call socket or the agent files, so no agent can reach a target through it, and it writes nothing to the audit log.
 - **If doctor is killed** before it can remove the folder, the next `ksproxy doctor` or `ksproxy start` stops the cluster proxies and ssh connections left in it and removes it. A folder left empty by a doctor killed while it was making it is removed once it is five minutes old.
-- **It does contact every checked target** with your credentials, with the one read of its kind.
+- **It does contact every checked target** with your credentials, with the one read of its kind, and for a `postgres` or `mysql` target with `tls` `verify` or `require` also with the TLS check of opening.
 - **It does not run your `allow` rules** (use `ksproxy check` for that), and it repairs nothing.

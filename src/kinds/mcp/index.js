@@ -6,6 +6,7 @@ import {
 import { minimalEnv } from '../../exec.js';
 import { processStartTime } from '../../session.js';
 import { clip } from '../../text.js';
+import { jsonBodyForms } from '../shared.js';
 import { LOADER_PREFIXES, checkProgram, resolveProgram } from '../command/index.js';
 import { workRoot } from '../engines/command.js';
 import {
@@ -165,14 +166,10 @@ export function serverEnv(target, env, secrets) {
   return minimalEnv(env, Object.fromEntries([...caches, ...own]), { own: false });
 }
 
-// Each secret value written inside a JSON text, where it differs from the value: a server may echo it that way.
-function escapedForms(secrets) {
-  return Object.values(secrets).map((value) => JSON.stringify(value).slice(1, -1)).filter((form) => !Object.values(secrets).includes(form));
-}
-
+// The base64 credential of a remote server with basic auth, and each secret value written inside a JSON text, where
+// it differs from the value: a server may echo it that way.
 function hiddenForms(target, secrets) {
-  const encoded = target.url === undefined ? [] : encodedForms(engineAuth(target), secrets);
-  return [...encoded, ...escapedForms(secrets)];
+  return target.url === undefined ? jsonBodyForms(Object.values(secrets)) : encodedForms(engineAuth(target), secrets);
 }
 
 const hiddenOf = (target, secrets) => [...Object.values(secrets), ...hiddenForms(target, secrets)];
@@ -542,6 +539,7 @@ export default {
     return { tools: tools.map((tool) => `${target.name}__${tool}`) };
   },
   toolBullet: '- `TARGET__TOOL` - the allowed tools of each MCP server the user opened, in your tool list under the target name; `mcp_call { target, tool, arguments }` reaches the same tools.',
+  cutHint: "the tool's own filter or paging arguments",
   agentSection(target) {
     return agentLines(target).join('\n');
   },

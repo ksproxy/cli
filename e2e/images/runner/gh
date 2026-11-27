@@ -1,0 +1,47 @@
+#!/usr/bin/env node
+// A stand-in for the GitHub CLI, for the command examples of docs/EXAMPLES.md, since a real gh needs GitHub. ksproxy
+// start finds it as gh on its PATH. Each run adds one JSON line to /home/node/out/gh-calls.jsonl: the arguments; which
+// token of the run GH_TOKEN holds ("read", "triage", "other" or "none"), never the token itself; the names of the
+// environment variables; the working folder and the number of entries in it. Then it prints a fixed answer, as gh
+// would, or an error for a command it does not know. The driver (e2e/driver/command.js) reads the record.
+import fs from 'node:fs';
+
+const RECORD = '/home/node/out/gh-calls.jsonl';
+const args = process.argv.slice(2);
+
+// The tokens of the run, from the runner's secrets, only to name the one that GH_TOKEN holds.
+const tokenIn = (file) => {
+  try {
+    return fs.readFileSync(file, 'utf8').trim();
+  } catch {
+    return undefined;
+  }
+};
+const tokens = { read: tokenIn('/secrets/gh_read_token'), triage: tokenIn('/secrets/gh_triage_token') };
+const given = process.env.GH_TOKEN;
+const token = given === undefined || given === ''
+  ? 'none'
+  : Object.keys(tokens).find((name) => tokens[name] === given) ?? 'other';
+fs.appendFileSync(RECORD, `${JSON.stringify({
+  args, token, env: Object.keys(process.env).sort(), cwd: process.cwd(), entries: fs.readdirSync('.').length,
+})}\n`);
+
+const ISSUE = 'title:\tCheckout fails on Safari\nstate:\tOPEN\nauthor:\tshopper\nlabels:\tneeds-info\nnumber:\t42\n--\nThe pay button does nothing on Safari 18.';
+const PR = 'title:\tFix the pay button on Safari\nstate:\tOPEN\nauthor:\tdev1\nnumber:\t7\nurl:\thttps://github.com/example/shop/pull/7';
+const answers = {
+  'issue list -R example/shop': '42\tOPEN\tCheckout fails on Safari\tneeds-info\t2026-11-24T09:00:00Z\n41\tOPEN\tAdd a gift-card field\t\t2026-11-22T15:30:00Z',
+  'issue view 42 -R example/shop': ISSUE,
+  'pr list -R example/shop': '7\tFix the pay button on Safari\tfix-safari-pay\tOPEN\t2026-11-24T10:00:00Z',
+  'pr view 7 -R example/shop': PR,
+  'pr checks 7 -R example/shop': 'build\tpass\t1m2s\thttps://github.com/example/shop/actions/runs/101\ntest\tpass\t3m10s\thttps://github.com/example/shop/actions/runs/102',
+};
+const command = args.join(' ');
+const edit = /^issue edit (\d+) --(add|remove)-label [a-z-]+ -R example\/shop$/.exec(command);
+if (Object.hasOwn(answers, command)) {
+  process.stdout.write(`${answers[command]}\n`);
+} else if (edit !== null) {
+  process.stdout.write(`https://github.com/example/shop/issues/${edit[1]}\n`);
+} else {
+  process.stderr.write(`unknown command "${command}" for "gh"\n`);
+  process.exitCode = 1;
+}

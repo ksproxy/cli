@@ -4,7 +4,7 @@ import {
 } from '../../checks.js';
 import { mongoshBin } from '../../paths.js';
 import { clip } from '../../text.js';
-import { REVIEWED } from '../shared.js';
+import { REVIEWED, jsonForms } from '../shared.js';
 import { resolveProgram } from '../command/index.js';
 import { runClient } from '../engines/command.js';
 import { DOCTOR_MAX_BYTES, clientVerdict, hiddenOf } from '../engines/doctor.js';
@@ -91,9 +91,12 @@ async function performMongo(target, decision, {
   });
 }
 
-// The passwords inside the connection string, as written and decoded; the core hides them with the whole string.
+// The passwords inside the connection string, as written and decoded, and each of them and the whole string as the
+// reply shows a value: the fixed script prints extended JSON, which escapes a quote, a backslash and the control
+// characters. The core hides them with the whole string.
 function hiddenForms(target, secrets) {
-  return passwordParts(secrets[target.uriEnv]);
+  const parts = passwordParts(secrets[target.uriEnv]);
+  return [...parts, ...jsonForms([secrets[target.uriEnv], ...parts])];
 }
 
 // The doctor check: the ping command through the same client and fixed script as a call, never a command of the agent.
@@ -223,6 +226,7 @@ export default {
     }
   },
   toolBullet: '- `mongodb_command { target, command, timeout_seconds? }` - run one allowlisted command document on a mongodb target.',
+  cutHint: 'a filter, a projection and a limit; page with _id greater than the last one',
   agentSection(target) {
     const lines = [`### mongodb target \`${target.name}\`${target.description ? ` - ${target.description}` : ''}`, '', ...agentLines(target)];
     if (target.review === true) lines.push(REVIEWED);

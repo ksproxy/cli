@@ -309,18 +309,27 @@ function world() {
 }
 const node = process.execPath;
 
+// "tls": "prefer", so that open runs nothing and these tests see the doctor check alone; the TLS check that open runs
+// for verify and require is tested in sql-kinds.test.js.
 const pgTarget = (extra = {}) => validateInventory({
   postgres: [{
-    name: 'shop', host: 'db1.example.com', port: 5432, database: 'shop', user: 'agent_ro', passwordEnv: 'SHOP_DB_PASSWORD', allow: [], ...extra,
+    name: 'shop', host: 'db1.example.com', port: 5432, database: 'shop', user: 'agent_ro', passwordEnv: 'SHOP_DB_PASSWORD', tls: 'prefer', allow: [], ...extra,
   }],
 }).postgres[0];
 const myTarget = (extra = {}) => validateInventory({
   mysql: [{
-    name: 'crm', host: 'db2.example.com', database: 'crm', user: 'agent_ro', passwordEnv: 'CRM_DB_PASSWORD', allow: [], ...extra,
+    name: 'crm', host: 'db2.example.com', database: 'crm', user: 'agent_ro', passwordEnv: 'CRM_DB_PASSWORD', tls: 'prefer', allow: [], ...extra,
   }],
 }).mysql[0];
 const SQL_SECRETS = { SHOP_DB_PASSWORD: SECRET, CRM_DB_PASSWORD: SECRET };
 const withProgram = (env, name, file) => ({ ...env, [['KSPROXY', name].join('_')]: file });
+
+// The opened object of a postgres or mysql target, whose open is async.
+async function sqlOpenedOf(kind, target, env, secrets) {
+  const result = await kind.open(target, { env, secrets });
+  assert.equal(result.ok, true, result.error);
+  return { kind: kind.key, target, ...result.extras };
+}
 
 const SQL_KINDS = [
   ['psql', postgres, pgTarget, 'PSQL', fakePsql],
@@ -332,7 +341,7 @@ for (const [name, kind, make, variable, fake] of SQL_KINDS) {
     const w = world();
     const echoing = w.script(`${name}-echo`, `printf '%s\\n' "$@" > '${w.log}'\nexec '${node}' '${fake}' "$@"`);
     const env = withProgram(w.env, variable, echoing);
-    const opened = openedOf(kind, make(), env, SQL_SECRETS);
+    const opened = await sqlOpenedOf(kind, make(), env, SQL_SECRETS);
     const answer = await kind.doctor(opened, ctxOf(env, SQL_SECRETS));
     assert.deepEqual(answer, { ok: true, detail: 'select 1 answered' });
     noLeak(answer);
@@ -352,7 +361,7 @@ for (const [name, kind, make, variable, fake] of SQL_KINDS) {
     ];
     for (const [body, detail] of cases) {
       const env = withProgram(w.env, variable, w.script(`${name}-fail`, body));
-      const answer = await kind.doctor(openedOf(kind, make(), env, SQL_SECRETS), ctxOf(env, SQL_SECRETS));
+      const answer = await kind.doctor(await sqlOpenedOf(kind, make(), env, SQL_SECRETS), ctxOf(env, SQL_SECRETS));
       assert.deepEqual(answer, { ok: false, detail });
       noLeak(answer);
     }
@@ -366,7 +375,7 @@ for (const [name, kind, make, variable, fake] of SQL_KINDS) {
     const started = path.join(w.base, 'started');
     const slow = w.script(`${name}-slow`, `echo up > '${started}'\nexec sleep 60`);
     const env = withProgram(w.env, variable, slow);
-    const slowOpened = openedOf(kind, make(), env, SQL_SECRETS);
+    const slowOpened = await sqlOpenedOf(kind, make(), env, SQL_SECRETS);
     assert.deepEqual(await kind.doctor(slowOpened, ctxOf(env, SQL_SECRETS, { timeoutMs: 400 })), { ok: false, detail: 'timed out' });
     fs.rmSync(started, { force: true });
     const { controller, ctx } = stoppedCtx();
@@ -381,7 +390,7 @@ test('postgres and mysql: the check is the same whether the target is read only 
   const w = world();
   const program = w.script('psql-log', `printf '%s\\n' "$@" > '${w.log}'`);
   const env = withProgram(w.env, 'PSQL', program);
-  const answer = await postgres.doctor(openedOf(postgres, pgTarget({ readOnly: false }), env, SQL_SECRETS), ctxOf(env, SQL_SECRETS));
+  const answer = await postgres.doctor(await sqlOpenedOf(postgres, pgTarget({ readOnly: false }), env, SQL_SECRETS), ctxOf(env, SQL_SECRETS));
   assert.equal(answer.ok, true);
   assert.equal(fs.readFileSync(w.log, 'utf8').trim().split('\n').at(-1), 'select 1');
 });

@@ -458,9 +458,15 @@ test('a session through start: the tools listed and announced, each call routed 
     isError: true,
   });
   assert.deepEqual(await call('jm__delete_issue', { issue_key: 'SHOP-1' }), { text: 'unknown tool: jm__delete_issue', isError: true });
-  // The time limit is the target's timeoutSeconds, 1, not the 600 the agent sent to the server.
+  // The time limit is the target's timeoutSeconds, 1, not the 600 the agent sent to the server. A call that timed out
+  // loses the last 1 KiB of each stream back to a newline, so the short stderr of the kind is left out.
   assert.deepEqual(await call('slow__get_issue', { issue_key: 'A-1', timeout_seconds: 600 }), {
-    text: 'timed out after 1s\n--- stderr ---\nthe MCP server did not answer within 1 seconds', isError: true,
+    text: [
+      'timed out after 1s',
+      '--- stderr ---',
+      'the MCP server did not answer within 1 seconds',
+    ].join('\n'),
+    isError: true,
   });
   assert.deepEqual(received(slow.record, 'tools/call').map((item) => item.got.params.arguments), [{ issue_key: 'A-1', timeout_seconds: 600 }]);
   assert.equal(received(jm.record, 'tools/call').length, 1, 'a refused call never reached the server');

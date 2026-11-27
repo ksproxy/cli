@@ -2,10 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
+import https from 'node:https';
+import net from 'node:net';
 import {
-  LEGACY_VERSION, MODERN_VERSION, connectHttp,
+  LEGACY_VERSION, MODERN_VERSION, connectHttp, reachReason,
 } from '../src/kinds/engines/mcp-client.js';
 import { ERROR_BODY, startHttpStandIn } from './fixtures/mcp-server.js';
+import { selfSigned } from './fixtures/self-signed.js';
 
 const PKG = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 const VERSION_KEY = 'io.modelcontextprotocol/protocolVersion';
@@ -515,8 +518,8 @@ test('ping: true for a result, a JSON-RPC error or a 429; false for another HTTP
   assert.equal(await client.ping({ signal: AbortSignal.timeout(200) }), false);
   await server.close();
   assert.equal(await client.ping(), false);
-  assert.deepEqual(await client.callTool('tool_1', {}, { timeoutMs: 10000 }), { unreachable: true });
-  await assert.rejects(client.listTools(), /^Error: the MCP server could not be reached for tools\/list$/);
+  assert.deepEqual(await client.callTool('tool_1', {}, { timeoutMs: 10000 }), { unreachable: true, reason: 'the connection was refused' });
+  await assert.rejects(client.listTools(), /^Error: the MCP server could not be reached for tools\/list: the connection was refused$/);
 });
 
 test('the start: limitMs, the signal, a signal already aborted, a server out of reach, and failures of initialize', async (t) => {
@@ -539,7 +542,7 @@ test('the start: limitMs, the signal, a signal already aborted, a server out of 
   await new Promise((resolve) => {
     closed.close(resolve);
   });
-  await assert.rejects(connectHttp({ url: `http://127.0.0.1:${port}/mcp` }), /^Error: the MCP server could not be reached for server\/discover$/);
+  await assert.rejects(connectHttp({ url: `http://127.0.0.1:${port}/mcp` }), /^Error: the MCP server could not be reached for server\/discover: the connection was refused$/);
 
   const cases = [
     [{ era: 'legacy', initialize: 'no-version' }, 'the MCP server answered initialize without a protocol version'],
@@ -657,4 +660,87 @@ test('a hidden text is hidden before the engine clips a server text over HTTP: a
   const message = `${'x'.repeat(294)}${SECRET} and the rest`;
   const refusing = async (url, init) => Response.json({ jsonrpc: '2.0', id: JSON.parse(init.body).id, error: { code: -32000, message } });
   await assert.rejects(connectHttp({ url: 'http://127.0.0.1:9/mcp', fetchImpl: refusing, hidden }), new Error(`the MCP server refused initialize: ${'x'.repeat(294)}[hidd…`));
+});
+
+test('a server out of reach gives a reason from a fixed list, chosen by the code of the error only', async (t) => {
+  const listening = (server) => new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const reasonOf = async (url) => {
+    try {
+      await connectHttp({ url });
+    } catch (err) {
+      return err.message;
+    }
+    return assert.fail('the connect should fail');
+  };
+  const START = 'the MCP server could not be reached for server/discover';
+
+  // What Node 24 fetch really gives: a self-signed certificate, a closed port, a host name that does not exist, a
+  // server that resets the connection and one that closes it without an answer.
+  const { cert, key } = selfSigned('localhost');
+  const tls = https.createServer({ cert, key }, (req, res) => res.end('x'));
+  await listening(tls);
+  t.after(() => tls.close());
+  assert.equal(
+    await reasonOf(`https://localhost:${tls.address().port}/mcp`),
+    `${START}: the server's certificate is not trusted (set NODE_EXTRA_CA_CERTS for start to its CA)`,
+  );
+
+  const closed = http.createServer();
+  await listening(closed);
+  const { port } = closed.address();
+  await new Promise((resolve) => {
+    closed.close(resolve);
+  });
+  assert.equal(await reasonOf(`http://127.0.0.1:${port}/mcp`), `${START}: the connection was refused`);
+  assert.equal(await reasonOf('http://nonexistent.invalid/mcp'), `${START}: the host name was not found`);
+
+  const resetting = net.createServer((socket) => socket.destroy());
+  await listening(resetting);
+  t.after(() => resetting.close());
+  assert.equal(await reasonOf(`http://127.0.0.1:${resetting.address().port}/mcp`), `${START}: the connection was closed by the other side`);
+  const hanging = net.createServer((socket) => socket.once('data', () => socket.end()));
+  await listening(hanging);
+  t.after(() => hanging.close());
+  assert.equal(await reasonOf(`http://127.0.0.1:${hanging.address().port}/mcp`), `${START}: the connection was closed by the other side`);
+
+  // Every code of the list, on the cause of the error as fetch gives it or on the error itself. The message of the
+  // error is never used: it holds a secret here, and a code that is not in the list gives no reason.
+  const expected = {
+    UNABLE_TO_VERIFY_LEAF_SIGNATURE: 'trusted',
+    SELF_SIGNED_CERT_IN_CHAIN: 'trusted',
+    DEPTH_ZERO_SELF_SIGNED_CERT: 'trusted',
+    UNABLE_TO_GET_ISSUER_CERT: 'trusted',
+    UNABLE_TO_GET_ISSUER_CERT_LOCALLY: 'trusted',
+    CERT_UNTRUSTED: 'trusted',
+    CERT_HAS_EXPIRED: 'expired',
+    CERT_NOT_YET_VALID: 'expired',
+    ERR_TLS_CERT_ALTNAME_INVALID: 'another host name',
+    HOSTNAME_MISMATCH: 'another host name',
+    ECONNREFUSED: 'refused',
+    ENOTFOUND: 'not found',
+    EAI_AGAIN: 'not found',
+    ETIMEDOUT: 'timed out',
+    UND_ERR_CONNECT_TIMEOUT: 'timed out',
+    ECONNRESET: 'closed by the other side',
+    UND_ERR_SOCKET: 'closed by the other side',
+  };
+  for (const [code, word] of Object.entries(expected)) {
+    for (const err of [Object.assign(new TypeError(SECRET), { cause: Object.assign(new Error(SECRET), { code }) }), Object.assign(new Error(SECRET), { code })]) {
+      const reason = reachReason(err);
+      assert.ok(reason.includes(word), `${code}: ${reason}`);
+      assert.ok(!reason.includes(SECRET));
+    }
+  }
+  assert.equal(reachReason(new TypeError(`fetch failed ${SECRET}`)), undefined);
+  assert.equal(reachReason(Object.assign(new TypeError('x'), { cause: Object.assign(new Error('x'), { code: 'EPERM' }) })), undefined);
+  assert.equal(reachReason(Object.assign(new TypeError('x'), { cause: 'ECONNREFUSED' })), undefined);
+  assert.equal(reachReason(undefined), undefined);
+
+  // The reason reaches the answer of a call that fails the same way, and the outcome stays as before without one.
+  const stub = await serve(t, {});
+  const failing = await connectHttp({ url: stub.url, fetchImpl: async (url, init) => (init.method === 'POST' && init.headers.get('mcp-method') === 'tools/call' ? Promise.reject(new TypeError(SECRET)) : fetch(url, init)) });
+  assert.deepEqual(await failing.callTool('tool_1', {}, { timeoutMs: 10000 }), { unreachable: true });
+  await failing.close();
 });

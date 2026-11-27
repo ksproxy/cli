@@ -28,7 +28,7 @@ Let AI agents run allowlisted ssh, kubectl, local, database, queue, HTTP API and
 
 - **For** developing and debugging with an AI agent: read logs, inspect a cluster, read a few rows, check a queue. When ksproxy is not sure, it refuses.
 - **One call, one answer.** No interactive shell, no open connection between calls, no streaming, no file transfer.
-- **Output is cut at 256 KiB** per stream, and the answer says so: ask for a piece (`head`, `grep`, a filter), or raise `maxOutputKiB` for one target (at most 4 MiB). MongoDB returns at most 100 documents and MySQL 1,000 rows per call.
+- **Output is cut at 256 KiB** per stream, and the answer says so near its top, where a client that shortens long answers still shows it. On ssh, Kubernetes and local targets the line says how much is shown, and the answer also shows the last 16 KiB; the sizes are close, not exact. On the other targets the answer shows the first 256 KiB (a little less when paths were removed from it) with `[stdout cut at 256 KiB: the rest was left out]` and no end part, and a call that did not end on its own (a time limit, a broken reply) loses its last 1 KiB at least, back to the end of a line, so a short output of a call that timed out is not shown: make such a call end on its own. A hint of the kind says how to narrow the call (`tail -n 200`, a `LIMIT`, the API's paging). Raise `maxOutputKiB` for one target (at most 4 MiB). MongoDB returns at most 100 documents and MySQL 1,000 rows per call.
 - **A call has a time limit:** 60 seconds by default, 600 at most. A command already running on a server may go on there.
 - **Rules match words, not meaning.** The rights of the account behind each target are the real boundary: use read-only accounts.
 - **Not a wall against your own user.** A process that runs as you can reach what `ksproxy start` holds. Run the agent without a shell of yours, in a sandbox, or as another user.
@@ -175,3 +175,5 @@ Every limit, and how to report a vulnerability: [SECURITY.md](SECURITY.md).
 ## Development
 
 `npm test` runs every test (no dependencies) and fails below 100% coverage. The logic is drawn in [docs/LOGIC.md](docs/LOGIC.md), adding a kind is in [docs/KINDS.md](docs/KINDS.md), and the rest is in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
+`scripts/e2e.sh` runs the end-to-end tests: ksproxy against real servers in Docker containers ([docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#end-to-end-tests)).

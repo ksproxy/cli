@@ -1,0 +1,26 @@
+# The logs of the e2e broker: the server's own log on standard output, and the decisions of the authorizer on the
+# requests of the clients, allowed (DEBUG) or denied (INFO), in /kafkalog/authorizer.log. Each line of that file names
+# the user, the operation, the resource and the request, so the driver can show which calls reached the broker. TRACE
+# would add the operations that the broker only lists for a client and never runs.
+Configuration:
+  Appenders:
+    Console:
+      name: STDOUT
+      PatternLayout:
+        pattern: "[%d] %p %m (%c)%n"
+    File:
+      name: Authorizer
+      fileName: /kafkalog/authorizer.log
+      PatternLayout:
+        pattern: "[%d] %p %m%n"
+  Loggers:
+    Root:
+      level: INFO
+      AppenderRef:
+        - ref: STDOUT
+    Logger:
+      - name: kafka.authorizer.logger
+        level: DEBUG
+        additivity: false
+        AppenderRef:
+          ref: Authorizer

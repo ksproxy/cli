@@ -42,7 +42,7 @@ The README has the short version. This page lists every file that `ksproxy start
 
 - **Proxy records.** Next to the sockets (`~/.ksproxy/s/`), `start` keeps `kube-<name>.pid` for each proxy process (pid and start time), so a later `start` can stop a proxy left by a killed run.
 - **A clean stop.** `start` closes everything on SIGINT, SIGTERM and SIGHUP, and also when writing to its terminal fails or an unexpected error occurs.
-- **After a hard kill.** If `start` is killed with SIGKILL or the machine loses power, ssh connections and `kubectl proxy` processes it opened can outlive it. The next `ksproxy start` closes the leftover ssh connections and the proxy processes it recorded. It signals a recorded pid only if that process still has the recorded start time and its command line contains ` proxy `.
+- **After a hard kill.** If `start` is killed with SIGKILL or the machine loses power, ssh connections and `kubectl proxy` processes it opened can outlive it. The next `ksproxy start` closes the leftover ssh connections and the proxy processes it recorded. It signals a recorded pid only if that process still has the recorded start time and is the proxy: its command line contains ` proxy `, or, for a `kubectl` that hides its arguments (the `kubectl` of k3s shows only its name in the process list), it is exactly the program name recorded with the pid.
 
 ## The audit log files
 

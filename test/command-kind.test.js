@@ -437,8 +437,13 @@ test('a session with a command target: the exact call, refusals before any run, 
   assert.deepEqual(failed, { text: 'exit code: 3\n--- stderr ---\nit failed', isError: true });
   const flood = await ask({ target: 'rep', command: 'flood' });
   assert.equal(flood.isError, true);
-  assert.ok(flood.text.startsWith('exit code: null\n--- stdout ---\nyyyy'));
-  assert.ok(flood.text.endsWith('\n[output truncated at 262144 bytes per stream]'));
+  assert.ok(flood.text.startsWith([
+    'exit code: null',
+    '[stdout cut at 256 KiB: the rest was left out]',
+    'narrow it: a narrower command or option',
+    '--- stdout ---',
+    'yyyy',
+  ].join('\n')));
   const slow = await ask({ target: 'rep', command: 'sleep', timeout_seconds: 1 });
   assert.equal(slow.text, 'timed out after 1s');
   assert.deepEqual(fs.readdirSync(world.workRoot), []);

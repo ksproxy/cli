@@ -21,7 +21,9 @@ const RAISED = 1024 * KIB;
 const LARGEST = 4096 * KIB;
 const MARGIN = 8 * 4096;
 const TOKEN = 'pw-Wd3K8sLq2Z7rV5nB-unmistakable';
-const note = (bytes) => `[output truncated at ${bytes} bytes per stream]`;
+const END = 16 * KIB;
+// The cut line of a brokered stream that shows its first bytes up to the visible limit of its target.
+const stopped = (at) => `\n[stdout cut at ${at}: the rest was left out]\n`;
 
 const realKinds = [...KINDS];
 const sample = sampleInventory();
@@ -90,10 +92,15 @@ function ask(name, perform) {
   }, context());
 }
 
-function stdoutOf(text, limit) {
+function stdoutOf(text) {
   const from = text.indexOf('--- stdout ---\n') + 15;
-  const ends = [text.indexOf('\n--- stderr ---'), text.indexOf(`\n${note(limit)}`)].filter((at) => at !== -1);
-  return text.slice(from, ends.length === 0 ? text.length : Math.min(...ends));
+  const end = text.indexOf('\n--- stderr ---');
+  return text.slice(from, end === -1 ? text.length : end);
+}
+
+// A stream of ssh that was read to its end and was cut: its first part, then the marker, then its end part.
+function withEnd(first, cut, end) {
+  return `${first}\n[... ${cut} cut here ...]\n${end}`;
 }
 
 function assertNoPiece(text) {
@@ -154,10 +161,9 @@ test('brokered: output between 256 KiB and the raised limit comes back whole', a
   assert.deepEqual(answer, { text: `exit code: 0\n--- stdout ---\n${text}\n--- stderr ---\n${'e'.repeat(RAISED)}`, isError: false });
 });
 
-test('brokered: output over the raised limit is cut there, and the note names that limit', async () => {
+test('brokered: output over the raised limit is cut there, with no end part', async () => {
   const answer = await ask('raised', () => ({ exitCode: 0, stdout: 'x'.repeat(RAISED + 10), stderr: '' }));
-  assert.equal(stdoutOf(answer.text, RAISED), 'x'.repeat(RAISED));
-  assert.ok(answer.text.endsWith(`\n${note(RAISED)}`));
+  assert.equal(answer.text, `exit code: 0${stopped('1 MiB')}--- stdout ---\n${'x'.repeat(RAISED)}`);
 });
 
 test('brokered: a secret cut by the raised read limit is never shown in part', async () => {
@@ -165,23 +171,23 @@ test('brokered: a secret cut by the raised read limit is never shown in part', a
     exitCode: 0, stdout: `${'x'.repeat(maxBytes - 5)}${TOKEN}`.slice(0, maxBytes), stderr: '', truncated: true,
   }));
   assertNoPiece(answer.text);
-  assert.equal(stdoutOf(answer.text, RAISED), 'x'.repeat(RAISED - 5));
-  assert.ok(answer.text.endsWith(note(RAISED)));
+  assert.equal(stdoutOf(answer.text), 'x'.repeat(RAISED));
+  assert.ok(answer.text.includes(stopped('1 MiB')));
 });
 
 test('brokered: a secret that crosses the raised visible limit is hidden whole before the cut', async () => {
   const answer = await ask('raised', () => ({ exitCode: 0, stdout: `${'x'.repeat(RAISED - 5)}${TOKEN}\n`, stderr: '' }));
   assertNoPiece(answer.text);
-  assert.equal(stdoutOf(answer.text, RAISED), `${'x'.repeat(RAISED - 5)}[hidd`);
-  assert.ok(answer.text.endsWith(note(RAISED)));
+  // Hidden, the stream is 4 bytes longer than the raised limit: its first bytes end in a start of [hidden].
+  assert.equal(answer.text, `exit code: 0${stopped('1 MiB')}--- stdout ---\n${'x'.repeat(RAISED - 5)}[hidd`);
 });
 
 test('brokered: a default target cuts at 256 KiB as before', async () => {
   const answer = await ask('plain', () => ({ exitCode: 0, stdout: 'x'.repeat(600 * KIB), stderr: '' }));
-  assert.equal(stdoutOf(answer.text, DEFAULT), 'x'.repeat(DEFAULT));
-  assert.ok(answer.text.endsWith(`\n${note(DEFAULT)}`));
+  assert.equal(answer.text, `exit code: 0${stopped('256 KiB')}--- stdout ---\n${'x'.repeat(DEFAULT)}`);
+  // A whole stream that the answer must show less of is halved, with no end part.
   const control = await ask('plain', () => ({ exitCode: 0, stdout: '\u0001'.repeat(200000), stderr: '' }));
-  assert.ok(control.text.endsWith(`\n${note(131072)}`));
+  assert.equal(control.text, `exit code: 0\n[stdout cut: showing 128 KiB of 195 KiB]\n--- stdout ---\n${'\u0001'.repeat(131072)}`);
 });
 
 test('an answer at the largest setting passes the broker whole, without halving', async () => {
@@ -200,9 +206,7 @@ test('an answer at the largest setting passes the broker whole, without halving'
     const over = await askCall(socket, {
       kind: 'wide', name: 'largest', input: 'show', timeoutSeconds: 30,
     }, 30000, 'wide');
-    assert.equal(stdoutOf(over.text, LARGEST), out);
-    assert.ok(over.text.includes(`--- stderr ---\n${'"'.repeat(LARGEST)}\n`));
-    assert.ok(over.text.endsWith(`\n${note(LARGEST)}`));
+    assert.equal(over.text, `exit code: 0${stopped('4 MiB')}--- stdout ---\n${'o'.repeat(LARGEST)}\n--- stderr ---\n${'"'.repeat(LARGEST)}`);
     assert.ok(Buffer.byteLength(JSON.stringify(over)) + 1 <= MAX_ANSWER_BYTES);
   } finally {
     await server.close();
@@ -211,8 +215,7 @@ test('an answer at the largest setting passes the broker whole, without halving'
 
 test('at the largest setting, an answer of control characters is halved as one at the default is', async () => {
   const answer = await ask('largest', () => ({ exitCode: 0, stdout: '\u0001'.repeat(LARGEST), stderr: '' }));
-  assert.equal(stdoutOf(answer.text, LARGEST / 2), '\u0001'.repeat(LARGEST / 2));
-  assert.ok(answer.text.endsWith(`\n${note(LARGEST / 2)}`));
+  assert.equal(answer.text, `exit code: 0\n[stdout cut: showing 2 MiB of 4 MiB]\n--- stdout ---\n${'\u0001'.repeat(LARGEST / 2)}`);
   assert.ok(Buffer.byteLength(JSON.stringify(answer)) + 1 <= MAX_ANSWER_BYTES);
 });
 
@@ -243,28 +246,25 @@ function sshCall(server, body) {
   return callTool('ssh_exec', { server, command: 'big' }, { ...env, [['KSPROXY', 'SSH'].join('_')]: script });
 }
 
-function sshStdout(text, limit) {
-  return stdoutOf(text, limit);
-}
 
 test('ssh: output between 256 KiB and the raised limit comes back whole', async () => {
   const r = await sshCall('raised', `process.stdout.write('x'.repeat(${600 * KIB}));`);
   assert.deepEqual(r, { text: `exit code: 0\n--- stdout ---\n${'x'.repeat(600 * KIB)}`, isError: false });
 });
 
-test('ssh: output over the raised limit is cut there, and the note names that limit', async () => {
+test('ssh: output over the raised limit is cut there, its end part included', async () => {
   const r = await sshCall('raised', `process.stdout.write('x'.repeat(${RAISED + 50000}));`);
-  assert.equal(sshStdout(r.text, RAISED), 'x'.repeat(RAISED));
-  assert.ok(r.text.endsWith(`\n${note(RAISED)}`));
+  assert.equal(stdoutOf(r.text), withEnd('x'.repeat(RAISED - END - 64), '49 KiB', 'x'.repeat(END)));
+  // The sizes of ssh count what the program wrote, so they are only ever rounded.
+  assert.ok(r.text.startsWith('exit code: 0\n[stdout cut: showing 1 MiB of 1 MiB]\n'));
 });
 
 test('ssh: a path that crosses the raised visible limit is replaced whole before the cut', async () => {
   const r = await sshCall('raised', `process.stdout.write('x'.repeat(${RAISED - 5}) + base + '/y\\n');`);
-  const stdout = sshStdout(r.text, RAISED);
-  assert.equal(Buffer.byteLength(stdout), RAISED);
-  assert.equal(stdout.slice(RAISED - 5), '<kspr');
+  const stdout = stdoutOf(r.text);
+  assert.ok(Buffer.byteLength(stdout) <= RAISED);
+  assert.ok(stdout.endsWith(`${'x'.repeat(100)}<ksproxy>/y`));
   assert.ok(!r.text.includes(stateDir.slice(0, 5)));
-  assert.ok(r.text.endsWith(note(RAISED)));
 });
 
 test('ssh: a path cut by the raised read limit is never shown in part', async () => {
@@ -272,8 +272,9 @@ test('ssh: a path cut by the raised read limit is never shown in part', async ()
   // (Linux) would otherwise fit whole, be replaced, and leave a slightly shorter but equally safe output.
   for (const into of [5, Math.min(40, stateDir.length - 1)]) {
     const r = await sshCall('raised', `process.stdout.write('x'.repeat(${RAISED + MARGIN - into}) + base + '/file' + 'y'.repeat(1000));`);
-    assert.equal(sshStdout(r.text, RAISED), 'x'.repeat(RAISED), `${into}`);
-    assert.ok(r.text.endsWith(`\n${note(RAISED)}`));
+    assert.match(stdoutOf(r.text), /^x+\n\[\.\.\. \d+ KiB cut here \.\.\.\]\nx+<ksproxy>\/filey{1000}$/, `${into}`);
+    assert.ok(Buffer.byteLength(stdoutOf(r.text)) <= RAISED, `${into}`);
+    for (let n = 2; n <= stateDir.length; n += 1) assert.ok(!r.text.includes(`x${stateDir.slice(0, n)}`), `${into}: ${n} characters of the path are shown`);
   }
   const near = await sshCall('raised', `process.stdout.write('x'.repeat(${RAISED - 20}) + base + '/file\\n' + 'y'.repeat(${RAISED}));`);
   for (let n = 2; n <= stateDir.length; n += 1) assert.ok(!near.text.includes(`x${stateDir.slice(0, n)}`), `${n} characters of the path are shown`);
@@ -282,8 +283,8 @@ test('ssh: a path cut by the raised read limit is never shown in part', async ()
 test('ssh: a default target, and one whose session file was given a larger limit by hand, cut at 256 KiB', async () => {
   for (const server of ['plain', 'forged']) {
     const r = await sshCall(server, `process.stdout.write('x'.repeat(${600 * KIB}));`);
-    assert.equal(sshStdout(r.text, DEFAULT), 'x'.repeat(DEFAULT), server);
-    assert.ok(r.text.endsWith(`\n${note(DEFAULT)}`), server);
+    assert.equal(stdoutOf(r.text), withEnd('x'.repeat(DEFAULT - END - 64), '344 KiB', 'x'.repeat(END)), server);
+    assert.ok(r.text.startsWith('exit code: 0\n[stdout cut: showing 256 KiB of 600 KiB]\n'), server);
   }
 });
 
@@ -297,7 +298,10 @@ test('list_targets names a raised limit in one short phrase, and nothing for the
 test('AGENT.md names a raised limit under its target, and nothing for the default', () => {
   const text = agentMdText({ targets: [sshTarget('raised', { maxOutputKiB: 2048 }), sshTarget('plain')] });
   assert.equal(text.split('- Output is cut at 2048 KiB per stream for this target.').length, 2);
-  assert.equal(text.split('KiB').length, 2);
+  // The section on cut output names the default limit, the end part, the cut line of a brokered stream and the 1 KiB
+  // that a brokered call that did not end on its own loses; no other line names a limit.
+  assert.equal(text.split('KiB').length, 6);
+  assert.ok(text.includes('cut at 256 KiB, or at the limit that its target names above'));
   const raisedSection = text.slice(text.indexOf('### ssh server `raised`'), text.indexOf('### ssh server `plain`'));
   assert.ok(raisedSection.includes('- Output is cut at 2048 KiB per stream for this target.\n'));
 });

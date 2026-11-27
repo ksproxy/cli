@@ -441,7 +441,9 @@ test('send: the reply is the status, the content type and the body; other reply 
     exitCode: 0,
     stdout: `HTTP 200\ncontent-type: application/json\n\n${JSON.stringify({ method: 'GET', url: '/p/echo?q=a+b', body: '' })}`,
     stderr: '',
+    ownStderr: true,
     truncated: false,
+    cutOff: false,
   });
   const headers = await sendTo('/headers');
   assert.equal(headers.stdout, 'HTTP 200\ncontent-type: application/json;charset=utf-8\n\n{"ok":true}');
@@ -507,7 +509,7 @@ test('send: a large reply is cut at the limit, a slow one ends at the time limit
   assert.equal((await sendTo('/slow-head', { signal: stopper.signal, timeoutMs: 5000 })).timedOut, true);
 
   assert.deepEqual(await sendTo('/reset'), {
-    exitCode: 1, stdout: 'HTTP 200\ncontent-type: text/plain\n\nhalf of it', stderr: 'the reply was cut off\n', truncated: false,
+    exitCode: 1, stdout: 'HTTP 200\ncontent-type: text/plain\n\nhalf of it', stderr: 'the reply was cut off\n', ownStderr: true, truncated: false, cutOff: true,
   });
   const closed = http.createServer();
   await new Promise((resolve) => { closed.listen(0, '127.0.0.1', resolve); });

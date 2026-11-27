@@ -660,8 +660,13 @@ test('a session with kafka targets: the exact call, every fixed refusal before a
   assert.deepEqual(fs.readdirSync(world.workRoot), []);
   const flood = await ask('kafka-prod', 'topics flood');
   assert.equal(flood.isError, true);
-  assert.ok(flood.text.startsWith('exit code: null\n--- stdout ---\nyyyy'));
-  assert.ok(flood.text.endsWith('\n[output truncated at 262144 bytes per stream]'));
+  assert.ok(flood.text.startsWith([
+    'exit code: null',
+    '[stdout cut at 256 KiB: the rest was left out]',
+    'narrow it: a narrower command or option',
+    '--- stdout ---',
+    'yyyy',
+  ].join('\n')));
   const slow = await ask('kafka-prod', 'topics sleep', { timeout_seconds: 1 });
   assert.equal(slow.text, 'timed out after 1s');
   assert.deepEqual(fs.readdirSync(world.workRoot), []);

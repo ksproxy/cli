@@ -45,6 +45,10 @@ test('the contract check refuses each kind of mistake', () => {
   assert.throws(() => bad({ decide: 'x' }), /decide/);
   assert.throws(() => bad({ reapStale: 'x' }), /reapStale/);
   assert.throws(() => bad({ toolBullet: 'nothing' }), /names the tool/);
+  assert.throws(() => bad({ cutHint: '' }), /cutHint is one line of text/);
+  assert.throws(() => bad({ cutHint: 'two\nlines' }), /cutHint is one line of text/);
+  assert.throws(() => bad({ cutHint: 7 }), /cutHint is one line of text/);
+  assert.doesNotThrow(() => bad({ cutHint: undefined }));
   assert.throws(() => bad({ tool: { ...ssh.tool, detailShape: 'string' } }), /tool.detailShape is object or left out/);
   assert.throws(() => bad({ tool: { ...ssh.tool, listed: true } }), /tool.listed is false or left out/);
   assert.throws(() => bad({ tool: { ...ssh.tool, auditedDetail: () => null } }), /auditedDetail is only for an object call/);
@@ -84,6 +88,7 @@ test('the contract check holds a brokered kind to perform, and every other kind 
   assert.throws(() => brokered({ probe: 'x' }), /vault: probe/);
   assert.throws(() => brokered({ secrets: 'x' }), /vault: secrets/);
   assert.throws(() => brokered({ brokered: 'yes' }), /brokered is true or left out/);
+  assert.doesNotThrow(() => brokered({ cutHint: 'a narrower call' }));
   assert.doesNotThrow(() => brokered({ probe: undefined, secrets: undefined }));
   const plain = (change) => {
     const kind = { ...ssh, ...change };
@@ -170,10 +175,14 @@ test('secretFilesOf collects the credential files of every kind that names them,
     ssh: [{ name: 'web1' }],
     kubernetes: [{ name: 'lab', kubeconfig: '/k/lab.yaml' }, { name: 'prod', kubeconfig: '/k/prod.yaml' }],
     local: [{ name: 'infra' }],
+    postgres: [{ name: 'shop', caFile: '/k/db-ca.pem' }, { name: 'local-db', caFile: null }],
+    mysql: [],
     kafka: [{ name: 'k', clientConfig: null }],
   };
-  assert.deepEqual(secretFilesOf(inventory), ['/k/lab.yaml', '/k/prod.yaml']);
-  assert.deepEqual(secretFilesOf({ ssh: [], kubernetes: [], local: [], kafka: [] }), []);
+  assert.deepEqual(secretFilesOf(inventory), ['/k/lab.yaml', '/k/prod.yaml', '/k/db-ca.pem']);
+  assert.deepEqual(secretFilesOf({
+    ssh: [], kubernetes: [], local: [], postgres: [], mysql: [], kafka: [],
+  }), []);
 });
 
 test('the list holds the kinds in their fixed order', () => {

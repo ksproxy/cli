@@ -166,6 +166,7 @@ Starting a local server can take a while, because the first `uvx` run downloads 
 
 - **Warnings.** `start` warns when a rule names a tool the server does not list, when a tool is not exported, and for the secret-looking plain values of `env`.
 - **The server's stderr.** When a server fails to start or stops, its last lines on stderr (cleaned, with secrets hidden) are shown **in the `start` terminal only**. The audit log gets a fixed text, and the agent never sees the server's stderr, because it can hold a token.
+- **A remote server that cannot be reached.** `start` and `doctor` say why, from a fixed list chosen by the error's code only (never its message, which could hold a secret), and a call that fails the same way says it in its answer. The reasons are: the server's certificate is not trusted (set `NODE_EXTRA_CA_CERTS` for `start` to its CA), the certificate has expired or is not valid yet, the certificate is for another host name, the connection was refused, the host name was not found, the connection timed out, and the connection was closed by the other side. Any other error gives no reason.
 - **A server that stops** makes its target `down`. It is not restarted.
 
 ### `ksproxy check` and `ksproxy doctor`

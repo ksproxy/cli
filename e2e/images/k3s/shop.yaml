@@ -1,0 +1,105 @@
+# What the kubernetes examples of docs/EXAMPLES.md expect in the cluster: the namespace shop with the deployment web
+# (redis:7-alpine, which k3s imported from /e2e/images.tar, so it is never pulled), and the two identities of the
+# examples, as their safety notes advise:
+#   - lab-viewer, for the target lab: the built-in cluster role view, in shop only.
+#   - lab-deployer, for the target lab-deploy: view in shop, and a role that may restart and scale the deployment web
+#     only (resourceNames: web).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: shop
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: shop
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 5
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          imagePullPolicy: Never
+          args: ["--save", "", "--appendonly", "no"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: lab-viewer
+  namespace: shop
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: lab-deployer
+  namespace: shop
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: lab-viewer-view
+  namespace: shop
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: ServiceAccount
+    name: lab-viewer
+    namespace: shop
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: lab-deployer-view
+  namespace: shop
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: ServiceAccount
+    name: lab-deployer
+    namespace: shop
+---
+# rollout restart patches the deployment, and scale patches its scale; nothing more is needed.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: web-deployer
+  namespace: shop
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/scale"]
+    resourceNames: ["web"]
+    verbs: ["patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: lab-deployer-web
+  namespace: shop
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: web-deployer
+subjects:
+  - kind: ServiceAccount
+    name: lab-deployer
+    namespace: shop

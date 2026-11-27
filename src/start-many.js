@@ -315,7 +315,7 @@ export async function startMany(plan, env, host) {
   };
   const onEvent = (event) => {
     if (event.type === 'connected') show(`${LISTEN}${event.from} ${event.client} connected`);
-    else show(`${LISTEN}refused ${event.count} wrong tokens from ${event.from}`);
+    else show(`${LISTEN}refused ${event.count} wrong ${event.count === 1 ? 'token' : 'tokens'} from ${event.from}`);
   };
 
   // The listener, its lines, the daily warning and the typed lines; null when it could not start, its line on stderr

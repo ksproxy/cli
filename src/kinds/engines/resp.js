@@ -385,7 +385,7 @@ export function exchange({
         for (let value = reader.read(); value !== null; value = reader.read()) values.push(value);
       } catch (err) {
         finish(err.overflow
-          ? { ...failure(`${OVER_LIMIT} and was cut off\n`), truncated: true }
+          ? { ...failure(`${OVER_LIMIT} and was cut off\n`), truncated: true, ownStderr: true }
           : failure(`the reply could not be read: ${err.message}\n`));
         return;
       }

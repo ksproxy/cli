@@ -74,6 +74,6 @@ export function listenerLines(env, now = new Date()) {
     `listening on ${record.addresses.map(clean).join(', ')} (${record.tls ? 'https' : 'http'})`,
     tokenLine(env, now),
     ...record.clients.map(clientLine),
-    ...record.clients.filter((c) => c.wrong > 0).map((c) => `  refused ${c.wrong} wrong tokens from ${clean(c.from)}`),
+    ...record.clients.filter((c) => c.wrong > 0).map((c) => `  refused ${c.wrong} wrong ${c.wrong === 1 ? 'token' : 'tokens'} from ${clean(c.from)}`),
   ];
 }

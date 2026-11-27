@@ -41,7 +41,9 @@ test('start records the limit of each target from its own inventory, and a full 
   const agentMd = fs.readFileSync(path.join(world.sessionDir, 'AGENT.md'), 'utf8');
   assert.ok(agentMd.includes('- Output is cut at 512 KiB per stream for this target.'));
   assert.ok(agentMd.includes('- Output is cut at 4096 KiB per stream for this target.'));
-  assert.equal(agentMd.split('KiB').length, 3);
+  // The two lines of the raised targets, and the section on cut output, which names the default, the end part, the
+  // cut line of a brokered stream and the 1 KiB that a brokered call that did not end on its own loses.
+  assert.equal(agentMd.split('KiB').length, 7);
 
   // A session file edited by hand does not raise the limit of a brokered target: start keeps its own.
   fs.writeFileSync(path.join(world.sessionDir, 'session.json'), JSON.stringify({
@@ -50,12 +52,12 @@ test('start records the limit of each target from its own inventory, and a full 
 
   const flood = await callTool('vault_read', { target: 'v1', command: 'flood' }, world.env);
   assert.equal(flood.isError, false);
-  assert.equal(flood.text.split('\n')[2].length, LARGEST);
-  assert.ok(flood.text.endsWith(`\n[output truncated at ${LARGEST} bytes per stream]`));
+  assert.equal(flood.text.split('\n')[3].length, LARGEST);
+  assert.ok(flood.text.startsWith('exit code: 0\n[stdout cut at 4 MiB: the rest was left out]\n'));
   const ctl = await callTool('vault_read', { target: 'v1', command: 'ctl' }, world.env);
-  assert.ok(ctl.text.endsWith(`\n[output truncated at ${LARGEST / 2} bytes per stream]`));
+  assert.equal(ctl.text, `exit code: 0\n[stdout cut at 4 MiB: the rest was left out; showing 2 MiB]\n--- stdout ---\n${'\u0001'.repeat(LARGEST / 2)}`);
   const plain = await callTool('vault_read', { target: 'v2', command: 'flood' }, world.env);
-  assert.equal(plain.text.split('\n')[2].length, 262144);
-  assert.ok(plain.text.endsWith('\n[output truncated at 262144 bytes per stream]'));
+  assert.equal(plain.text.split('\n')[3].length, 262144);
+  assert.ok(plain.text.startsWith('exit code: 0\n[stdout cut at 256 KiB: the rest was left out]\n'));
   assert.equal(await stopWith(run), 0);
 });

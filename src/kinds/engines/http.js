@@ -1,6 +1,7 @@
 import { AllowError, isRegexRule, matchRule } from '../../allowlist.js';
 import { checkServiceUrl } from '../../checks.js';
 import { clip } from '../../text.js';
+import { jsonBodyForms } from '../shared.js';
 
 // The http engine: the strict reader of a request, its words for the rules, and the one request it sends.
 // Host, port and scheme come from the target's baseUrl only; the agent gives a method, a path, a query and a body.
@@ -32,6 +33,8 @@ const FORBIDDEN_HEADERS = ['host', 'content-length', 'transfer-encoding', 'conne
 const HEADER_NAME_RE = /^[A-Za-z0-9-]{1,64}$/;
 // What a secret that goes into a header as it is may hold: printable ASCII, so it cannot split or end a header.
 const HEADER_VALUE_RE = /^[\x20-\x7e]+$/;
+// The hint of the kinds on this engine for a call whose output was cut.
+export const PAGING_HINT = "the API's own paging and filters (size, from, filter_path)";
 const REACH_FAILED = 'the service could not be reached\n';
 const CUT_OFF = 'the reply was cut off\n';
 const REDIRECT = 'the service answered with a redirect, which is not followed\n';
@@ -265,11 +268,11 @@ export function authHeader(auth, secrets) {
   return { [auth.headerName.toLowerCase()]: secrets[auth.headerEnv] };
 }
 
-// The forms of the secrets that the auth header sends and that are not a secret value as it is: the base64 credential
-// of basic auth. The core hides them with the values.
+// The forms of the secrets that are not a secret value as it is: the base64 credential that basic auth sends, and each
+// value and that credential as a JSON body shows it (jsonBodyForms). The core hides them with the values.
 export function encodedForms(auth, secrets) {
-  if (auth === null || auth.basicUserEnv === undefined) return [];
-  return [authHeader(auth, secrets).authorization.slice('Basic '.length)];
+  const basic = auth === null || auth.basicUserEnv === undefined ? [] : [authHeader(auth, secrets).authorization.slice('Basic '.length)];
+  return [...basic, ...jsonBodyForms([...Object.values(secrets), ...basic])];
 }
 
 // The URL to fetch: the origin and path of the base, then the segments, then the query. The result must keep the
@@ -284,9 +287,11 @@ export function buildUrl(baseUrl, segments, query) {
   return url.href;
 }
 
+// The content type as the server sent it, without control characters. It is not shortened: the core hides the secrets
+// after this, and a clip before that would show the start of one that a server put in the header.
 function contentTypeOf(response) {
   const type = response.headers.get('content-type');
-  return type === null ? '(none)' : clip(type.replace(CONTROLS, ''), 200);
+  return type === null ? '(none)' : type.replace(CONTROLS, '');
 }
 
 // The body as text, at most maxBytes bytes of it: { text, truncated, failed }; failed when the stream broke.
@@ -311,17 +316,38 @@ async function readLimited(stream, maxBytes) {
   return { text: Buffer.concat(chunks).toString('utf8'), truncated, failed };
 }
 
-// Every value replaced by [hidden], the longest first, in a text that goes back to the agent.
+// Every place of a text that a value covers, hidden, in a text that goes back to the agent: every occurrence of every
+// value is found in the text as it came, also where two overlap, and each run of covered characters becomes one
+// [hidden]; two occurrences that only touch give two. So a value that overlaps another never leaves the rest of that
+// one in clear, whichever is longer or starts first, and a [hidden] that was put in is never looked at again: a value
+// that is a piece of the word hidden cannot make the text grow a second time. No regular expression is built from the
+// values: one of a very long value would be refused.
 export function hideSecrets(text, values) {
-  let out = text;
-  for (const value of [...values].filter((v) => v !== '').sort((a, b) => b.length - a.length)) {
-    out = out.split(value).join(HIDDEN);
+  const spans = [];
+  for (const value of new Set(values)) {
+    if (value === '') continue;
+    for (let at = text.indexOf(value); at !== -1; at = text.indexOf(value, at + 1)) spans.push([at, at + value.length]);
   }
-  return out;
+  if (spans.length === 0) return text;
+  spans.sort((x, y) => x[0] - y[0]);
+  let out = '';
+  let shown = 0;
+  let [start, end] = spans[0];
+  for (const [from, to] of spans) {
+    if (from < end) {
+      end = Math.max(end, to);
+    } else {
+      out += text.slice(shown, start) + HIDDEN;
+      shown = end;
+      [start, end] = [from, to];
+    }
+  }
+  return out + text.slice(shown, start) + HIDDEN + text.slice(end);
 }
 
 // Sends one request and reads the reply. Never follows a redirect. exitCode 0 for a 2xx status, 1 otherwise;
-// stdout is HTTP STATUS, the content type, an empty line and the body as text, cut at maxBytes.
+// stdout is HTTP STATUS, the content type, an empty line and the body as text, cut at maxBytes. cutOff is true when
+// the body stopped before its end, as truncated is when it reached maxBytes.
 export async function send({
   baseUrl, headers, method, segments, query, body, timeoutMs, maxBytes, signal, fetchImpl = fetch,
 }) {
@@ -359,6 +385,8 @@ export async function send({
     exitCode: ok && !read.failed ? 0 : 1,
     stdout: head + read.text,
     stderr: read.failed ? CUT_OFF : '',
+    ownStderr: true,
     truncated: read.truncated,
+    cutOff: read.failed,
   };
 }

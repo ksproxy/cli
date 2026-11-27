@@ -1,0 +1,8 @@
+*
+!package.json
+!bin
+!src
+!e2e/images/runner/user-config
+!e2e/images/runner/gh
+!e2e/setup
+!e2e/driver

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { callTool } from '../src/tools.js';
 import { main } from '../src/cli.js';
-import { MY_FIXED, PG_FIXED } from './sql-fixed.js';
+import { MY_FIXED, PG_FIXED, TLS_TEXT } from './sql-fixed.js';
 import {
   cleanupAll, fakeProcess, launch, makeWorld, ready, stopWith, trackDir, waitFor,
 } from './start-helpers.js';
@@ -120,10 +120,13 @@ test('a session with postgres and mysql targets: the exact call, every fixed ref
   const err = run.proc.stderr.text;
   assert.match(err, /pg +shop +WARN +allow\[1\]: "\*" matches one value here \(a number or a quoted string\); write \\\* for the SQL star\n/);
   assert.equal(err.match(/matches one value here/g).length, 1);
-  assert.match(err, /pg +shop +OPENING +agent_ro@db\.internal:5433\/shop, read-only\n/);
-  assert.match(err, /pg +rw +OPENING +agent_ro@db\.internal:5433\/shop2, read-write\n/);
-  assert.match(err, /my +crm +OPENING +agent_ro@db\.internal:3306\/crm, read-only\n/);
+  assert.match(err, /pg +shop +OPENING +agent_ro@db\.internal:5433\/shop, read-only, TLS verify\n/);
+  assert.match(err, /pg +rw +OPENING +agent_ro@db\.internal:5433\/shop2, read-write, TLS verify\n/);
+  assert.match(err, /my +crm +OPENING +agent_ro@db\.internal:3306\/crm, read-only, TLS verify\n/);
   assert.match(err, /my +maria +UP\n/);
+  // Opening checked TLS: select 1 for each target, after --version for each mysql target.
+  const atOpen = world.starts().length;
+  assert.equal(atOpen, 6);
   const replies = [];
   const ask = async (tool, args) => {
     const reply = await callTool(tool, args, world.agentEnv);
@@ -137,13 +140,14 @@ test('a session with postgres and mysql targets: the exact call, every fixed ref
   const pgReport = reportOf(shop);
   assert.equal(pgReport.client, 'psql');
   assert.deepEqual(pgReport.argv, [...PSQL_FIXED(5433, 'shop', 60000), statement]);
-  const pgKeys = ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR', 'PGPASSWORD', 'PGCONNECT_TIMEOUT', 'PGAPPNAME', 'PGOPTIONS'];
+  const pgKeys = ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR', 'PGPASSWORD', 'PGCONNECT_TIMEOUT', 'PGAPPNAME', 'PGOPTIONS', 'PGSSLMODE', 'PGSSLROOTCERT'];
   // macOS adds __CF_USER_TEXT_ENCODING to the environment of every process it starts, and the coverage run of node
   // adds NODE_V8_COVERAGE to every node process; neither comes from ksproxy.
   const childKeys = (env) => Object.keys(env).filter((key) => !['__CF_USER_TEXT_ENCODING', 'NODE_V8_COVERAGE'].includes(key));
   assert.ok(childKeys(pgReport.env).every((key) => pgKeys.includes(key)), Object.keys(pgReport.env).join(' '));
   assert.deepEqual([pgReport.env.PGPASSWORD, pgReport.env.PGCONNECT_TIMEOUT, pgReport.env.PGAPPNAME, pgReport.env.PGOPTIONS],
     ['[hidden]', '10', 'ksproxy', '-c default_transaction_read_only=on -c statement_timeout=60000 -c standard_conforming_strings=on']);
+  assert.deepEqual([pgReport.env.PGSSLMODE, pgReport.env.PGSSLROOTCERT], ['verify-full', 'system']);
   assert.ok(Object.keys(pgReport.env).every((key) => !key.startsWith('KSPROXY_') && key !== PG_VAR && key !== MY_VAR));
 
   const rw = reportOf(await ask('postgres_query', { target: 'rw', query: 'delete from t', timeout_seconds: 7 }));
@@ -154,8 +158,8 @@ test('a session with postgres and mysql targets: the exact call, every fixed ref
   assert.equal(crm.client, 'mysql');
   assert.deepEqual(crm.argv, [
     '--no-defaults', '--batch', '--quick', '--default-character-set=utf8mb4', '--local-infile=0', '--connect-timeout=10', '--host=db.internal',
-    '--port=3306', '--database=crm', '--user=agent_ro', '--init-command=SET SESSION sql_select_limit=1000; SET SESSION TRANSACTION READ ONLY',
-    "--execute=select `Name` from people where note = 'a -- b'",
+    '--port=3306', '--database=crm', '--user=agent_ro', '--ssl-mode=VERIFY_IDENTITY',
+    '--init-command=SET SESSION sql_select_limit=1000; SET SESSION TRANSACTION READ ONLY', "--execute=select `Name` from people where note = 'a -- b'",
   ]);
   assert.equal(crm.env.MYSQL_PWD, '[hidden]');
   // The reply shows the state folder as <ksproxy>: the login file is named inside the call's working folder.
@@ -165,7 +169,8 @@ test('a session with postgres and mysql targets: the exact call, every fixed ref
   const maria = reportOf(await ask('mysql_query', { target: 'maria', query: 'select 1' }));
   assert.equal(maria.client, 'mariadb');
   assert.equal(maria.argv.at(-2), '--init-command=SET SESSION sql_select_limit=1000');
-  assert.equal(world.starts().length, 4);
+  assert.deepEqual(maria.argv.slice(-4, -2), ['--ssl', '--ssl-verify-server-cert']);
+  assert.equal(world.starts().length, atOpen + 4);
 
   for (const [query, short] of PG_FIXED) {
     const reply = await ask('postgres_query', { target: 'shop', query });
@@ -188,13 +193,18 @@ test('a session with postgres and mysql targets: the exact call, every fixed ref
   ]) {
     assert.equal((await ask(tool, { target, query })).text, `REFUSED (${tool.split('_')[0]} ${target}): ${text}`);
   }
-  assert.equal(world.starts().length, 4, 'no refused statement started a client');
+  assert.equal(world.starts().length, atOpen + 4, 'no refused statement started a client');
 
   const started = Date.now();
   const flood = await ask('postgres_query', { target: 'shop', query: 'select flood from t', timeout_seconds: 60 });
   assert.ok(Date.now() - started < 30000, 'the client is stopped at the output limit, not at the time limit');
-  assert.ok(flood.text.startsWith('exit code: null\n--- stdout ---\nyyyy'));
-  assert.ok(flood.text.endsWith('\n[output truncated at 262144 bytes per stream]'));
+  assert.ok(flood.text.startsWith([
+    'exit code: null',
+    '[stdout cut at 256 KiB: the rest was left out]',
+    'narrow it: fewer columns, a WHERE and a LIMIT, or count(*) first',
+    '--- stdout ---',
+    'yyyy',
+  ].join('\n')));
   assert.equal((await ask('postgres_query', { target: 'shop', query: 'select slow from t', timeout_seconds: 1 })).text, 'timed out after 1s');
   assert.equal((await ask('mysql_query', { target: 'crm', query: 'select slow from t', timeout_seconds: 1 })).text, 'timed out after 1s');
   assert.deepEqual(await ask('postgres_query', { target: 'shop', query: 'select * from fail' }), {
@@ -209,8 +219,9 @@ test('a session with postgres and mysql targets: the exact call, every fixed ref
   const recorded = JSON.parse(fs.readFileSync(path.join(world.sessionDir, 'session.json'), 'utf8')).targets;
   assert.deepEqual(recorded.find((t) => t.name === 'shop'), {
     kind: 'postgres', name: 'shop', host: 'db.internal', port: 5433, database: 'shop', user: 'agent_ro', passwordEnv: PG_VAR, readOnly: true,
-    description: 'shop stand-in', allow: pgTarget().allow, program: fakePsql, state: 'up',
+    tls: 'verify', caFile: null, description: 'shop stand-in', allow: pgTarget().allow, program: fakePsql, state: 'up',
   });
+  assert.equal(recorded.find((t) => t.name === 'maria').family, 'mariadb');
   await waitFor(() => /my +crm +DENIED/.test(run.proc.stdout.text), 10000, 'the live lines');
   assert.equal(await stopWith(run), 0);
 
@@ -249,7 +260,7 @@ test('an unlisted statement goes to the reviewer; a fixed refusal never does; a 
   const fixed = await callTool('postgres_query', { target: 'shop', query: "select pg_ls_dir('.')" }, world.agentEnv);
   assert.match(fixed.text, /^REFUSED \(postgres shop\): the function pg_ls_dir /);
   assert.equal(reviewer.asked.length, 1);
-  assert.equal(world.starts().length, 1);
+  assert.equal(world.starts().length, 2, 'the TLS check of shop at open, and the reviewed call');
   assert.equal(await stopWith(run), 0);
   assert.equal(auditOf(world).find((e) => e.tool === 'postgres_query' && e.rule === 'review').query, 'select 2 from t');
 });
@@ -277,4 +288,78 @@ test('ksproxy check: the warning for a bare star, the verdict, the fixed refusal
   assert.equal((await check('mysql', 'crm', 'select', '1')).stdout, 'ALLOWED by rule: select ...\n');
   assert.deepEqual(world.starts(), []);
   assert.equal(reviewer.asked.length, 0);
+});
+
+const escaped = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+test('a TLS check that fails skips the target at start and fails it in doctor, with the reason and the way out; local targets cannot reach caFile', async () => {
+  const caDir = fs.realpathSync(tempDir('ks-sqlca-'));
+  const ca = path.join(caDir, 'db-ca.pem');
+  fs.writeFileSync(ca, 'a made-up CA\n');
+  const gone = path.join(caDir, 'gone.pem');
+  const bad = 'bad-cert.example.com';
+  const world = await sqlWorld({
+    postgres: [
+      pgTarget({ name: 'good', caFile: ca }),
+      pgTarget({ name: 'badcert', host: bad }),
+      pgTarget({ name: 'notls', host: 'no-tls.example.com', tls: 'require' }),
+      pgTarget({ name: 'oldpq', host: 'old-libpq.example.com' }),
+      pgTarget({ name: 'noca', caFile: gone }),
+    ],
+    mysql: [
+      myTarget({ name: 'mariareq', client: 'mariadb', tls: 'require' }),
+      myTarget({ name: 'mybad', host: bad, caFile: ca }),
+      myTarget({ name: 'here', host: 'localhost' }),
+    ],
+  });
+  const failures = [
+    ['pg', 'badcert', TLS_TEXT.CERT, TLS_TEXT.SYSTEM_WAY(bad)],
+    ['pg', 'notls', TLS_TEXT.NO_TLS, TLS_TEXT.NONE_WAY('require')],
+    ['pg', 'oldpq', TLS_TEXT.OLD_PSQL, TLS_TEXT.OLD_WAY],
+    ['pg', 'noca', `caFile ${gone} is not a file that can be read`, null],
+    ['my', 'mariareq', TLS_TEXT.MARIADB_REQUIRE, TLS_TEXT.MARIADB_WAY],
+    ['my', 'mybad', TLS_TEXT.CERT, TLS_TEXT.CA_WAY(bad)],
+  ];
+  // The way out is said on a line of its own, before the SKIPPED or FAIL line, and is never cut.
+  const shows = (text, status) => {
+    for (const [label, name, reason, wayOut] of failures) {
+      assert.match(text, new RegExp(`${label} +${name} +${status} +${escaped(reason)}\\n`), `${name}:\n${text}`);
+      if (wayOut !== null) assert.match(text, new RegExp(`${label} +${name} +${escaped(wayOut)}\\n`), `${name}:\n${text}`);
+    }
+  };
+
+  const run = launch(world, { pg: ['good', 'badcert', 'notls', 'oldpq', 'noca'], mysql: ['mariareq', 'mybad', 'here'] });
+  await ready(run);
+  const err = run.proc.stderr.text;
+  assert.match(err, /pg +good +OPENING +agent_ro@db\.internal:5433\/shop, read-only, TLS verify with caFile\n/);
+  assert.match(err, /pg +good +UP\n/);
+  assert.match(err, /my +here +OPENING +agent_ro@localhost:3306\/crm, read-only, TLS prefer\n/);
+  assert.match(err, /my +here +UP\n/);
+  shows(err, 'SKIPPED');
+  const good = reportOf(await callTool('postgres_query', { target: 'good', query: 'select 1' }, world.agentEnv));
+  assert.deepEqual([good.env.PGSSLMODE, good.env.PGSSLROOTCERT], ['verify-full', ca]);
+  const here = reportOf(await callTool('mysql_query', { target: 'here', query: 'select 1' }, world.agentEnv));
+  assert.ok(!here.argv.some((arg) => arg.startsWith('--ssl')), 'prefer gives no TLS option, as before');
+  const skipped = await callTool('postgres_query', { target: 'badcert', query: 'select 1' }, world.agentEnv);
+  assert.equal(skipped.isError, true);
+  assert.equal(await stopWith(run), 0);
+
+  const doctor = await cli(['doctor', '--pg', 'good,badcert,notls,oldpq,noca', '--mysql', 'mariareq,mybad,here'], world.env);
+  assert.equal(doctor.code, 1, doctor.stdout);
+  shows(doctor.stdout, 'FAIL');
+  assert.match(doctor.stdout, /pg +good +OK +select 1 answered\n/);
+  assert.match(doctor.stdout, /my +here +OK +select 1 answered\n/);
+  assert.match(doctor.stdout, /\n2 of 8 targets OK\n$/);
+  for (const text of [err, doctor.stdout]) {
+    for (const secret of [PG_SECRET, MY_SECRET]) assert.ok(!text.includes(secret));
+  }
+
+  // The CA file is out of reach of local targets, as a kubeconfig is, so that no agent can replace it.
+  const file = path.join(world.env.KSPROXY_CONFIG_DIR, 'inventory.json');
+  const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+  raw.local = [{ name: 'beside', cwd: caDir, description: 'the folder with the CA file', allow: ['ls ...'] }];
+  fs.writeFileSync(file, JSON.stringify(raw));
+  assert.deepEqual(await cli(['check', 'local', 'beside', 'ls'], world.env), {
+    code: 1, stdout: 'REFUSED: folder contains a kubeconfig named in the inventory\n', stderr: '',
+  });
 });

@@ -8,7 +8,7 @@ import { hostAnswers } from './reach.js';
 import { clip } from '../../text.js';
 import { REVIEWED } from '../shared.js';
 import {
-  BODY_WORD, METHODS, authHeader, authProblem, authSecrets, encodedForms, headerNameProblem,
+  BODY_WORD, METHODS, PAGING_HINT, authHeader, authProblem, authSecrets, encodedForms, headerNameProblem,
   matchRequestRule, readRequest, requestWords, reviewWords, send, splitRule, validateBaseUrl,
 } from '../engines/http.js';
 
@@ -153,7 +153,7 @@ export default {
       baseUrl: target.baseUrl, headers: authHeader(target.auth, secrets), ...request, timeoutMs, maxBytes, signal,
     });
   },
-  // The base64 credential of basic auth, which the core hides with the secret values.
+  // The base64 credential of basic auth and the secrets as a JSON body shows them, which the core hides with the values.
   hiddenForms(target, secrets) {
     return encodedForms(target.auth, secrets);
   },
@@ -165,6 +165,7 @@ export default {
     return { method, path, body: rest === BODY_WORD ? {} : rest };
   },
   toolBullet: '- `http_request { target, method, path, query?, body?, timeout_seconds? }` - send one HTTP request to an http target.',
+  cutHint: PAGING_HINT,
   agentSection(target) {
     const lines = [
       `### http target \`${target.name}\`${target.description ? ` - ${target.description}` : ''}`,

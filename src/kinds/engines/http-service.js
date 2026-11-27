@@ -6,8 +6,8 @@ import { REVIEWED } from '../shared.js';
 import { DOCTOR_MAX_BYTES, hiddenOf, httpVerdict } from './doctor.js';
 import httpKind, { QUERY_NOTE } from '../http/index.js';
 import {
-  authHeader, authProblem, authSecrets, encodedForms, matchRequestRule, readRequest, requestWords, reviewWords, send,
-  splitRule, validateBaseUrl,
+  PAGING_HINT, authHeader, authProblem, authSecrets, encodedForms, matchRequestRule, readRequest, requestWords,
+  reviewWords, send, splitRule, validateBaseUrl,
 } from './http.js';
 
 // The shape that two brokered kinds on the http engine share: elasticsearch and rabbitmq. A kind gives its names, its
@@ -152,7 +152,7 @@ export function httpServiceKind(spec) {
         baseUrl: target.baseUrl, headers: headersOf(target.auth, secrets), ...request, timeoutMs, maxBytes, signal,
       });
     },
-    // The base64 credential of basic auth, which the core hides with the secret values.
+    // The base64 credential of basic auth and the secrets as a JSON body shows them, which the core hides with the values.
     hiddenForms(target, secrets) {
       return encodedForms(engineAuth(target.auth), secrets);
     },
@@ -172,6 +172,7 @@ export function httpServiceKind(spec) {
     },
     checkInput: httpKind.checkInput,
     toolBullet: spec.toolBullet,
+    cutHint: PAGING_HINT,
     agentSection(target) {
       const lines = [
         `### ${spec.title} \`${target.name}\`${target.description ? ` - ${target.description}` : ''}`,

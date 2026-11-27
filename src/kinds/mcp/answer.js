@@ -69,7 +69,7 @@ function structuredText(value) {
 }
 
 // A tools/call result: the parts joined by newlines, or structuredContent when no part is text, within maxBytes. The
-// texts themselves are cut only at the end (here, and in the engine), where the core drops a piece of a secret it cut.
+// texts themselves are cut only at the end (here, and in the engine), and the result is marked truncated: the core then leaves out the end of the stream, where a secret can be cut.
 function resultText(result, truncated, maxBytes, hidden) {
   const content = Array.isArray(result.content) ? result.content : [];
   let text = content.map((part) => partText(part, hidden)).join('\n');
@@ -86,7 +86,7 @@ function resultText(result, truncated, maxBytes, hidden) {
 // of the target and their forms, the texts hidden before any text of the server is clipped.
 export function answerOf(outcome, { maxBytes, seconds, hidden }) {
   if (outcome.result !== undefined) return resultText(outcome.result, outcome.truncated === true, maxBytes, hidden);
-  if (outcome.timedOut) return { ...failed(`the MCP server did not answer within ${seconds} seconds`), exitCode: null, timedOut: true };
+  if (outcome.timedOut) return { ...failed(`the MCP server did not answer within ${seconds} seconds`), exitCode: null, timedOut: true, ownStderr: true };
   if (outcome.rpcError !== undefined) {
     const message = plain(outcome.rpcError.message, ERROR_CHARS, hidden);
     if (message.trim() === '') return failed('the MCP server answered with an error, without a message');
@@ -97,7 +97,7 @@ export function answerOf(outcome, { maxBytes, seconds, hidden }) {
     const retry = Number.isInteger(retryAfter) && retryAfter >= 0 ? `, retry after ${retryAfter} seconds` : '';
     return failed(`the MCP server answered HTTP ${Number.isInteger(status) ? status : '?'}${retry}`);
   }
-  if (outcome.unreachable) return failed('the MCP server could not be reached');
+  if (outcome.unreachable) return failed(`the MCP server could not be reached${typeof outcome.reason === 'string' ? `: ${outcome.reason}` : ''}`);
   if (outcome.cutOff) return failed('the answer of the MCP server was cut off');
   if (outcome.ended !== undefined) return failed(endText(outcome.ended));
   if (outcome.inputRequired) return failed(INPUT_REQUIRED);

@@ -11,6 +11,7 @@
   - [ci.yml](#ciyml)
   - [release.yml](#releaseyml)
   - [pages.yml](#pagesyml)
+  - [e2e.yml](#e2eyml)
 
 ## One-time setup
 
@@ -107,3 +108,10 @@ The workflow files carry no comments; the reasoning is here.
 - Permissions are `pages: write` and `id-token: write` (both required by `deploy-pages`) plus `contents: read`.
 - The concurrency group `pages` does not cancel a deployment in progress, so a half-finished deploy is never interrupted.
 - The `github-pages` environment carries the deployed URL, shown on the workflow run.
+
+### e2e.yml
+
+- Starts by hand only (`workflow_dispatch`): a run builds Docker images and downloads packages, which costs more Actions minutes than `ci.yml`.
+- One job on `ubuntu-latest`, which has Docker with the compose plugin: it checks out and runs `scripts/e2e.sh`. Node runs inside the containers, so there is no `setup-node` step.
+- When the run fails, a last step prints the logs that `scripts/e2e.sh` saved in `e2e/logs/`. Every secret in them was made for that run only.
+- Those logs hold output of third-party code (the MCP server from npm, PostgreSQL), so workflow commands are paused with `::stop-commands::` and a random token while they are printed: a line in a log cannot set an output, a mask or a file.

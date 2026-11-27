@@ -1,4 +1,5 @@
 import { psqlBin } from '../../paths.js';
+import { jsonForms } from '../shared.js';
 import { sqlServiceKind } from '../engines/sql-service.js';
 import { calledFunction, headWords, plainName } from '../engines/sql.js';
 
@@ -29,6 +30,8 @@ const FUNCTION_PREFIXES = ['pg_read_', 'pg_ls_', 'pg_file_', 'dblink', 'pg_backg
 // Functions that wait, or take a lock that outlives the statement.
 const WAIT_FUNCTIONS = ['pg_sleep', 'pg_sleep_for', 'pg_sleep_until'];
 const WAIT_PREFIXES = ['pg_advisory_', 'pg_try_advisory_'];
+// The sslmode of libpq for each value of tls: verify-full checks the CA and the host name.
+const SSL_MODES = { verify: 'verify-full', require: 'require', prefer: 'prefer' };
 
 // COPY with a program, or from or to a quoted file name.
 function copiesFile(words) {
@@ -66,7 +69,8 @@ export function postgresRefusal(words) {
 
 // psql with fixed options, the statement as the one argument after the last --command, the password in the
 // environment. The settings ride on the startup options and are set again inside the one transaction that wraps
-// every --command, because a connection pooler may drop the startup options without an error.
+// every --command, because a connection pooler may drop the startup options without an error. TLS is set in the
+// environment too: PGSSLMODE, and for verify PGSSLROOTCERT, the CA file or system for the CAs of this system.
 export function psqlInvocation(target, statement, { password, timeoutMs }) {
   const readOnly = target.readOnly !== false;
   const options = [
@@ -87,7 +91,12 @@ export function psqlInvocation(target, statement, { password, timeoutMs }) {
     ],
     words: [statement],
     childEnv: {
-      PGPASSWORD: password, PGCONNECT_TIMEOUT: '10', PGAPPNAME: 'ksproxy', PGOPTIONS: options.join(' '),
+      PGPASSWORD: password,
+      PGCONNECT_TIMEOUT: '10',
+      PGAPPNAME: 'ksproxy',
+      PGOPTIONS: options.join(' '),
+      PGSSLMODE: SSL_MODES[target.tls],
+      ...(target.tls === 'verify' ? { PGSSLROOTCERT: target.caFile ?? 'system' } : {}),
     },
   };
 }
@@ -117,6 +126,9 @@ export default sqlServiceKind({
   fixedRefusal: postgresRefusal,
   program: (target, env) => psqlBin(env),
   invocation: psqlInvocation,
+  // psql prints a text value as it is, but the server writes a json, jsonb or array value with a quote and a backslash
+  // escaped: the password as JSON writes it covers those.
+  printedForms: (password) => jsonForms([password]),
   notes: [
     '- Each statement runs inside one transaction, so a statement that cannot run in a transaction, such as VACUUM or CREATE DATABASE, fails.',
     '- Never allowed, whatever the rules: COPY with a file or a program, DO, LOAD, LISTEN and NOTIFY, extensions, functions, roles and other server objects, changing the role or the read-only setting, transaction control, functions that read server files or run SQL given as text, pg_sleep and the advisory locks.',

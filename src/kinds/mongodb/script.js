@@ -13,7 +13,7 @@ export const FIXED_SCRIPT = [
   '    cursor.id = 0;',
   '    process.stderr.write(\'more results exist: only the first batch is shown and the cursor was closed\\n\');',
   '  }',
-  '  process.stdout.write(EJSON.stringify(reply, null, 2) + \'\\n\');',
+  '  void process.stdout.write(EJSON.stringify(reply, null, 2) + \'\\n\');',
   '} catch (err) {',
   '  process.stderr.write(\'error: \' + String(err.codeName || err.name || \'Error\') + \': \' + String(err.message) + \'\\n\');',
   '  quit(1);',

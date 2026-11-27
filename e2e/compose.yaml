@@ -1,0 +1,380 @@
+# The end-to-end tests of ksproxy (see "End-to-end tests" in docs/DEVELOPMENT.md). Run them with scripts/e2e.sh, which
+# builds the images, then for each group of servers starts its containers, runs the driver in the runner and removes the
+# containers, networks and volumes again. Each has a memory limit.
+#
+# The groups are compose profiles, run one after the other, because all the servers at once need more memory than a
+# small Docker machine has: a (ssh, postgres, mysql, redis, mongodb, rabbitmq, http, mcp and the network listener),
+# b (elasticsearch, kafka and command) and c (kubernetes, with k3s). make-secrets and the runner have no profile and run
+# in every group.
+#
+# No port is published to the host and both networks are internal, so nothing reaches the internet while the tests run;
+# downloads happen only when the images are built. Every key, password, certificate and token is made for each run by
+# the service make-secrets, in the volume secrets, and each container mounts only its own folder of it; the tokens of
+# the cluster are made by k3s (see the service k3s). Only k3s is privileged.
+name: ksproxy-e2e
+
+x-secrets: &secrets
+  type: volume
+  source: secrets
+  target: /secrets
+  read_only: true
+
+services:
+  make-secrets:
+    build:
+      context: ..
+      dockerfile: e2e/images/runner/Dockerfile
+      secrets: [build_ca]
+    image: ksproxy-e2e-runner:local
+    user: root
+    network_mode: none
+    command: ["bash", "/opt/ksproxy/e2e/setup/secrets.sh"]
+    volumes:
+      - secrets:/secrets
+
+  web1:
+    profiles: [a]
+    build: images/server
+    image: ksproxy-e2e-server:local
+    hostname: web1
+    command: ["ops"]
+    networks: [front, back]
+    volumes:
+      - { <<: *secrets, volume: { subpath: web1 } }
+    depends_on:
+      make-secrets: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/22"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    mem_limit: 128m
+
+  app1:
+    profiles: [a]
+    image: ksproxy-e2e-server:local
+    hostname: app1
+    command: ["opsuser"]
+    networks: [back]
+    volumes:
+      - { <<: *secrets, volume: { subpath: app1 } }
+    depends_on:
+      make-secrets: { condition: service_completed_successfully }
+      web1: { condition: service_started }
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/22"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    mem_limit: 128m
+
+  # PostgreSQL with the shop database, over TLS with the certificate of the run for the name db. Every statement and
+  # every connection, with its TLS, is logged to the volume pglog.
+  db:
+    profiles: [a]
+    build: images/db
+    image: ksproxy-e2e-db:local
+    environment:
+      POSTGRES_DB: shop
+      POSTGRES_PASSWORD_FILE: /secrets/postgres_password
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/secrets/server.crt
+      - -c
+      - ssl_key_file=/secrets/server.key
+      - -c
+      - log_connections=on
+      - -c
+      - log_statement=all
+      - -c
+      - logging_collector=on
+      - -c
+      - log_directory=/pglog
+      - -c
+      - log_filename=postgresql.log
+      - -c
+      - log_file_mode=0644
+    networks: [front]
+    volumes:
+      - { <<: *secrets, volume: { subpath: db } }
+      - pglog:/pglog
+    depends_on:
+      make-secrets: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "pg_isready", "--host", "127.0.0.1", "--username", "postgres", "--dbname", "shop"]
+      interval: 2s
+      timeout: 2s
+      retries: 60
+    mem_limit: 256m
+
+  mcp-remote:
+    profiles: [a]
+    image: ksproxy-e2e-runner:local
+    init: true
+    command: ["node", "/opt/ksproxy/e2e/setup/mcp-remote.js"]
+    networks: [front]
+    volumes:
+      - { <<: *secrets, volume: { subpath: mcp-remote } }
+    depends_on:
+      make-secrets: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8443"]
+      interval: 2s
+      timeout: 2s
+      retries: 60
+    mem_limit: 256m
+
+  # MariaDB with the crm database, over TLS with the certificate of the run for the name crm-db. Root may log in from
+  # inside this container only.
+  crm-db:
+    profiles: [a]
+    build: images/crm-db
+    image: ksproxy-e2e-crm-db:local
+    command: ["mariadbd", "--ssl-cert=/secrets/server.crt", "--ssl-key=/secrets/server.key"]
+    environment:
+      MARIADB_DATABASE: crm
+      MARIADB_ROOT_PASSWORD_FILE: /secrets/root_password
+      MARIADB_ROOT_HOST: localhost
+      MARIADB_INITDB_SKIP_TZINFO: "1"
+    networks: [front]
+    volumes:
+      - { <<: *secrets, volume: { subpath: crm-db } }
+      - mylog:/mylog
+    depends_on:
+      make-secrets: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 2s
+      timeout: 5s
+      retries: 90
+    mem_limit: 384m
+
+  # Redis over TLS with the ACL users of the run.
+  cache:
+    profiles: [a]
+    build: images/cache
+    image: ksproxy-e2e-cache:local
+    networks: [front]
+    volumes:
+      - { <<: *secrets, volume: { subpath: cache } }
+    depends_on:
+      make-secrets: { condition: service_completed_successfully }
+    healthcheck:
+      # The server of the run answers over TLS; without a user it refuses every command.
+      test: ["CMD-SHELL", "redis-cli --tls --cacert /secrets/ca.crt -h 127.0.0.1 -p 6380 ping 2>&1 | grep -q NOAUTH"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    mem_limit: 64m
+
+  # MongoDB with the shop database; every operation is logged (slowms -1) to the volume mongolog.
+  mongo:
+    profiles: [a]
+    build: images/mongo
+    image: ksproxy-e2e-mongo:local
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD_FILE: /secrets/root_password
+      MONGO_INITDB_DATABASE: shop
+    command: ["mongod", "--slowms", "-1", "--logpath", "/mongolog/mongod.log", "--logappend", "--wiredTigerCacheSizeGB", "0.25"]
+    networks: [front]
+    volumes:
+      - { <<: *secrets, volume: { subpath: mongo } }
+      - mongolog:/mongolog
+    depends_on:
+      make-secrets: { condition: service_completed_successfully }
+    healthcheck:
+      # The server of the setup listens on 127.0.0.1 only; the server of the run also on the container's address.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/$$(hostname -i)/27017"]
+      interval: 2s
+      timeout: 2s
+      retries: 90
+    mem_limit: 512m
+
+  # RabbitMQ with the management API over https.
+  mq:
+    profiles: [a]
+    build: images/mq
+    image: ksproxy-e2e-mq:local
+    hostname: mq
+    networks: [front]
+    volumes:
+      - { <<: *secrets, volume: { subpath: mq } }
+      - mqlog:/mqlog
+    depends_on:
+      make-secrets: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/seeded"]
+      interval: 2s
+      timeout: 2s
+      retries: 120
+    mem_limit: 384m
+
+  # The stand-in Grafana API over https on port 443.
+  grafana:
+    profiles: [a]
+    build: images/grafana
+    image: ksproxy-e2e-grafana:local
+    init: true
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: 0
+    networks: [front]
+    volumes:
+      - { <<: *secrets, volume: { subpath: grafana } }
+      - httplog:/httplog
+    depends_on:
+      make-secrets: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/443"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    mem_limit: 128m
+
+  # Elasticsearch, one node with security on and https on port 9200; every HTTP request that reaches it is logged to
+  # the volume eslog. The seed writes the API key that Elasticsearch makes for es-logs to the volume esout.
+  es:
+    profiles: [b]
+    build: images/es
+    image: ksproxy-e2e-es:local
+    hostname: es
+    environment:
+      ELASTIC_PASSWORD_FILE: /usr/share/elasticsearch/config/certs/elastic_password
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+    networks: [front]
+    volumes:
+      - { <<: *secrets, target: /usr/share/elasticsearch/config/certs, volume: { subpath: es } }
+      - eslog:/eslog
+      - esout:/esout
+    depends_on:
+      make-secrets: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/seeded"]
+      interval: 2s
+      timeout: 2s
+      retries: 180
+    mem_limit: 1280m
+
+  # Kafka in KRaft mode, one node, with SASL PLAIN over TLS on port 9093 and ACLs; every decision of the authorizer is
+  # logged to the volume kafkalog.
+  kafka:
+    profiles: [b]
+    build: images/kafka
+    image: ksproxy-e2e-kafka:local
+    init: true
+    hostname: kafka
+    networks: [front]
+    volumes:
+      - { <<: *secrets, volume: { subpath: kafka } }
+      - kafkalog:/kafkalog
+    depends_on:
+      make-secrets: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/seeded"]
+      interval: 2s
+      timeout: 2s
+      retries: 150
+    mem_limit: 768m
+
+  # k3s, one server node, for the kubernetes examples. The only privileged container of the e2e tests: k3s runs
+  # containerd, the kubelet and kube-proxy, which mount file systems, make cgroups and network namespaces for the pods
+  # and write iptables rules. The images it runs are saved by scripts/e2e.sh into the build context airgap, and k3s
+  # imports them at start, so nothing is pulled. The API server's audit log goes to the volume k3slog, and the seed
+  # writes the kubeconfigs of the run, with their tokens, to the volume kube. k3s declares four more volumes in its
+  # image, for its data, which are removed with the others.
+  k3s:
+    profiles: [c]
+    build:
+      context: images/k3s
+      additional_contexts:
+        airgap: ${E2E_K3S_IMAGES:-images/k3s}
+    image: ksproxy-e2e-k3s:local
+    hostname: k3s
+    privileged: true
+    tmpfs: [/run, /var/run]
+    networks: [front]
+    volumes:
+      - k3slog:/k3slog
+      - kube:/kube
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/seeded"]
+      interval: 2s
+      timeout: 2s
+      retries: 150
+    mem_limit: 1g
+
+  # The runner waits for the servers of the group that runs; required: false lets it start without the others.
+  runner:
+    image: ksproxy-e2e-runner:local
+    init: true
+    command: ["sleep", "infinity"]
+    networks: [front]
+    volumes:
+      - { <<: *secrets, volume: { subpath: runner } }
+      - { type: volume, source: pglog, target: /pglog, read_only: true }
+      - { type: volume, source: mylog, target: /mylog, read_only: true }
+      - { type: volume, source: mongolog, target: /mongolog, read_only: true }
+      - { type: volume, source: mqlog, target: /mqlog, read_only: true }
+      - { type: volume, source: httplog, target: /httplog, read_only: true }
+      - { type: volume, source: eslog, target: /eslog, read_only: true }
+      - { type: volume, source: esout, target: /esout, read_only: true }
+      - { type: volume, source: kafkalog, target: /kafkalog, read_only: true }
+      - { type: volume, source: k3slog, target: /k3slog, read_only: true }
+      - { type: volume, source: kube, target: /kube, read_only: true }
+      - handoff:/handoff
+    depends_on:
+      # Also for group c, where no server needs the secrets: up --wait counts a container that ended as a failure,
+      # unless another one waits for it to end.
+      make-secrets: { condition: service_completed_successfully }
+      web1: { condition: service_healthy, required: false }
+      app1: { condition: service_healthy, required: false }
+      db: { condition: service_healthy, required: false }
+      mcp-remote: { condition: service_healthy, required: false }
+      crm-db: { condition: service_healthy, required: false }
+      cache: { condition: service_healthy, required: false }
+      mongo: { condition: service_healthy, required: false }
+      mq: { condition: service_healthy, required: false }
+      grafana: { condition: service_healthy, required: false }
+      es: { condition: service_healthy, required: false }
+      kafka: { condition: service_healthy, required: false }
+      k3s: { condition: service_healthy, required: false }
+    mem_limit: 768m
+
+  peer:
+    profiles: [a]
+    image: ksproxy-e2e-runner:local
+    init: true
+    command: ["node", "/opt/ksproxy/e2e/driver/peer.js"]
+    networks: [front]
+    volumes:
+      - handoff:/handoff
+    depends_on:
+      runner: { condition: service_started }
+    mem_limit: 128m
+
+networks:
+  front:
+    internal: true
+  back:
+    internal: true
+
+volumes:
+  secrets:
+  pglog:
+  mylog:
+  mongolog:
+  mqlog:
+  httplog:
+  eslog:
+  esout:
+  kafkalog:
+  k3slog:
+  kube:
+  handoff:
+
+secrets:
+  build_ca:
+    file: ${E2E_BUILD_CA:-/dev/null}

@@ -390,6 +390,7 @@ export default {
     };
   },
   toolBullet: '- `local_exec { target, command, timeout_seconds? }` - run one command on this machine in a target\'s folder.',
+  cutHint: 'tail -n 200, head -n 200, grep -m 50 PATTERN, or wc -l first',
   agentSection(target) {
     const lines = [
       `### Local folder \`${target.name}\`${target.description ? ` - ${target.description}` : ''}`,

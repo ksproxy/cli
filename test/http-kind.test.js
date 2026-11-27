@@ -432,8 +432,9 @@ test('a session with an http target: rules on the wire, refusals before the serv
   assert.equal(seen.length, before + 2, 'no refused request reached the service');
 
   const missing = await ask({ target: 'g1', method: 'GET', path: '/missing' });
-  // The token starts with g: a last character that could be the start of a cut secret is dropped, whatever ended the text.
-  assert.deepEqual(missing, { text: 'exit code: 1\n--- stdout ---\nHTTP 404\ncontent-type: text/plain\n\nno such thin', isError: true });
+  // The token starts with g: a body that ended on its own keeps its last character, though it could start the token.
+  // Dropping it, as before, told whether a guess at the end of a body starts the token.
+  assert.deepEqual(missing, { text: 'exit code: 1\n--- stdout ---\nHTTP 404\ncontent-type: text/plain\n\nno such thing', isError: true });
   const moved = await ask({ target: 'g1', method: 'GET', path: '/redirect' });
   assert.equal(moved.text, 'exit code: 1\n--- stdout ---\nHTTP 302\ncontent-type: (none)\n--- stderr ---\nthe service answered with a redirect, which is not followed');
   for (const name of ['g1', 'g2', 'g3']) {

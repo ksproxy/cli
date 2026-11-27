@@ -28,6 +28,11 @@ let port;
 before(async () => {
   server = http.createServer((req, res) => {
     const value = req.headers.authorization;
+    if (req.url.startsWith('/type')) {
+      res.writeHead(200, { 'content-type': `text/${'x'.repeat(Number(req.url.slice(6)))}; key=${value}` });
+      res.end('ok');
+      return;
+    }
     res.writeHead(200, { 'content-type': 'text/plain' });
     if (req.url === '/slow') {
       res.write(`before ${value.slice(0, 30)}`);
@@ -50,7 +55,7 @@ after(() => {
 
 function call(where, timeoutSeconds) {
   const target = {
-    kind: 'http', name: 'echo', description: '', allow: ['GET /slow', 'GET /broken', 'GET /many'], baseUrl: `http://127.0.0.1:${port}/`, auth: { bearerEnv: 'T' }, state: 'up',
+    kind: 'http', name: 'echo', description: '', allow: ['GET /slow', 'GET /broken', 'GET /many', 'GET /type/*'], baseUrl: `http://127.0.0.1:${port}/`, auth: { bearerEnv: 'T' }, state: 'up',
   };
   return answerCall({
     kind: 'http', name: 'echo', input: { method: 'GET', path: where }, timeoutSeconds,
@@ -69,21 +74,36 @@ function assertNoPiece(text) {
   for (let n = 4; n < TOKEN.length; n += 1) assert.ok(!shown.includes(TOKEN.slice(0, n)), `the first ${n} characters of the token are shown`);
 }
 
+// A stream that did not end on its own leaves out its last 1 KiB at least, back to the end of a line: a short stream,
+// with a piece of the token at its end, is not shown at all.
+const END_LEFT_OUT = 'cut: the stream did not end on its own, so its end was left out';
+const HINT = "narrow it: the API's own paging and filters (size, from, filter_path)";
+
 test('a bearer token cut by the time limit of the call shows no part', async () => {
   const answer = await call('/slow', 1);
-  assert.match(answer.text, /^timed out after 1s\n/);
-  assert.match(answer.text, /\nbefore Bearer$/);
+  assert.equal(answer.text, `timed out after 1s\n[stdout ${END_LEFT_OUT}]\n${HINT}`);
   assertNoPiece(answer.text);
 });
 
 test('a bearer token cut by a broken stream shows no part', async () => {
   const answer = await call('/broken', 10);
-  assert.match(answer.text, /\nbefore Bearer\n--- stderr ---\n/);
+  assert.equal(answer.text, `exit code: 1\n[stdout ${END_LEFT_OUT}]\n${HINT}\n--- stderr ---\nthe reply was cut off`);
   assertNoPiece(answer.text);
 });
 
+// The body is the token again and again, with no newline: once hidden it is far below the visible limit, so it is cut
+// after the last newline before its last 1 KiB, the one after the content type.
 test('a token cut by the read limit shows no part', async () => {
   const answer = await call('/many', 10);
-  assert.match(answer.text, /\[output truncated at 262144 bytes per stream\]$/);
+  assert.equal(answer.text, `exit code: 0\n[stdout ${END_LEFT_OUT}]\n${HINT}\n--- stdout ---\nHTTP 200\ncontent-type: text/plain`);
   assertNoPiece(answer.text);
+});
+
+// Before, the content type was shortened to 200 characters before the token was hidden: padding moved the token over
+// the edge, and its first characters were shown.
+test('a token that the server puts in its content type is hidden whole, wherever it lies', async () => {
+  for (const pad of [10, 150, 160, 170, 180, 400]) {
+    const answer = await call(`/type/${pad}`, 10);
+    assert.equal(answer.text, `exit code: 0\n--- stdout ---\nHTTP 200\ncontent-type: text/${'x'.repeat(pad)}; key=Bearer [hidden]\n\nok`);
+  }
 });

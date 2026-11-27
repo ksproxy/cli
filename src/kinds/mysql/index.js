@@ -1,5 +1,7 @@
 import { InventoryError } from '../../checks.js';
 import { mysqlBin } from '../../paths.js';
+import { jsonForms } from '../shared.js';
+import { runClient } from '../engines/command.js';
 import { sqlServiceKind } from '../engines/sql-service.js';
 import {
   calledFunction, hasPair, headWords, plainName,
@@ -7,6 +9,8 @@ import {
 
 const CLIENTS = ['mysql', 'mariadb'];
 const ROW_LIMIT = 1000;
+const VERSION_MS = 5000;
+const VERSION_MAX_BYTES = 4096;
 const OBJECT_VERBS = ['create', 'alter', 'drop', 'rename'];
 // Objects that run code, hold rights or change the server.
 const SERVER_OBJECTS = [
@@ -68,6 +72,40 @@ function checkClient(entry, where) {
   return { client: entry.client };
 }
 
+// Which client the program is, for its TLS options: the MariaDB client says MariaDB in its version, whatever its name
+// (the mysql of Debian is the MariaDB client), and any other is the MySQL client. Gives { family }, or { error, wayOut }.
+// The MariaDB client has no option that requires TLS without checking the certificate, so require is refused there.
+export async function clientFamily(target, program, { env, signal }) {
+  const result = await runClient({
+    program, words: ['--version'], env, timeoutMs: VERSION_MS, maxBytes: VERSION_MAX_BYTES, signal,
+  });
+  if (result.exitCode !== 0) {
+    return {
+      error: `could not run ${program} --version`,
+      wayOut: `ksproxy reads the version of the client to choose its TLS options; check that ${program} runs, or set "tls" to "prefer"`,
+    };
+  }
+  const family = result.stdout.includes('MariaDB') ? 'mariadb' : 'mysql';
+  if (family === 'mariadb' && target.tls === 'require') {
+    return {
+      error: 'the MariaDB client cannot require TLS without a check',
+      wayOut: 'set "tls" to "verify" (with "caFile" when this system does not trust the CA), or to "prefer"',
+    };
+  }
+  return { family };
+}
+
+// The TLS options of a call: none for prefer, as before, so the client uses TLS when the server offers it. The MariaDB
+// client checks the certificate and the host name with --ssl-verify-server-cert, the MySQL client with
+// --ssl-mode=VERIFY_IDENTITY; both read the CA file from --ssl-ca, else the CAs of this system. open never lets require
+// reach the MariaDB client.
+function tlsArgs(target) {
+  if (target.tls === 'prefer') return [];
+  const ca = target.caFile === null ? [] : [`--ssl-ca=${target.caFile}`];
+  if (target.family === 'mariadb') return ['--ssl', '--ssl-verify-server-cert', ...ca];
+  return [`--ssl-mode=${target.tls === 'verify' ? 'VERIFY_IDENTITY' : 'REQUIRED'}`, ...ca];
+}
+
 // The client with fixed options, the statement glued to --execute= as one argument, the password in the environment.
 // utf8mb4 keeps the client from reading a backtick as part of a multi-byte character of the machine's locale; the
 // login file named inside the empty working folder does not exist, so no stored login replaces the password.
@@ -77,12 +115,24 @@ export function mysqlInvocation(target, statement, { password }) {
     fixedArgs: [
       '--no-defaults', '--batch', '--quick', '--default-character-set=utf8mb4', '--local-infile=0', '--connect-timeout=10',
       `--host=${target.host}`, `--port=${target.port}`, `--database=${target.database}`, `--user=${target.user}`,
-      `--init-command=${init.join('; ')}`,
+      ...tlsArgs(target), `--init-command=${init.join('; ')}`,
     ],
     words: [`--execute=${statement}`],
     childEnv: { MYSQL_PWD: password },
     folderPaths: { MYSQL_TEST_LOGIN_FILE: 'no-login-file.cnf' },
   };
+}
+
+// A value as the client prints it in batch mode, where that is not the value itself: a backslash, a tab, a newline and
+// a NUL are written as a backslash and a letter. The value is taken as it is, and as JSON writes it (jsonForms), for a
+// row that holds it inside a JSON text: the server writes the JSON, then the client doubles its backslashes. A
+// password in a row that a call reads is shown in one of these forms, which the core hides with the password.
+const BATCH_ESCAPES = {
+  '\\': '\\\\', '\t': '\\t', '\n': '\\n', '\0': '\\0',
+};
+export function batchForms(value) {
+  const printed = [value, ...jsonForms([value])].map((text) => text.replace(/[\\\t\n\0]/g, (char) => BATCH_ESCAPES[char]));
+  return [...new Set(printed)].filter((form) => form !== value);
 }
 
 export default sqlServiceKind({
@@ -111,6 +161,8 @@ export default sqlServiceKind({
   fixedRefusal: mysqlRefusal,
   program: (target, env) => mysqlBin(env, target.client),
   invocation: mysqlInvocation,
+  printedForms: batchForms,
+  clientFamily,
   notes: [
     '- Double quotes make a string here; quote a name with backticks. A backslash is refused inside a string too, and `#` starts a comment.',
     `- At most ${ROW_LIMIT} rows per result. Never allowed, whatever the rules: LOAD DATA, INTO OUTFILE and INTO DUMPFILE, commands of the mysql client, server commands, global settings, users and other server objects, transaction control, LOAD_FILE, and SLEEP, BENCHMARK and the lock and wait functions. The time limit stops the client; the server may go on with the statement until it ends.`,

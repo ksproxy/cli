@@ -20,6 +20,8 @@ const BROKERED_ONLY = ['perform', 'probe', 'hiddenForms'];
 const UNBROKERED_ONLY = ['command', 'state'];
 
 const identifiers = (kind) => [kind.key, kind.label, kind.tool.name];
+// cutHint goes into one line of an answer.
+const ONE_LINE = /^[^\n]+$/;
 
 // Throws an assertion error when the kind breaks the contract; list is every kind in the list, the kind included.
 export function checkKind(kind, list) {
@@ -60,6 +62,7 @@ export function checkKind(kind, list) {
   assert.notEqual(kind.backMessage, '', at('backMessage'));
   assert.equal(typeof kind.toolBullet, 'string', at('toolBullet'));
   assert.ok(kind.toolBullet.includes(kind.tool.name), at('toolBullet names the tool'));
+  if (kind.cutHint !== undefined) assert.ok(typeof kind.cutHint === 'string' && ONE_LINE.test(kind.cutHint), at('cutHint is one line of text'));
 
   if (kind.close === undefined) {
     for (const name of ['closeLimit', 'closeMs', 'onCloseTimeout']) assert.equal(kind[name], undefined, at(name));

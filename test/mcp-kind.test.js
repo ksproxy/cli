@@ -1,6 +1,7 @@
 import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import mcp, {
@@ -418,10 +419,10 @@ test('perform: pinned arguments the tool declares are added, an undeclared argum
     timeoutMs, maxBytes: 1000, signal: new AbortController().signal, input: { tool: 'free' }, opened: slow.opened,
   });
   assert.deepEqual(await late(60000), {
-    exitCode: null, stdout: '', stderr: 'the MCP server did not answer within 2 seconds', timedOut: true,
+    exitCode: null, stdout: '', stderr: 'the MCP server did not answer within 2 seconds', timedOut: true, ownStderr: true,
   });
   assert.deepEqual(await late(1000), {
-    exitCode: null, stdout: '', stderr: 'the MCP server did not answer within 1 seconds', timedOut: true,
+    exitCode: null, stdout: '', stderr: 'the MCP server did not answer within 1 seconds', timedOut: true, ownStderr: true,
   });
 });
 
@@ -629,6 +630,7 @@ test('url targets: the connect gets the URL, the token header and the limits; ca
     [{ httpError: { status: 503, retryAfter: 30 } }, 'the MCP server answered HTTP 503, retry after 30 seconds'],
     [{ httpError: { status: 301, retryAfter: null } }, 'the MCP server answered HTTP 301'],
     [{ unreachable: true }, 'the MCP server could not be reached'],
+    [{ unreachable: true, reason: 'the connection timed out' }, 'the MCP server could not be reached: the connection timed out'],
     [{ cutOff: true }, 'the answer of the MCP server was cut off'],
     [{ rpcError: { code: -32602, message: 'ksproxy cannot send this call: a value of Mcp-Param-Key holds a newline' } }, 'ksproxy cannot send this call: a value of Mcp-Param-Key holds a newline'],
   ]) {
@@ -684,4 +686,15 @@ test('url targets: a secret that cannot go in a header, a failed connect and a f
   const unreached = await openWith(validated({ url: 'http://127.0.0.1:9/mcp', login: 'token', tokenEnv: 'GH_TOKEN' }), { secrets: { GH_TOKEN: SECRET } });
   assert.deepEqual(unreached.result, { ok: false, error: 'the MCP server could not be reached; the reason is in the start terminal' });
   assert.deepEqual(unreached.said, ['the MCP server failed: the MCP server could not be reached for server/discover']);
+  // A closed port: the reason is in the terminal text.
+  const probe = net.createServer();
+  await new Promise((resolve) => {
+    probe.listen(0, '127.0.0.1', resolve);
+  });
+  const { port } = probe.address();
+  await new Promise((resolve) => {
+    probe.close(resolve);
+  });
+  const refused = await openWith(validated({ url: `http://127.0.0.1:${port}/mcp`, login: 'token', tokenEnv: 'GH_TOKEN' }), { secrets: { GH_TOKEN: SECRET } });
+  assert.deepEqual(refused.said, ['the MCP server failed: the MCP server could not be reached for server/discover: the connection was refused']);
 });

@@ -169,9 +169,9 @@ sequenceDiagram
         Runner->>Target: the program runs without a shell
     end
     Target-->>Runner: exit code, stdout and stderr
-    Runner-->>Tools: result with output caps, timeout flag and duration
+    Runner-->>Tools: result with output caps, every byte counted, the last 53248 bytes of each stream, timeout and cut-off flags and duration
     Tools->>Log: append a call entry with decision allowed, rule, the reviewer certainty and reason when the review approved it, exit code, timed out, spawn error, duration and sizes
-    Tools->>Tools: fitStream on both streams: scrubOutput, drop the end of a stream that reached the read limit, cut to the visible limit of the target, 262144 bytes unless maxOutputKiB raised it, then formatResult. A throw there gives the first line and the output could not be shown
+    Tools->>Tools: fitCounted on both streams: scrubOutput, drop the end of a stream that reached the read limit, cut to the visible limit of the target, 262144 bytes unless maxOutputKiB raised it, then streamsText: a cut stream gets a line after the first line with the bytes shown and written, its first part, a marker and its last 16 KiB, then the hint of the kind. A throw there gives the first line and the output could not be shown
     Tools-->>Server: text, isError on timeout, spawn error or non-zero exit
     Note over Server: continues in 1.4, the answer to the agent
 ```
@@ -528,7 +528,7 @@ flowchart TD
     Y1["comes from: 4.1, no live session"] --> S8["clearSession removes session.json"]
     S8 --> S8a["reapStale of each kind in reverse list order: local has none, kubernetes first, then ssh"]
     S8a --> S9["kubernetes: reapStaleProxies: each file ending in .pid in the socket folder, written as kube-NAME.pid"]
-    S9 --> S10{"evidence: readable JSON, positive integer pid, finite startedAt,<br/>signal 0 works, ps start time known and within 5 s,<br/>ps command line contains the word proxy between spaces?"}
+    S9 --> S10{"evidence: readable JSON, positive integer pid, finite startedAt,<br/>signal 0 works, ps start time known and within 5 s,<br/>ps command line contains the word proxy between spaces, or is exactly the recorded program name?"}
     S10 -->|"any of it missing"| S13["leave the process alone"]
     S10 -->|"all of it"| S11["SIGTERM, then poll every 50 ms for up to 2 s"]
     S11 --> S12{"still there?"}
@@ -797,7 +797,7 @@ This diagram shows the run of an allowed brokered call, its limits and its answe
 ```mermaid
 flowchart TD
     Y2["comes from: 8.2, an allowed decision"] --> P0["hiddenTexts: the secret values of the target and the forms from hiddenForms of the kind, a throw is call failed"]
-    P0 --> P1["performWithin: perform of the kind with env, the target's secrets, timeoutMs, maxBytes the read limit,<br/>visibleLimit of the target in memory plus 32768, a signal, the input, and opened: the opened entry with the extras of open"]
+    P0 --> P1["performWithin: perform of the kind with env, the target's secrets, timeoutMs, maxBytes the read limit,<br/>readLimit of visibleLimit of the target in memory and the hidden texts, a signal, the input, and opened: the opened entry with the extras of open"]
     P1 --> P2{"what settles first?"}
     P2 -->|"perform"| P3{"it threw?"}
     P3 -->|"yes"| R1["REFUSE: call failed, audited, nothing of the error is kept"]
@@ -809,9 +809,9 @@ flowchart TD
     P7 -->|"no"| R1
     P7 -->|"yes"| P9["audit: decision allowed, rule, review, exitCode, timedOut, spawnError null, durationMs, stdoutBytes and stderrBytes before the cut"]
     P5 --> P9
-    P9 --> P8["fitStreams: fitStream on each stream: hide every secret value and form and drop a cut one, scrubOutput,<br/>drop the end of a stream that reached the read limit, then capBytes to the visible limit. See answerCall in the src/tools.js section"]
+    P9 --> P8["fitStreams with fitOf, not counted, ended unless timed out, cutOff or truncated, stderr ended when ownStderr: fitBrokered on each stream: hide every secret value and form,<br/>a stream that did not end on its own or reached the read limit loses its last cutRoom bytes, every count before scrubOutput, at most the visible limit shown. See fitBrokered in the src/tools.js section"]
     P8 -->|"the hiding or the scrub throws"| PF["outputFailed: exit code N or timed out, then the output could not be shown, isError true, the call is audited already"]
-    P8 --> P10["formatResult with the truncation note when perform says so or fitStream left something out"]
+    P8 --> P10["streamsText: a stream that shows its first visible bytes has the line NAME cut at the visible limit: the rest was left out,<br/>a shorter one that lost its end the line NAME cut: the stream did not end on its own, so its end was left out, no end part, then the hint of the kind when one was cut"]
     P10 --> P11["isError when timed out or the exit code is not 0"]
     P11 --> P12["answerWithin: while the JSON line passes answerLimit, 4 times the visible limit, keep half as much of each stream,<br/>so the agent is told the call ran, then answerLine writes one line and the connection ends"]
 ```
@@ -832,7 +832,7 @@ flowchart TD
 
 ## src/agent-md.js
 
-Builds the text of AGENT.md (`agentMdText`) and the MCP config block (`mcpConfig`) that `start` writes into the session folder. The notes of each kind of target and its line in the Tools list are written by the kind itself, drawn in the kind sections; this file names no kind and walks the list. It reads the list when it is called.
+Builds the text of AGENT.md (`agentMdText`, with its section on cut output, `cutSection`) and the MCP config block (`mcpConfig`) that `start` writes into the session folder. The notes of each kind of target, its line in the Tools list and its hint for a cut call (`cutHint`) are given by the kind itself, drawn in the kind sections; this file names no kind and walks the list. It reads the list when it is called.
 
 ### mcpConfig
 
@@ -867,7 +867,23 @@ flowchart TD
     A3 -->|"no"| A5["no line: the agent is not told of a tool it cannot use"]
     A4 --> J1
     A5 --> J1
-    J1["join: title, tools list, open targets, off limits, the intro and the off limits text are fixed sentences"]
+    J1["join: title, tools list, open targets, cutSection, off limits, the intro and the off limits text are fixed sentences"]
+```
+
+### cutSection
+
+This diagram shows the section When output is cut, which every AGENT.md has.
+
+```mermaid
+flowchart TD
+    K1["cutSection of the session"] --> K2["fixed lines: each stream is cut at DEFAULT_OUTPUT_KIB, 256 KiB, or the limit its target names,<br/>and the answer says so right after the exit code. On ssh, kubernetes and local the line says how much it shows,<br/>and the answer also shows the last END_PART_KIB, 16 KiB, the sizes are close"]
+    K2 --> K7["on every other target: the start of the stream up to the limit, no end part, the line cut at 256 KiB: the rest was left out,<br/>and a call that did not end on its own loses its last 1 KiB at least, back to the end of a line, the line says its end was left out,<br/>so make such a call end on its own"]
+    K7 --> K8["narrow the call, the hints only suggest and the rules decide"]
+    K8 --> K3{"for each kind in list order: it has a cutHint and the session has a target of it?"}
+    K3 -->|"no"| K4["nothing for that kind"]
+    K3 -->|"yes"| K5["its tool name is added under its hint text, so kinds with the same hint share one line"]
+    K4 --> K6["one line under the fixed ones for each hint text, in the order the texts first came: the tool names, then the hint"]
+    K5 --> K6
 ```
 
 ## src/allowlist.js
@@ -1578,7 +1594,7 @@ flowchart TD
 
 ### outputKiB and the output limit
 
-`DEFAULT_OUTPUT_KIB` is 256 and `MAX_OUTPUT_KIB` 4096. `validateInventory` checks the field `maxOutputKiB` of every entry with `checkInteger` and these two numbers (drawn in the `src/inventory.js` section). `outputKiB` reads the limit of a target wherever it is used: in `execTool` and `answerCall`, in `list_targets` and in AGENT.md. It is the one place that turns the field into a number, so a session file edited by hand can give no more than 4096.
+`DEFAULT_OUTPUT_KIB` is 256 and `MAX_OUTPUT_KIB` 4096. `END_PART_KIB`, 16, is the end of a cut stream of ssh, kubernetes or local that an answer also shows; a brokered stream has none (see "The cut line, the end part and the hint" in the `src/tools.js` section); AGENT.md names it. `validateInventory` checks the field `maxOutputKiB` of every entry with `checkInteger` and these two numbers (drawn in the `src/inventory.js` section). `outputKiB` reads the limit of a target wherever it is used: in `execTool` and `answerCall`, in `list_targets` and in AGENT.md. It is the one place that turns the field into a number, so a session file edited by hand can give no more than 4096.
 
 ```mermaid
 flowchart TD
@@ -2186,7 +2202,7 @@ flowchart TD
 
 ## src/exec.js
 
-Runs one program without a shell, with a timeout, a process-group kill, a grace period and output caps (`run`), and builds the small environment it gets (`minimalEnv`). Two options are used only by the command engine: `signal`, an AbortSignal that kills the group at once, and `stopAtLimit`, which kills the group as soon as a stream passes `maxBytes`. Without them `run` behaves as before.
+Runs one program without a shell, with a timeout, a process-group kill, a grace period and output caps (`run`), and builds the small environment it gets (`minimalEnv`). Two options are used only by the command engine: `signal`, an AbortSignal that kills the group at once, and `stopAtLimit`, which kills the group as soon as a stream passes `maxBytes`. One is used only by `execTool`: `tailBytes`, the last bytes of each stream that `run` keeps in a ring (`lastBytes`), whatever `maxBytes` kept, as `stdoutTail` and `stderrTail`; it is 0 by default, and the two fields are then null. `cutOff` is true when the grace period after the exit ended with a stream still open, a child of the program still writing: the streams were destroyed there and did not end on their own, so `execTool` and the brokered command kinds (through `runClient`) drop a path that this cut. Without them `run` behaves as before.
 
 ### run
 
@@ -2196,12 +2212,12 @@ This diagram shows how the child is spawned and its output is collected.
 
 ```mermaid
 flowchart TD
-    X1["run of file, args, timeoutMs default 60000, maxBytes default 262144 per stream, env, inherit, cwd, graceMs default 500,<br/>signal, stopAtLimit default false"] --> X2["spawn: its own process group and piped output,<br/>or the terminal when inherit"]
+    X1["run of file, args, timeoutMs default 60000, maxBytes default 262144 per stream, env, inherit, cwd, graceMs default 500,<br/>signal, stopAtLimit default false, tailBytes default 0"] --> X2["spawn: its own process group and piped output,<br/>or the terminal when inherit"]
     X2 --> X3{"spawn threw?"}
     X3 -->|"yes"| X4["spawnError is the message"]
     X4 --> Z1["continues in: run, finishing"]
     X3 -->|"no"| X5{"inherit?"}
-    X5 -->|"no"| X6["collect stdout and stderr with caps, count open streams"]
+    X5 -->|"no"| X6["collect stdout and stderr with caps, count open streams, and a ring of tailBytes for each stream when tailBytes is over 0"]
     X7["start the timeout timer"]
     X6 --> S1{"a signal given?"}
     X5 -->|"yes"| S1
@@ -2231,8 +2247,8 @@ flowchart TD
     X13 -->|"yes"| X14["wait for the close event, then finish"]
     X13 -->|"no"| X15["start the grace timer"]
     X15 --> X16{"both streams closed before the grace period ends?"}
-    X16 -->|"yes"| X17["take the collected output"]
-    X16 -->|"no"| X18["destroy both streams, take the collected output"]
+    X16 -->|"yes"| X17["take the collected output, and the bytes of each ring as stdoutTail and stderrTail, null without rings"]
+    X16 -->|"no"| X18["cutOff, destroy both streams, take the collected output and the rings the same way"]
     X17 --> Z3
     X18 --> Z3
     X14 --> Z3
@@ -2261,7 +2277,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    C1["a chunk arrives on stdout or stderr"] --> C2["add its length to the stream's byte count"]
+    C1["a chunk arrives on stdout or stderr"] --> C2["add its length to the stream's byte count, and write it to the ring of the stream when there are rings"]
     C2 --> C3{"room left under maxBytes for this stream?"}
     C3 -->|"yes"| C4["keep the part that fits"]
     C3 -->|"no"| C5{"chunk longer than the room?"}
@@ -2277,6 +2293,18 @@ flowchart TD
     E3 -->|"yes"| E4["also copy every KSPROXY_ variable"]
     E3 -->|"no"| E5["extra values override"]
     E4 --> E5
+```
+
+`lastBytes` of a size is the ring: one buffer of that size, made when `run` starts. Its memory is that size per stream, whatever the program writes.
+
+```mermaid
+flowchart TD
+    R1["lastBytes of size: a buffer of size bytes, the place at, 0, and the total written, 0"] --> R2["write of a chunk: its last size bytes at most"]
+    R2 --> R3["copied from at up to the end of the buffer, and what is left from the start of the buffer"]
+    R3 --> R4["at moves on by its length, back to the start past the end, and the total grows by it"]
+    R1 --> R5{"bytes: fewer than size written in all?"}
+    R5 -->|"yes"| R6["OK: the buffer up to the total, as written"]
+    R5 -->|"no"| R7["OK: the buffer from at to its end, then from its start up to at: the last size bytes in order"]
 ```
 
 ## src/inventory.js
@@ -3065,11 +3093,17 @@ flowchart TD
 
 ## src/kinds/shared.js
 
-What the kind objects share and that is not a text helper: `REVIEWED`, the line the ssh and Kubernetes agent notes end with for a target that has review on. It imports nothing, so a kind can import it without a loop; `src/agent-md.js` imports the list of kinds, so the kinds could not take it from there.
+What the kind objects share and that is not a text helper: `REVIEWED`, the line the ssh and Kubernetes agent notes end with for a target that has review on, `jsonForms`, the forms of values as JSON writes them, and `jsonBodyForms`, the same for a service whose JSON writer is not known. It imports nothing, so a kind can import it without a loop; `src/agent-md.js` imports the list of kinds, so the kinds could not take it from there.
 
 ```mermaid
 flowchart TD
     R1["REVIEWED: a command that is not on this list is reviewed before it runs and may be refused"] --> R2["imported by the ssh and the kubernetes kind for their agentSection"]
+    J1["jsonForms of the values"] --> J2["each value as JSON writes it inside a string: a quote, a backslash and the control characters escaped, without the outer quotes"]
+    J2 --> J3["OK: the forms that are not one of the values as they are, so a value that needs no escape gives none"]
+    J3 --> J4["imported by the mongodb, mysql and postgres kinds. The core hides these forms with the values"]
+    K1["jsonBodyForms of the values"] --> K2["for each value, the form as JSON.stringify writes it, that form with each slash written as a backslash and a slash (PHP), and that form with the signs less-than, greater-than and ampersand written as backslash u 003c, 003e and 0026 (Go, Rails)"]
+    K2 --> K3["OK: each form once, without those that are one of the values as they are"]
+    K3 --> K4["imported by the http engine and the mcp kind"]
 ```
 
 ## src/kinds/kubernetes/cluster.js
@@ -3168,7 +3202,7 @@ flowchart TD
     O6 -->|"yes"| O7["spawn kubectl proxy with proxyArgs,<br/>output appended to kube-NAME.log in the session folder"]
     O4 -->|"no"| O7
     O7 --> O8{"the child has a pid?"}
-    O8 -->|"yes"| O9["write kube-NAME.pid in the socket folder: pid and processStartTime"]
+    O8 -->|"yes"| O9["write kube-NAME.pid in the socket folder: pid, processStartTime and program, the base name of kubectlBin"]
     O8 -->|"no"| O10["poll portListening every 250 ms for up to 10 s,<br/>stop early when the child exits or errors"]
     O9 --> O10
     O10 --> O11{"listening?"}
@@ -3242,7 +3276,7 @@ flowchart TD
     R6 -->|"yes"| R7{"processStartTime known and within 5 s of startedAt?"}
     R7 -->|"no"| R14
     R7 -->|"yes"| R8["commandLine: ps -o command= -p PID, 2 s timeout,<br/>trimmed output when ps exits 0, else null"]
-    R8 --> R9{"known and contains the word proxy with a space on each side?"}
+    R8 --> R9{"isProxyCommand: known, and contains the word proxy with a space on each side,<br/>or is exactly the program name of the record, a text, for a kubectl that hides its arguments?"}
     R9 -->|"no"| R14
     R9 -->|"yes"| R10{"SIGTERM works?"}
     R10 -->|"no"| R14
@@ -3812,7 +3846,7 @@ The exact text of each reason given to the agent, with PROGRAM, OPTION, SCRIPT, 
 
 ## src/kinds/engines/http.js
 
-The http engine, shared by the custom `http` kind and, later, `elasticsearch` and `rabbitmq`. It imports only `src/allowlist.js`, `src/checks.js` and `src/text.js`. `readRequest` is the strict reader: every field of a request is hostile, and every refusal is an `AllowError` with a short text, thrown by `refuse`. The limits are `MAX_PATH_BYTES` 2048, `MAX_QUERY_NAMES` 50, a query name of at most 256 and a value of at most 2048 characters, and `MAX_BODY_BYTES` 65536. `METHODS` is GET, HEAD, POST, PUT, DELETE and PATCH, and `BODY_WORD` is the word `+body`. `isPlainObject` is an object that is not null and not an array; `describeChar` names a character as U+XXXX when it is not printable ASCII, else in double quotes.
+The http engine, shared by the custom `http` kind and, later, `elasticsearch` and `rabbitmq`. It imports only `src/allowlist.js`, `src/checks.js`, `src/text.js` and `jsonBodyForms` of `src/kinds/shared.js`. `readRequest` is the strict reader: every field of a request is hostile, and every refusal is an `AllowError` with a short text, thrown by `refuse`. The limits are `MAX_PATH_BYTES` 2048, `MAX_QUERY_NAMES` 50, a query name of at most 256 and a value of at most 2048 characters, and `MAX_BODY_BYTES` 65536. `METHODS` is GET, HEAD, POST, PUT, DELETE and PATCH, and `BODY_WORD` is the word `+body`. `PAGING_HINT`, `the API's own paging and filters (size, from, filter_path)`, is the `cutHint` of the kinds on this engine (see "The cut line, the end part and the hint" in the `src/tools.js` section). `isPlainObject` is an object that is not null and not an array; `describeChar` names a character as U+XXXX when it is not printable ASCII, else in double quotes.
 
 ### readRequest, the fields and the method
 
@@ -4008,14 +4042,25 @@ flowchart TD
 
 ### hideSecrets and encodedForms
 
+`hideSecrets` hides every place of the text that a value covers. It finds every occurrence of every value in the text as it came (`indexOf`, going on one character after each place, so occurrences that overlap are found too), and each run of covered characters becomes one `[hidden]`; two occurrences that only touch give two. Three older ways each had a leak. Replacing the values one after the other, the longest first, looked at earlier `[hidden]` words again: a value that is a piece of that word (such as `[`) was replaced inside them, and a cut piece of a secret could grow past what `cutRoom` leaves out. It also left the start of a shorter value in clear when a longer one overlapped its end. Taking the value that starts first left the rest of a longer value in clear when a shorter one overlapped its start: an agent that wrote a user name less its last characters before a password that the target printed could see the rest of that password. Covering every place leaves nothing of either value. No regular expression is built from the values: the engine refused one built from a very long hidden text, and the call then answered with no output.
+
 ```mermaid
 flowchart TD
-    S1["hideSecrets of text and values"] --> S2["the values that are not empty, longest first"]
-    S2 --> S3["each one replaced everywhere in the text by the word hidden in square brackets"]
-    S3 --> S4["OK: the text, so a service that echoes the request headers gives no credential to the agent"]
+    S1["hideSecrets of text and values"] --> S2["spans: for each different value that is not empty, the start and the end of every occurrence in the text,<br/>found by indexOf from one character after the one before, so overlapping ones are found"]
+    S2 --> S3{"any span?"}
+    S3 -->|"no"| S4["OK: the text as it is"]
+    S3 -->|"yes"| S5["the spans in the order of their starts, and the first one as the run"]
+    S5 --> S6{"the next span starts before the end of the run?"}
+    S6 -->|"yes"| S7["the run ends at the later of the two ends"]
+    S6 -->|"no, it only touches it or comes later"| S8["out: the text before the run and the word hidden in square brackets, then this span is the run"]
+    S7 --> S6
+    S8 --> S6
+    S6 -->|"no span left"| S9["OK: out, the text before the last run, the word hidden in square brackets, and the text after it,<br/>so a service that echoes the request headers gives no credential to the agent"]
     E1["encodedForms of auth and the secrets"] --> E2{"basic auth?"}
     E2 -->|"yes"| E3["the base64 of user, colon, password: the Authorization header without Basic and a space"]
-    E2 -->|"no auth, bearer or header"| E4["none: those headers send a secret value as it is, which the core hides anyway"]
+    E2 -->|"no auth, bearer or header"| E4["no base64 form: those headers send a secret value as it is, which the core hides anyway"]
+    E3 --> E5["OK: that form, then jsonBodyForms of every secret value and of that credential: each as a JSON body shows it"]
+    E4 --> E5
 ```
 
 ### send, the request
@@ -4036,11 +4081,11 @@ flowchart TD
 
 ### send, the reply
 
-This diagram shows how the reply becomes the result; no reply header but the content type is ever shown.
+This diagram shows how the reply becomes the result; no reply header but the content type is ever shown. `contentTypeOf` does not shorten the content type: the core hides the secrets after `send`, and a clip before that would show the start of a credential that a server put in the header. A result whose body was read, and that did not time out, says `ownStderr: true`: its stderr is empty or `the reply was cut off`, a text the engine wrote whole, which the core shows whole (see `fitStreams` in the `src/tools.js` section).
 
 ```mermaid
 flowchart TD
-    Y1["comes from: send, the request"] --> H1["contentTypeOf: the content-type header without control characters, clipped to 200, or (none)"]
+    Y1["comes from: send, the request"] --> H1["contentTypeOf: the content-type header without control characters, not shortened, or (none)"]
     H1 --> H2["the head: HTTP STATUS, a new line, content-type: TYPE, an empty line"]
     H2 --> H3{"a status from 300 to 399?"}
     H3 -->|"yes"| H4["cancel the body when there is one, no second request is made"]
@@ -4048,9 +4093,9 @@ flowchart TD
     H3 -->|"no"| L1["readLimited of the body, none for HEAD: chunks until maxBytes, the last one cut, then the stream is left"]
     L1 --> L2{"the stream broke?"}
     L2 -->|"yes, and stop fired"| T1["OK: timed out, exit code null, the head and the part read"]
-    L2 -->|"yes, another error"| F1["OK: exit code 1, the head and the part read, stderr the reply was cut off"]
+    L2 -->|"yes, another error"| F1["OK: exit code 1, the head and the part read, stderr the reply was cut off, ownStderr, cutOff: the body did not end on its own"]
     L2 -->|"no"| L3{"a status from 200 to 299?"}
-    L3 -->|"yes"| O1["OK: exit code 0, the head and the body as UTF-8 text, truncated when it was cut"]
+    L3 -->|"yes"| O1["OK: exit code 0, the head and the body as UTF-8 text, empty stderr, ownStderr, truncated when it was cut"]
     L3 -->|"no"| O2["OK: exit code 1, the same: a 404 is a failed call, not a refusal"]
 ```
 
@@ -4166,7 +4211,7 @@ flowchart TD
     P1["perform of the recorded target, the decision, the secrets, timeoutMs, maxBytes, the signal and the input"] --> P2["readRequest of the input again, the same request that was decided"]
     P2 --> P3["send with the base URL, authHeader of the auth and the secrets, the request, the limits and the signal"]
     P3 --> P4["OK: the result of send as it is, nothing hidden here"]
-    H1["hiddenForms of the target and the secrets"] --> H2["encodedForms of the auth: the base64 credential of basic auth, which the core hides with the values"]
+    H1["hiddenForms of the target and the secrets"] --> H2["encodedForms of the auth: the base64 credential of basic auth, which the core hides with the values, and jsonBodyForms of the secret values and of that credential: each as a JSON body shows it"]
 ```
 
 ### The tool, checkInput and the notes
@@ -4255,7 +4300,7 @@ flowchart TD
     L2 -->|"no"| L4["line: listening on the addresses, cleaned and joined with a comma and a space, then http or https in brackets by tls"]
     L4 --> L5["line of tokenLine, see below"]
     L5 --> L6["one clientLine for each client, in file order"]
-    L6 --> L7["then for each client whose wrong is more than 0: two spaces, refused N wrong tokens from, the cleaned address"]
+    L6 --> L7["then for each client whose wrong is more than 0: two spaces, refused N wrong token for 1 or wrong tokens for more, then from, the cleaned address"]
     L7 --> L8["OK: the lines"]
 ```
 
@@ -6016,7 +6061,7 @@ flowchart TD
 flowchart TD
     V1["onEvent of the listener"] --> V2{"connected?"}
     V2 -->|"yes"| V3["print LISTEN ADDRESS CLIENT connected"]
-    V2 -->|"no, refused"| V4["print LISTEN refused N wrong tokens from ADDRESS"]
+    V2 -->|"no, refused"| V4["print LISTEN refused N wrong token (for 1) or wrong tokens (for more) from ADDRESS"]
     F1["fail of a text"] --> F2{"a listener was started?"}
     F2 -->|"yes"| F3["close it: its calls are ended and listen.json is released"]
     F2 -->|"no"| F4["complain: LISTEN and the text on the real stderr"]
@@ -6087,7 +6132,7 @@ Only a link-local IPv6 address has a zone after `%`, as `parseListen` requires, 
 
 ## src/text.js
 
-The small text helper that sits below everything else and imports nothing: `clip` of text and max. It was in `src/audit.js`; `src/audit.js` imports the list of kinds and the kinds import the cluster mechanics, which need `clip`, so keeping it in `src/audit.js` made a loop of imports. Now `src/audit.js`, `src/review.js`, `src/tools.js`, `src/broker.js`, `src/kinds/kubernetes/cluster.js`, `src/kinds/engines/http.js` and the kinds `http`, `command`, `kafka` and `mongodb` (the last also in its `document.js`) import it from here.
+The small text helpers that sit below everything else and import nothing: `clip` of text and max, and `sizeText` of a number of bytes, the short form of a size in the cut lines of an answer (`src/tools.js`). `clip` was in `src/audit.js`; `src/audit.js` imports the list of kinds and the kinds import the cluster mechanics, which need `clip`, so keeping it in `src/audit.js` made a loop of imports. Now `src/audit.js`, `src/review.js`, `src/tools.js`, `src/broker.js`, `src/kinds/kubernetes/cluster.js`, `src/kinds/engines/http.js` and the kinds `http`, `command`, `kafka` and `mongodb` (the last also in its `document.js`) import it from here.
 
 ```mermaid
 flowchart TD
@@ -6099,6 +6144,18 @@ flowchart TD
     T1 --> T4["src/review.js and src/tools.js: import clip"]
     T1 --> T5["src/broker.js and src/kinds/engines/http.js: import clip"]
     T1 --> T6["the kinds http, command, kafka and mongodb, and src/kinds/mongodb/document.js: import clip"]
+    T1 --> T7["src/tools.js: imports sizeText too"]
+```
+
+```mermaid
+flowchart TD
+    S1["sizeText of bytes"] --> S2{"below 1024?"}
+    S2 -->|"yes"| S3["OK: the bytes and B, for example 900 B"]
+    S2 -->|"no"| S4["the number in KiB, rounded: one decimal below 10, a decimal of 0 left out, none from 10 up"]
+    S4 --> S5{"it rounds to 1024 or more, and the unit is not GiB yet?"}
+    S5 -->|"yes"| S6["the number in the next unit, MiB, then GiB, rounded the same way"]
+    S6 --> S5
+    S5 -->|"no"| S7["OK: the rounded number and the unit, for example 1.5 KiB, 256 KiB, 1 MiB for 1023.9 KiB, 9.4 MiB, 5120 GiB"]
 ```
 
 ## src/token.js
@@ -6233,7 +6290,7 @@ The real warning has a semicolon after the day: `the token expires on DAY; type 
 
 ## src/tools.js
 
-The MCP tools: `toolDefinitions` (`list_targets` first, then the tool of each kind in list order that is listed, built when called, then the tools of the live session that `directTools` gives), `callTool` and its exec path, `callDirect` (a tool of the session routed to `mcp_call`, `ROUTED_TOOL`) with `sessionTools`, `listFieldsOf` (what the kind of a target adds in `list_targets`), `detailOf` (the call among the arguments), `reviewRoute` and `reviewWordsProblem` for what may go to the reviewer, `targetState`, `scrubOutput`, and `noSessionText`, the answer while no session is live. The exec path shares three helpers with `answerCall`, the handler of a brokered call inside `ksproxy start`: `detailProblem` (the type of the call), `auditedDetailOf` (the call as the audit entry records it) and `reviewStep` (the review route, the reviewer and the refusal texts). `answerCall` uses `performWithin` and `validResult` for the run; both paths shape each stream with `fitStream`, which uses `dropCutSecret`, `dropLast` and `capBytes` with the visible limit of the target from `visibleLimit` and the fixed `OUTPUT_MARGIN`; `answerLimit` gives the longest answer line of a brokered call; `callSocketOrNull` and `brokeredState` serve the mcp side of a brokered kind.
+The MCP tools: `toolDefinitions` (`list_targets` first, then the tool of each kind in list order that is listed, built when called, then the tools of the live session that `directTools` gives), `callTool` and its exec path, `callDirect` (a tool of the session routed to `mcp_call`, `ROUTED_TOOL`) with `sessionTools`, `listFieldsOf` (what the kind of a target adds in `list_targets`), `detailOf` (the call among the arguments), `reviewRoute` and `reviewWordsProblem` for what may go to the reviewer, `targetState`, `scrubOutput` with `scrubFolders` and `dropCutFolder`, and `noSessionText`, the answer while no session is live. The exec path shares three helpers with `answerCall`, the handler of a brokered call inside `ksproxy start`: `detailProblem` (the type of the call), `auditedDetailOf` (the call as the audit entry records it) and `reviewStep` (the review route, the reviewer and the refusal texts). `answerCall` uses `performWithin` and `validResult` for the run; both paths shape each stream with the visible limit of the target from `visibleLimit` and the read limit from `readLimit` (the visible limit, the fixed `OUTPUT_MARGIN`, and more for a long hidden text), and write the answer with `streamsText`: `fitOf` gives the fit of a call (with `dropCutFolder`, which uses `dropCutStart`, for a stream of ssh, kubernetes or local that did not end on its own), `fitStreams` finds a stdout that its reader stopped, `fittedStream` fits a stream of ssh, kubernetes or local with `fitCounted` (with `dropLast` and `capBytes`) and one of a brokered call with `fitBrokered` (with `hideSecrets`, `cutRoom`, `firstBytes` and `capBytes`), `fitEnd` and `lastLines` make the end part of ssh, kubernetes and local from the last `END_RING` bytes that `run` keeps, `shownStream`, `showingOf` and `sizeOf` write each stream and its cut line, and `formatResult` puts the first line, the cut lines, the hint of the kind and the streams together (`outputFailed` when the hiding or the scrub throws); `answerLimit` gives the longest answer line of a brokered call; `callSocketOrNull` and `brokeredState` serve the mcp side of a brokered kind.
 
 The decisions, the commands, the state checks and the output rewrites of each kind live in the kind objects (`src/kinds/ssh/index.js`, `src/kinds/kubernetes/index.js`, `src/kinds/local/index.js`). This file finds the kind with `kindByTool` or `kindByKey` and calls it. It imports nothing under `src/kinds/` except the list.
 
@@ -6415,11 +6472,11 @@ flowchart TD
 ```mermaid
 flowchart TD
     Y0["visibleLimit of the target as session.json has it: outputKiB times 1024, 262144 by default, at most 4 MiB"] --> Y1["command of the kind, with the target, the decision and dir, env, session and the input,<br/>gives program, args and options, drawn in the kind sections"]
-    Y1 --> Y5["run program and args with the timeout in ms, at most the read limit,<br/>the visible limit plus 32768, bytes kept per stream, the kind's options, and the signal when given:<br/>its abort kills the process group at once, the result is audited as any other"]
+    Y1 --> Y5["run program and args with the timeout in ms, at most the read limit,<br/>readLimit of the visible limit and no hidden texts, the visible limit plus 32768, bytes kept per stream, the last END_RING bytes of each stream, 53248, the kind's options,<br/>and the signal when given: its abort kills the process group at once, the result is audited as any other"]
     Y5 --> Y6["audit: the entry of the call, with from and client when there is an origin, decision allowed, rule, review certainty and reason when reviewed, exitCode, timedOut, spawnError,<br/>durationMs, stdoutBytes, stderrBytes. A failed audit write prints ksproxy: could not write audit log: MESSAGE on stderr and the answer is unchanged"]
-    Y6 --> Y7["fitStreams: fitStream on stdout and stderr with no secret values: scrubOutput, drop the end of a stream<br/>that reached the read limit, then cut to the visible limit, see answerCall"]
-    Y7 -->|"the hiding or the scrub throws, after the audit"| YF["outputFailed: the line of formatResult with no output and no truncation note, then the output could not be shown, isError true"]
-    Y7 --> Y8["formatResult: could not start, or timed out after N s, or exit code N, then a stdout and a stderr section<br/>when not empty, then a truncation note with the visible limit when run or fitStream left something out"]
+    Y6 --> Y7["fitStreams with fitOf: no secret values, counted, ended unless timed out, cut off by the grace or the signal aborted:<br/>fitCounted on stdout and stderr, scrubOutput, drop the end of a stream that reached the read limit, cut to the visible limit"]
+    Y7 -->|"the hiding or the scrub throws, after the audit"| YF["outputFailed: the first line of formatResult with no output and no cut line, then the output could not be shown, isError true"]
+    Y7 --> Y8["streamsText within the visible limit: could not start, or timed out after N s, or exit code N, then a cut line for each cut stream<br/>and the hint of the kind, then a stdout and a stderr section when not empty. See The cut line, the end part and the hint"]
     Y8 --> Y9{"timed out, spawn error, or exit code not 0?"}
     Y9 -->|"yes"| O1["OK: the text, isError true"]
     Y9 -->|"no"| O2["OK: the text, isError false"]
@@ -6444,7 +6501,7 @@ A target whose kind is in no kind's key can only come from a session file edited
 
 ### answerCall
 
-The flow of `answerCall` is drawn in Part 1, 8.2 (finding the target in memory, the type of the call, `decide`, `reviewStep`) and 8.3 (the run and the answer). Its audit entry has the fields of `execTool`: event call, tool, the kind's label, the target clipped to 64, the call from `auditedDetailOf`, `from` and `client` when `checkedOriginFields` accepts the origin of the request, then the decision fields. `checkedOriginFields` gives both fields only when the origin is a plain object and each of `from` and `client` is a string of 1 to 64 printable ASCII characters (0x20 to 0x7E); otherwise it gives none, and the call runs as a local one. It never refuses a call. `originFields` is the other side: for the origin that `callTool` was given, it gives `from` and `client`, or none when the origin is undefined. The audit write goes through the terminal of `start` when it fails. Before the cut, `hideSecrets` of the http engine replaces every secret value of the target, and every form of one that the kind's `hiddenForms` gives, in both streams by `[hidden]`, for every brokered kind, so that a program that prints its own environment gives nothing away. No kind hides anything in `perform`: hiding there would shorten a stream that reached the read limit, and the core could no longer tell that it was cut. The texts to hide are used for nothing else; the byte counts of the audit entry are those of the output that `perform` gave. The audit entry is written before the streams are fitted, in `execTool` too, so a call that ran is audited even when the hiding or the scrub throws; the agent then gets the first line of the answer and `the output could not be shown`, without any output. This diagram shows the helpers of the run and the check of the origin.
+The flow of `answerCall` is drawn in Part 1, 8.2 (finding the target in memory, the type of the call, `decide`, `reviewStep`) and 8.3 (the run and the answer). Its audit entry has the fields of `execTool`: event call, tool, the kind's label, the target clipped to 64, the call from `auditedDetailOf`, `from` and `client` when `checkedOriginFields` accepts the origin of the request, then the decision fields. `checkedOriginFields` gives both fields only when the origin is a plain object and each of `from` and `client` is a string of 1 to 64 printable ASCII characters (0x20 to 0x7E); otherwise it gives none, and the call runs as a local one. It never refuses a call. `originFields` is the other side: for the origin that `callTool` was given, it gives `from` and `client`, or none when the origin is undefined. The audit write goes through the terminal of `start` when it fails. Before the cut, `hideSecrets` of the http engine replaces every secret value of the target, and every form of one that the kind's `hiddenForms` gives, in both streams by `[hidden]`, for every brokered kind, so that a program that prints its own environment gives nothing away. No kind hides the output it reads in `perform`: hiding there would shorten a stream that reached the read limit, and the core could no longer tell that it was cut. (The mcp kind hides the secrets in the texts of the server that it writes itself, such as an error message or a link, before it clips them; see `src/kinds/mcp/answer.js`.) The texts to hide are used for nothing else; the byte counts of the audit entry are those of the output that `perform` gave. The audit entry is written before the streams are fitted, in `execTool` too, so a call that ran is audited even when the hiding or the scrub throws; the agent then gets the first line of the answer and `the output could not be shown`, without any output. This diagram shows the helpers of the run and the check of the origin.
 
 ```mermaid
 flowchart TD
@@ -6465,7 +6522,7 @@ flowchart TD
     P3 --> P6["the first of the three settles the call, then both timers are cleared and the listener removed"]
     P4 --> P6
     P5 --> P6
-    S1["fitStreams of a result and the fit"] --> S2{"fitStream of stdout and of stderr both return?"}
+    S1["fitStreams of a result and the fit"] --> S2{"fittedStream of stdout and of stderr both return?"}
     S2 -->|"yes"| S3["both fitted streams"]
     S2 -->|"no, a throw"| S4["null: the caller answers with outputFailed, OUTPUT_FAILED, the output could not be shown"]
     V1["validResult of a result"] --> V2{"an object, exitCode an integer or null, stdout and stderr strings?"}
@@ -6475,48 +6532,200 @@ flowchart TD
 
 #### The output limit: hide first, cut second
 
-A stream is read with a limit larger than the bytes the agent sees, so that a path is replaced whole before anything is cut. The visible limit is `visibleLimit` of the target: `outputKiB` times 1024, so 262144 bytes unless the inventory entry has `maxOutputKiB`, and at most 4194304 (4 MiB). `execTool` reads it from the target in session.json, `answerCall` from the target that `ksproxy start` opened and keeps in memory. `fitStream` works in this order: hide, scrub, drop the margin, cut.
+A stream is read with a limit larger than the bytes the agent sees, so that a path is replaced whole before anything is cut. The visible limit is `visibleLimit` of the target: `outputKiB` times 1024, so 262144 bytes unless the inventory entry has `maxOutputKiB`, and at most 4194304 (4 MiB). `execTool` reads it from the target in session.json, `answerCall` from the target that `ksproxy start` opened and keeps in memory. The read limit is `readLimit` of the visible limit and the hidden texts: the visible limit, `OUTPUT_MARGIN`, and what `cutRoom` of the hidden texts is over 1 KiB. That is the visible limit plus `OUTPUT_MARGIN`, 288 KiB by default, for ssh, kubernetes and local (`execTool` gives no hidden texts) and for a target whose longest hidden text has at most 128 characters; it is larger for a target with a longer one (see `cutRoom` below). It is the same for every call on a target; `run` and the engines stop a stream there, in raw bytes. `fitOf` gives the fit of a call, and `fittedStream` fits each stream in one of two ways: `fitCounted` for ssh, kubernetes and local, which hide no secret, and `fitBrokered` for every brokered kind, which hides the secrets of its target.
 
-1. `dropCutSecret`, `hideSecrets`, then `dropCutSecret` again: every secret value and every form of one is replaced by `[hidden]`, and a last piece that is the start of one is dropped, whatever ended the text. A secret therefore needs no room past the visible limit.
-2. `scrubOutput` on the whole text that was read: every path that is in it whole is replaced by its label, also one that crosses the visible limit.
-3. When the text reached the read limit, its last `OUTPUT_MARGIN` bytes are dropped. Only there can the text end in a piece of a path that the read limit cut, which the scrub could not know.
-4. `capBytes` to the visible limit.
-
-The margin comes from that piece. A path is at most 4096 bytes (the longest path Linux accepts; macOS accepts 1024), so the piece is shorter than 4096 bytes as read. Hiding replaces one byte or more by `[hidden]`, 8 bytes, and the scrub replaces a path of 2 bytes or more by a label of at most 9 bytes (`<ksproxy>`; a proxy address of 11 bytes or more becomes `<proxy>`), so each byte of the piece is at most 8 bytes after both. So `OUTPUT_MARGIN` is 8 times 4096, 32768 bytes, whatever the visible limit, and the read limit is the visible limit plus 32768, the same for every call on a target. Nothing the agent, the audit log or the terminal sees can so tell the length of a secret. A text that ended for another reason (the time limit, a broken stream) can still end in a piece of a path: it was not cut by the read limit, so no margin is dropped, and such a piece may be shown.
+The margin comes from a path that the read limit cut. A path is at most 4096 bytes (the longest path Linux accepts; macOS accepts 1024), so the piece is shorter than 4096 bytes as read. Hiding replaces one byte or more by `[hidden]`, 8 bytes, and the scrub replaces a path of 2 bytes or more by a label of at most 9 bytes (`<ksproxy>`; a proxy address of 11 bytes or more becomes `<proxy>`), so each byte of the piece is at most 8 bytes after both. So `OUTPUT_MARGIN` is 8 times 4096, 32768 bytes, whatever the visible limit.
 
 ```mermaid
 flowchart TD
-    V1["visibleLimit of a target: outputKiB of it times 1024, 262144 by default, at most 4194304"] --> M2["the read limit: the visible limit plus OUTPUT_MARGIN, given to run or perform as maxBytes"]
-    M1["OUTPUT_MARGIN: 8 times LONGEST_PATH, 4096, so 32768"] --> M2
-    F1["fitStream of a text, the hidden texts, the scrub and the visible limit"] --> F2["dropCutSecret, then hideSecrets: each text replaced by hidden in brackets, then dropCutSecret again"]
-    F2 --> F3["the scrub: scrubOutput with the session, on the whole text"]
-    F3 --> F4{"the text as read has at least the visible limit plus OUTPUT_MARGIN bytes?"}
-    F4 -->|"yes"| F5["dropLast: the scrubbed text without its last OUTPUT_MARGIN bytes, or empty when it is shorter, cut is true"]
-    F4 -->|"no"| F6["the scrubbed text"]
-    F5 --> C1["capBytes of the text and the visible limit"]
-    F6 --> C1
-    C1 --> C2{"at most the visible limit in bytes as UTF-8?"}
-    C2 -->|"yes"| C3["the text, not cut"]
-    C2 -->|"no"| C4["its first bytes up to the visible limit, cut"]
-    C3 --> F7["OK: the text, and cut when the end was dropped or capBytes cut"]
-    C4 --> F7
+    V1["visibleLimit of a target: outputKiB of it times 1024, 262144 by default, at most 4194304"] --> M2["readLimit of the visible limit and the hidden texts: the visible limit plus OUTPUT_MARGIN,<br/>plus cutRoom of the hidden texts less 1024, given to run or perform as maxBytes"]
+    M1["OUTPUT_MARGIN: GROWTH, 8, times LONGEST_PATH, 4096, so 32768"] --> M2
+    M2 --> M3["no hidden texts, as in execTool, or none over 128 characters: cutRoom is 1024, so 294912 by default"]
+    O1["fitOf of the hidden texts, the session, the environment, the visible limit, ended and counted"] --> O2["OK: the hidden texts, the scrub of scrubOutput with the session,<br/>the visible limit, ended, counted, and cutFolder: dropCutFolder with the session, used only by fitCounted and fitEnd"]
+    O2 --> O3{"counted: ssh, kubernetes or local?"}
+    O3 -->|"yes"| O4["each stream is fitted by fitCounted"]
+    O3 -->|"no"| O5["each stream is fitted by fitBrokered"]
 ```
 
-#### dropCutSecret: a secret cut at the end of a stream
+#### fitCounted: a stream of ssh, kubernetes or local
 
-A stream can end inside a secret for any reason: the read limit, the call's time limit, or a stream the service broke. So whatever ended the text, `fitStream` drops a last piece that is the start of a hidden text. It does so before hiding and again after: before, so that a shorter hidden text that overlaps the start of a cut one cannot leave its other part in view; after, for a start that hiding brought to the end. The cost is small: only the last characters, one fewer than the longest hidden text, are compared, and the first start found from the left is the longest piece, whichever hidden text it starts. The end of a stream can so lose a few characters that only look like the start of a secret.
+`fitCounted` works in this order: drop a cut folder, scrub, drop the margin, cut.
+
+0. For a stream that did not end on its own (the time limit, a stop, a stream that `run` closed at the end of its grace period), `dropCutFolder` (`cutFolder` of the fit) drops a last piece that is the start of a folder that `scrubOutput` replaces, which the scrub cannot know. Such a piece goes whether it was cut or not: a stream of that sort that ends in `/` loses it. A stream that ended is left as it is.
+1. `scrubOutput` on the whole text that was read: every path that is in it whole is replaced by its label, also one that crosses the visible limit.
+2. When the stream reached the read limit, its last `OUTPUT_MARGIN` bytes are dropped (`dropLast`). Only there can the text end in a piece of a path or of a proxy address that the read limit cut, which the scrub could not know, and the proxy address has no list of texts for step 0.
+3. `capBytes` to the visible limit.
 
 ```mermaid
 flowchart TD
-    D1["dropCutSecret of a text and the hidden texts"] --> D2["end: the length of the text, less the replacement characters at its very end, left by a character cut in two"]
-    D2 --> D3["at: from end less the longest hidden text plus 1, or 0, up to end"]
-    D3 --> D4{"the piece from at to end is shorter than a hidden text and starts it?"}
+    F1["fitCounted of a text and the fit"] --> F2["reached: the text has at least the read limit in bytes"]
+    F2 --> F3{"ended?"}
+    F3 -->|"yes"| F4["the text as it is"]
+    F3 -->|"no"| F5["cutFolder of the text"]
+    F4 --> F6["the scrub: scrubOutput with the session, on the whole text"]
+    F5 --> F6
+    F6 --> F7{"reached?"}
+    F7 -->|"yes"| F8["dropLast: the scrubbed text without its last OUTPUT_MARGIN bytes, or empty when it is shorter"]
+    F7 -->|"no"| F9["the scrubbed text"]
+    F8 --> C1["capBytes of the text and the visible limit: the text when it has at most that many bytes as UTF-8,<br/>else its first bytes up to the visible limit, cut"]
+    F9 --> C1
+    C1 --> F10["OK: the text, cut when reached or when capBytes cut"]
+```
+
+#### fitBrokered: a stream of a brokered call
+
+A brokered stream can hold the secrets of its target, so no rule that decides what to show may read where a secret lies or how long it is. Every rule below reads the stream only after every hidden text in it is replaced by `[hidden]`, and every count is made in that text before the scrub, so no count tells how much the scrub took out either. No rule looks at what the text ends with: a brokered stream never drops a guessed start of a folder (`cutFolder` is not used here). How many bytes are left out (`cutRoom`) is the one count that depends on the secrets: it tells what is said of `cutRoom` below. Older rules did read where a secret or a folder lies, and each let an agent learn about it from what it was shown:
+
+- **A guess at the end.** A last piece of a stream that was a proper start of a hidden text was dropped, whatever ended the stream. So an agent that ended its output with a guess learned from the answer whether a secret starts with it, one character at a time.
+- **The read limit.** A stream was shown as cut at the read limit exactly when its raw bytes, secrets included, reached that limit. An agent that changed the padding around a secret until the line changed found the secret's length.
+- **Counts after the scrub.** The visible limit was looked for after the scrub. Some hundreds of copies of a path of the session, which the scrub makes shorter, brought a stream that the read limit stopped under the visible limit, and what was shown then moved with the length of one secret in it. And a stream that did not end on its own dropped a last piece that starts a folder of the scrub, so the state folder could be found one character at a time from timed-out calls.
+
+`fitBrokered` gives `{ text, cut, reason, cleaned }` by these rules:
+
+1. Every hidden text (the secret values and the kind's `hiddenForms`) is replaced by `[hidden]` in the whole stream first (`hideSecrets`). Every count after it is in bytes of that text, before the scrub, so it tells neither the length of a secret nor how much the scrub takes out.
+2. **A stream that ended on its own** (ended, and its raw bytes below the read limit) drops nothing at its end. A start of a hidden text at its end is what the program wrote, not a piece that a cut left, and is shown as it is anywhere else; dropping it would be the guess of the first leak. Of at most the visible limit once hidden, it is scrubbed and shown whole, cut at the visible limit with `capBytes` only if the scrub made it longer; `cleaned` is then the size of the scrubbed text. Of more, its `firstBytes` are shown. When something was cut, the line is `cut at 256 KiB: the rest was left out` (`LEFT_OUT`, with `sizeText` of the visible limit).
+3. **A stream that did not end on its own** (the time limit, `cutOff`, `truncated`, or raw bytes at the read limit) can end in a piece of a hidden text, which hiding could not know, or of a path. Its last `cutRoom` bytes are left out by count, never by what they are. What is kept is then:
+   - the visible limit and `LONGEST_PATH`, 4096 bytes, or more: its `firstBytes` are shown, with the same line as in rule 2. No newline is looked for. When the read limit stopped the stream, its end moves with the length of the secrets in it, so any rule that counts from its end would tell that length; the place of this cut is past the bytes shown.
+   - less: it is cut after its last newline before the bytes left out (nothing is shown when there is none), then scrubbed and cut at the visible limit, so that it ends with a whole line, and a hidden text or a path of one line is not shown in part even if the count were wrong. The line is `cut: the stream did not end on its own, so its end was left out` (`END_LEFT_OUT`). An empty stream has no line, unless a reader stopped it (`stopped`).
+
+`cutRoom` of the hidden texts is 1 KiB while the longest one has at most `SHORT_SECRET`, 128, characters (1 KiB divided by `GROWTH`), else `GROWTH`, 8, KiB for each 1024 characters of the longest one, begun ones counted: 8 KiB for 129 to 1024 characters, 16 KiB for 1025 to 2048. So it is always 8 bytes or more for each character of the longest one. A hidden text that the end of the stream cut has fewer characters than the whole one, and hiding the shorter texts inside the piece makes each of its characters at most 8 bytes, so the piece lies in those bytes. The count is made after hiding, not in the raw stream: counting raw bytes would itself tell the length of a secret that lies after the newline, as the line would be shown exactly when the secret and the padding reach the count. The size tells of the longest hidden text only whether it has more than 128 characters, and then its length in steps of 1024 characters.
+
+`firstBytes` of the hidden bytes, the scrub and the visible limit is what the agent gets of a stream of more than the visible limit: the first visible bytes, scrubbed, and the first visible and `LONGEST_PATH` bytes, scrubbed, in which a path of the scrub that crosses the visible limit is whole. What the two have in common from their start is shown, cut at the visible limit. So a path that crosses the visible limit is left out whole without looking for a start of a folder there, which would tell whether a guess starts a folder, and a character that the cut split is left out too. Where the cut falls is counted before the scrub, so the answer shows the visible limit less what the scrub took out of it: an answer with scrubbed paths in it shows a little less than 256 KiB.
+
+`readLimit` of the visible limit and the hidden texts is the visible limit, `OUTPUT_MARGIN` and what `cutRoom` is over 1 KiB: 288 KiB by default, and more for a target whose longest hidden text has more than 128 characters. `execTool` gives it no hidden texts, `answerCall` the hidden texts of the target, and `fitStreams` and `fitBrokered` use it to tell whether a stream reached it. A stream that it stopped has at least the visible limit plus 31744 bytes (`OUTPUT_MARGIN` less 1 KiB) plus `cutRoom` as read, so once hidden and without its last `cutRoom` bytes it keeps the visible limit plus 31744 bytes less what hiding took. That is the visible limit and `LONGEST_PATH` or more while hiding takes at most 31744 less 4096, 27648 bytes (27 KiB), out of it: such a stream then shows its `firstBytes` as a shorter stream that ended does. So with one hidden text in a stream, the answer is the same for every length of that text up to about 27 KiB, and the same whether or not the read limit stopped it. Only hiding counts here, not the scrub. With a fixed read limit, a target with a hidden text of about 4000 characters or more would leave out the whole margin, and the answer would change exactly when the raw bytes reached the read limit, which would tell the length of any secret in the stream.
+
+The cost: a brokered call that did not end on its own loses its last 1 KiB at least, back to the end of a line, so a short output of a call that timed out is not shown at all. Such a call should end on its own. A brokered stream never has an end part.
+
+```mermaid
+flowchart TD
+    B1["fitBrokered of a text, the fit and stopped"] --> B2["bytes: hideSecrets, each hidden text replaced by hidden in brackets, in the whole text.<br/>Every count below is in these bytes, before the scrub"]
+    B2 --> B3{"ended, and the raw text below the read limit?"}
+    B3 -->|"yes"| B13{"bytes more than the visible limit?"}
+    B13 -->|"yes"| B9["OK: firstBytes of bytes, the scrub and the visible limit, cut, the reason cut at the visible limit in sizeText: LEFT_OUT"]
+    B13 -->|"no"| B4["whole: the scrub of bytes, then capBytes of it and the visible limit"]
+    B4 --> B5["OK: the text, cut when capBytes cut, the reason cut at the visible limit: LEFT_OUT,<br/>and cleaned: the bytes of whole"]
+    B3 -->|"no"| B6["keep: the length of bytes less cutRoom of the hidden texts, 0 at least"]
+    B6 --> B8{"keep at least the visible limit plus LONGEST_PATH, 4096?"}
+    B8 -->|"yes"| B9
+    B8 -->|"no"| B10["line: just after the last newline before byte keep, 0 when keep is 0 or there is none"]
+    B10 --> B11["the first line bytes, then the scrub and capBytes to the visible limit"]
+    B11 --> B12["OK: that text, cut when stopped or bytes is not empty, the reason cut: END_LEFT_OUT"]
+    T1["firstBytes of bytes, the scrub and the visible limit"] --> T2["short: the scrub of the first visible bytes,<br/>long: the scrub of the first visible plus LONGEST_PATH bytes"]
+    T2 --> T3["OK: what short and long have in common from their start, then capBytes to the visible limit.<br/>A path that crosses the visible limit and a split character are left out"]
+    R1["cutRoom of the hidden texts"] --> R2["longest: the most characters of one hidden text, 0 when there is none"]
+    R2 --> R3{"longest at most SHORT_SECRET, 128?"}
+    R3 -->|"yes"| R4["OK: 1024"]
+    R3 -->|"no"| R5["OK: GROWTH times 1024, times longest divided by 1024 and rounded up"]
+    L1["readLimit of the visible limit and the hidden texts"] --> L2["OK: the visible limit plus OUTPUT_MARGIN plus cutRoom of the hidden texts, less 1024"]
+```
+
+Four things are still open. A stream that the read limit stopped, and from which hiding takes more than 27 KiB (27648 bytes), keeps less than the visible limit and `LONGEST_PATH` once its last `cutRoom` bytes are left out: what is kept is the visible limit plus 31744 bytes less what hiding took. The newline rule then counts from an end that moves with the secret's length, and can tell that length. Hiding takes the length of a secret less 8 bytes for each copy, so a secret of 16 characters must be in the part that was read 3457 times or more (3457 times 8 bytes is over 27648). The Redis reader refuses a reply by its raw size at the read limit (`truncated`, nothing shown), so whether a reply is shown at all depends on the raw bytes of the secrets in it. The mcp engine does the same with a message of the server over `MAX_MESSAGE_BYTES`, 16 MiB, counted in raw bytes as it is read (`lineReader` over stdio, the body or the events over HTTP): the call then fails with `the answer of the MCP server was too large to read`. And the `mysql` client in batch mode (`--batch`) writes a backslash, a tab, a newline and a NUL character of a value as a backslash and a letter, and the `mongodb` script writes the reply with `EJSON.stringify`, which writes a quote, a backslash and a control character of a string as JSON escapes. Neither kind gives such an escaped form to hide (`mysql` has no `hiddenForms`; `hiddenForms` of `mongodb` gives the passwords of the connection string as written and decoded), so a password with such a character, in a row or a document that the call can read, is shown in its escaped form, not hidden.
+
+The core hides every hidden text of a brokered call here, on the text as it was read, so the test of the read limit still sees the length that `perform` read. The http, elasticsearch, rabbitmq, redis and mongodb kinds give their extra forms through `hiddenForms`. The mcp kind also hides the hidden texts in the texts of the server that it writes itself, before it clips them (an error message, a type, a link, in `answer.js`), so that a clip never cuts a secret in two; the text of the answer itself it leaves to the core.
+
+#### dropCutStart: a folder cut at the end of a stream
+
+`dropCutStart` of a text, the values and a fold drops a last piece of the text that is a proper start, of one character or more, of one of the values: what is left of a value that the end of the text cut. Only the last characters, one fewer than the longest value, are compared, and the first start found from the left is the longest piece. It reads the text to decide, so it is used only for the folders of the scrub (`dropCutFolder`), and only for ssh, kubernetes and local, never for a hidden text, where it would tell whether a guess at the end of a stream starts a secret. A hidden text needs it no more: after hiding, a whole secret cannot be split by a cut, and a cut one lies in the last `cutRoom` bytes that `fitBrokered` leaves out.
+
+```mermaid
+flowchart TD
+    D1["dropCutStart of a text, the values and fold"] --> D2["end: the length of the text, less the replacement characters at its very end, left by a character cut in two"]
+    D2 --> D3["at: from end less the longest value plus 1, or 0, up to end"]
+    D3 --> D4{"the piece from at to end, as fold gives it, is shorter than a value as fold gives it, and starts it?"}
     D4 -->|"yes"| D5["OK: the text up to at, the replacement characters dropped with the piece"]
     D4 -->|"no, at the next at"| D3
     D3 -->|"no at left"| D6["OK: the text as it was"]
 ```
 
-No kind hides on its own. The http, elasticsearch, rabbitmq, redis and mongodb kinds give their extra forms through `hiddenForms`, so every text is hidden here, on the text as it was read, and the test of the read limit still sees the length that `perform` read.
+#### The cut line, the end part and the hint
+
+A stream that is cut gets one line right after the first line of the answer, before the first section, so that a client that cuts a long answer from its end still shows it. Short answers do not change. The line depends on the kind:
+
+- **A brokered stream** has the line that `fitBrokered` gave it: `[stdout cut at 256 KiB: the rest was left out]`, the visible limit of the target in the short form of `sizeText`, or `[stdout cut: the stream did not end on its own, so its end was left out]`. It has no end part. When the budget, after a halving in `answerCall`, cuts it further, the line ends in `; showing 128 KiB`. A whole brokered stream within the visible limit that the budget cuts says `[stdout cut: showing 128 KiB of 200 KiB]`, its size once cleaned, with no end part.
+- **A stream of ssh, kubernetes or local**, which `run` reads to its end and counts whole: its end is where the program ended, or where the time limit or a stop ended it. The line is `[stdout cut: showing 256 KiB of 9.4 MiB]`: the bytes shown and the size of the stream. The stream shows its first part, the line `[... 9.1 MiB cut here ...]` (the size less the bytes shown) and its end part of at most `END_BYTES`, 16384, all within the budget of the stream: the visible limit, or less after a halving. `MARKER_ROOM`, 64 bytes, is kept for the line between them.
+- **No size in a cut line changes with the length of a secret.** (For `ssh`, `kubernetes` and `local`, whose sizes are rounded raw bytes, repeated calls across a rounding edge can find a scrubbed path's length; accepted, as removing paths is cosmetic.) The size in the line of a cut brokered stream is the visible limit, the same for every call on the target (it is counted before the scrub, so a stream with scrubbed paths in it shows a little less); the size of a whole one is that of its text once hidden and scrubbed (`cleaned`), and both sizes are given in bytes when they would look the same in the short form. For ssh, kubernetes and local the size is what `run` counted, before the scrub: those sizes are `rough`, always in the short form, and `under 1 KiB` below 1 KiB (`sizeOf`). A size in the short form can still move by one step at the edge of a unit, so the sizes are close, not exact.
+
+When a stream was cut, the line `narrow it: HINT` follows, with the `cutHint` of the kind when it has one. It only suggests; the rules of the target decide. `AGENT.md` lists the hints of the kinds of the session (`cutSection` of `src/agent-md.js`).
+
+| Kind | `cutHint` |
+| --- | --- |
+| `ssh`, `local` | `tail -n 200, head -n 200, grep -m 50 PATTERN, or wc -l first` |
+| `kubernetes` | `logs --tail=200 or --since=10m, -l to select, -o name` |
+| `postgres`, `mysql` | `fewer columns, a WHERE and a LIMIT, or count(*) first` |
+| `mongodb` | `a filter, a projection and a limit; page with _id greater than the last one` |
+| `command`, `kafka` | `a narrower command or option` |
+| `http`, `elasticsearch`, `rabbitmq` | `PAGING_HINT` of the http engine: `the API's own paging and filters (size, from, filter_path)` |
+| `redis` | `SCAN with COUNT, or a narrower key pattern` |
+| `mcp` | `the tool's own filter or paging arguments` |
+
+`fitStreams` takes the read limit from `readLimit` of the fit's visible limit and hidden texts. A brokered result may say `ownStderr: true`: its stderr is a text that the kind wrote itself, whole, to say why the call stopped (`the reply was cut off` of the http engine, the note of the Redis exchange on a reply over the limit, the note of the mcp kind on a server that did not answer in time). No secret can be cut in such a text, so stderr is then fitted as a stream that ended on its own, and the note is shown whole beside a stdout that lost its end. This diagram shows how each stream is fitted for its line.
+
+```mermaid
+flowchart TD
+    G1["fitStreams of a result and the fit, counted for execTool, not for answerCall"] --> G0["limit: readLimit of the visible limit and the hidden texts of the fit"]
+    G0 --> G2{"not counted, the result says truncated, and neither stream has limit in bytes?"}
+    G2 -->|"yes"| G3["stopped: its reader stopped before the read limit, the texts of an MCP answer cut there,<br/>or a Redis reply over the limit, which shows nothing"]
+    G2 -->|"no"| G4["not stopped"]
+    G3 --> G5["fittedStream of stdout with stopped, then of stderr, never stopped"]
+    G4 --> G5
+    G5 --> G14{"stderr, and the result says ownStderr true?"}
+    G14 -->|"yes"| G15["stderr is fitted with ended true, as a stream that ended on its own"]
+    G14 -->|"no"| G6
+    G15 --> G6{"counted?"}
+    G6 -->|"no"| G7["fitBrokered of the text, the fit and stopped"]
+    G7 --> G8{"cut?"}
+    G8 -->|"yes"| G9["OK: the fitted stream with its reason and no end part"]
+    G8 -->|"no"| G10["OK: the text, not cut, total: cleaned, not rough, and an end part that is always empty"]
+    G6 -->|"yes"| G11["fitCounted of the text and the fit, total: the stdoutBytes or stderrBytes that run counted, rough"]
+    G11 --> G12["end: fitEnd of stdoutTail or stderrTail of run, made when it is asked for, once by shownStream"]
+    G12 --> G13["OK: both fitted streams"]
+    G9 --> G13
+    G10 --> G13
+```
+
+This diagram shows how a fitted stream is written within its budget, and the lines before the sections.
+
+```mermaid
+flowchart TD
+    H1["streamsText of the first line, the fitted streams, the budget and the kind"] --> H2["shownStream of stdout, then of stderr"]
+    H2 --> H3{"shownStream: the stream was cut, or it is longer than the budget?"}
+    H3 -->|"no"| H4["the text as it is, and no line"]
+    H3 -->|"yes"| H5{"the stream has a reason, from fitBrokered?"}
+    H5 -->|"yes"| H6["its first bytes up to the budget, and the line: NAME, then the reason,<br/>then showing and their size when the budget cut them"]
+    H5 -->|"no"| H7{"end gives an end part?"}
+    H7 -->|"no"| H8["its first bytes up to the budget, and the line: NAME cut: showing, then showingOf of their bytes, total and rough"]
+    H7 -->|"yes"| H9["its first bytes up to the budget less the end part and MARKER_ROOM, a newline unless they end in one,<br/>the marker line with sizeOf total less the bytes of both parts, then the end part"]
+    H9 --> H10["the line: NAME cut: showing, then showingOf of the bytes of both parts, total and rough"]
+    H4 --> H11{"streamsText: any line, and the kind has a cutHint?"}
+    H6 --> H11
+    H8 --> H11
+    H10 --> H11
+    H11 -->|"yes"| H12["the lines of stdout and stderr, then narrow it: and the hint"]
+    H11 -->|"no"| H13["the lines of stdout and stderr, when there are any"]
+    H12 --> H14["formatResult: the first line, these lines, then the stdout and stderr sections that are not empty"]
+    H13 --> H14
+    S1["showingOf of shown, total and rough"] --> S2{"sizeOf gives the same text for both, and the sizes are not rough?"}
+    S2 -->|"yes"| S3["both in bytes: N B of M B"]
+    S2 -->|"no"| S4["sizeOf of shown, of, sizeOf of total. sizeOf: under 1 KiB for a rough size below 1024, else sizeText"]
+```
+
+Only ssh, kubernetes and local have an end part. `run` keeps only the last `END_RING` bytes of each of their streams in its ring: `END_BYTES`, `OUTPUT_MARGIN` and `END_SLACK`, 4096, 53248 in all. These kinds hide no secret. `fitEnd` scrubs the kept bytes as one text (after step 0 when the stream did not end on its own), so that a path that the end of the stream cut is dropped whole. Their start can cut a path, whose rest the scrub cannot know; such a piece is shorter than `LONGEST_PATH`, so once scrubbed it lies in the first `OUTPUT_MARGIN` bytes. The end part is the last `END_BYTES` of the scrubbed bytes, and there is one only when they, trailing white space included, are longer than `OUTPUT_MARGIN` and `END_BYTES`, so that it never reaches into that margin; the check counts the trailing white space because the agent chooses how much of it its output ends with, and could otherwise move the threshold. `lastLines` counts its cut from the end of the whole text, trailing white space included, a newline in that white space starts no line, and it gives the end part without that white space: a stream that ends in a newline still has an end part, and one whose last `END_BYTES` are all white space has none.
+
+A brokered stream has no end part because its end is where a secret can be cut, and because whether there is one, and what it shows, would depend on where a hidden text lies or on how much hiding took out. Before, an end part of a window of raw bytes told a secret's length in one call, and one left out exactly when a hidden text crossed its start told it in about a dozen. For ssh, kubernetes and local, whether there is an end part can depend on how much the scrub took out of the kept bytes, which can tell the length of a path; removing paths is cosmetic (SECURITY.md).
+
+```mermaid
+flowchart TD
+    E1["fitEnd of tail, the last bytes that run kept for ssh, kubernetes or local, the scrub, ended and cutFolder"] --> E2["the tail as text: cutFolder when not ended, then the scrub"]
+    E2 --> E3{"longer in bytes, trailing white space included, than OUTPUT_MARGIN and END_BYTES?"}
+    E3 -->|"no"| E4["OK: no end part"]
+    E3 -->|"yes"| E5["OK: lastLines of it and END_BYTES"]
+    L1["lastLines of a text longer than bytes"] --> L2["cut: bytes before the end of the whole text,<br/>end: where its trailing white space starts"]
+    L2 --> L5{"a newline at or after the cut less 1, and before end?"}
+    L5 -->|"yes"| L6["from: the byte after it, a line start"]
+    L5 -->|"no"| L7["from: the cut, moved past the bytes in the middle of a character"]
+    L6 --> L8["OK: the text from there to end, empty when from is past end"]
+    L7 --> L8
+```
 
 #### The answer within answerLimit
 
@@ -6526,18 +6735,19 @@ The call server writes an answer as one JSON line, and escaping can make one byt
 flowchart TD
     W1["answerCall, after the audit"] --> W0["most: answerLimit of the visible limit, 4 times it, 1 MiB by default, 16 MiB at the largest"]
     W0 --> W2["limit: the visible limit"]
-    W2 --> W3["answerWithin of limit: capBytes of each fitted stream to limit, formatResult with that limit in the truncation note,<br/>truncated when perform, fitStream or this cut left something out, isError when timed out or the exit code is not 0"]
+    W2 --> W3["answerWithin of limit: streamsText of the fitted streams with limit as the budget of each stream:<br/>a stream that this cut leaves short gets a cut line too, isError when timed out or the exit code is not 0"]
     W3 --> W4{"answerBytes of it over most?"}
     W4 -->|"yes"| W5["limit halved, rounded down"]
     W5 --> W3
     W4 -->|"no"| W6["OK: the answer, with the exit code of the call"]
+    W3 -->|"the hiding or the scrub throws"| W7["outputFailed: the first line of the call and the output could not be shown, isError true"]
 ```
 
 At a quarter of the visible limit two streams of control characters fit, 12 times a quarter, 3 times the visible limit, plus a few bytes of text around them, so the loop ends after at most two halvings at every setting. A secret wholly past the visible limit is never shown, and the visible text of a stream is never longer than the visible limit.
 
 #### The memory of one call
 
-Nothing is held without a bound. At the largest setting, 4 MiB, one brokered call holds in `ksproxy start` at most the two streams as read, 4227072 bytes each (the visible limit plus the margin), a few copies of them while `fitStream` hides and scrubs (hiding and the scrub can make each byte at most 8 bytes, so at most 33816576 bytes per stream in the worst case), and the JSON line that `answerBytes` measures, at most 6 times the two visible streams, 48 MiB, before a halving. That is of the order of 130 MiB in the worst case and about 30 MiB for plain text. `ksproxy mcp` holds the answer line, at most `MAX_ANSWER_BYTES`, 16 MiB, its parsed text and the MCP reply built from it, of the order of 50 MiB. For ssh, kubernetes and local, `ksproxy mcp` itself holds what `ksproxy start` holds for a brokered call: the two streams as read, the copies made by the scrub, and the reply line of at most 6 times the two visible streams. At the default the same figures are 16 times smaller.
+Nothing is held without a bound. For ssh, kubernetes and local, `run` also keeps the last `END_RING` bytes of each stream, 53248, in a ring of that size, made when the call starts. At the largest setting, 4 MiB, one brokered call holds in `ksproxy start` at most the two streams as read, 4227072 bytes each (the visible limit plus the margin; `readLimit` adds 8 KiB for each 1024 characters of the longest hidden text, less 1 KiB, when that text has more than 128 characters), a few copies of them while `fitBrokered` hides and scrubs (hiding and the scrub can make each byte at most 8 bytes, so at most 33816576 bytes per stream in the worst case), and the JSON line that `answerBytes` measures, at most 6 times the two visible streams, 48 MiB, before a halving. That is of the order of 130 MiB in the worst case and about 30 MiB for plain text. `ksproxy mcp` holds the answer line, at most `MAX_ANSWER_BYTES`, 16 MiB, its parsed text and the MCP reply built from it, of the order of 50 MiB. For ssh, kubernetes and local, `ksproxy mcp` itself holds what `ksproxy start` holds for a brokered call: the two streams as read, the copies made by the scrub, and the reply line of at most 6 times the two visible streams. At the default the same figures are 16 times smaller.
 
 ### Short reasons in the log
 
@@ -6553,7 +6763,7 @@ Nothing is held without a bound. At the largest setting, 4 MiB, one brokered cal
 
 ```mermaid
 flowchart TD
-    S1["scrubOutput of text, session"] --> S2["hide rootStateDir, the root state folder, every project included, as ksproxy in angle brackets"]
+    S1["scrubOutput of text, session: scrubFolders gives the folders"] --> S2["hide rootStateDir, the root state folder, every project included, as ksproxy in angle brackets"]
     S2 --> S3["for each kind in list order that has scrubDirs: hide each folder it gives for its own session targets with its label,<br/>today the local kind, each folder as written and resolved, as folder in angle brackets"]
     S3 --> S4["each hidden path also by its real path from realOrNull, null when it does not resolve, and each of those<br/>without a leading /System/Volumes/Data on darwin, skipping one-character forms"]
     S4 --> S5{"anything to hide?"}
@@ -6563,13 +6773,25 @@ flowchart TD
     S7 --> S9["OK: the scrubbed text"]
 ```
 
-The folders are all collected before any is replaced, so the longest folder wins whichever kind gave it, and the text rewrites run only after every folder is replaced.
+The folders are all collected before any is replaced (`scrubFolders`, longest first), so the longest folder wins whichever kind gave it, and the text rewrites run only after every folder is replaced.
+
+`dropCutFolder` of a text, the session and the environment drops a last piece that is a proper start of one of those folders, compared as `scrubOutput` compares: what is left of a path that the end of a stream cut, which the scrub cannot know. It is `dropCutStart` with the folders as the values, and on darwin and win32 the fold of `caseFolded`, which compares as the regular expression of `scrubOutput` does with its `i` flag and without `u`: each code unit as its upper case when that is one code unit, unless that makes a character from 128 up into one below 128 (a sharp s, a dotless i and a Kelvin sign stay as they are). Any last piece that starts such a folder goes, whether it was cut or not: a stream that did not end on its own and ends in `/` loses that `/`. The fit of a call uses it only for a stream of ssh, kubernetes or local that did not end on its own (`fitCounted`, `fitEnd`). A brokered stream never uses it: it would tell whether a guess at the end of a stream starts a folder (see `firstBytes`). The text rewrites of a kind (`scrubText`, the proxy address of the kubernetes kind) have no list of texts, so a proxy address that such an end cut is not dropped.
+
+```mermaid
+flowchart TD
+    P1["dropCutFolder of text, session, env, insensitive and platform"] --> P2["the folders of scrubFolders, each spelling"]
+    P2 --> P3{"insensitive: darwin or win32 by default?"}
+    P3 -->|"yes"| P4["fold: caseFolded, each code unit as its upper case when that is one code unit,<br/>unless that makes a character from 128 up into one below 128"]
+    P3 -->|"no"| P5["fold: the piece as it is"]
+    P4 --> P6["OK: dropCutStart of the text with the folders and that fold"]
+    P5 --> P6
+```
 
 The state folder hidden is the root, not the `stateDir` of the session, so a path of any project's state folder, or of the default session's, shows as `<ksproxy>/p/NAME/...` or `<ksproxy>/...`, by its configured and by its real path.
 
 ## src/kinds/engines/command.js
 
-The command engine runs one client program on behalf of a brokered kind: the custom `command` kind today, `postgres`, `mysql`, `mongodb` and `kafka` later. It never starts a shell: the program gets an argument array. `WORK_FOLDER` is `run`, the folder under the state folder that holds one working folder per call. `run` of `src/exec.js` does the spawning, with its `signal` and `stopAtLimit` options.
+The command engine runs one client program on behalf of a brokered kind: the custom `command` kind today, `postgres`, `mysql`, `mongodb` and `kafka` later. It never starts a shell: the program gets an argument array. `WORK_FOLDER` is `run`, the folder under the state folder that holds one working folder per call. A stream whose program it stopped at the read limit did not end on its own, so its cut line is the one of `fitBrokered` (see "fitBrokered: a stream of a brokered call" in the `src/tools.js` section). `run` of `src/exec.js` does the spawning, with its `signal` and `stopAtLimit` options.
 
 ### workRoot
 
@@ -6599,7 +6821,7 @@ flowchart TD
     R4 --> R5["options: env is minimalEnv of env, childEnv, the folderPaths entries and HOME when asked, with own false, so only PATH, HOME, LANG, LC_ALL, TMPDIR and those entries reach the child. cwd the new folder, the limits, the signal, stopAtLimit true"]
     R5 --> R6{"spawnError?"}
     R6 -->|"yes"| R7["exit code null, no stdout, stderr: could not start the program: the message, not timed out, not truncated"]
-    R6 -->|"no"| R8["exit code, stdout, stderr and truncated as run gave them"]
+    R6 -->|"no"| R8["exit code, stdout, stderr, truncated and cutOff as run gave them"]
     R8 --> R9{"run timed out, or the signal was aborted?"}
     R9 -->|"yes"| R10["timedOut true"]
     R9 -->|"no"| R11["timedOut false"]
@@ -6607,7 +6829,7 @@ flowchart TD
     R7 --> F1["finally, in every case: rmSync of the folder, recursive and forced"]
     R10 --> F1
     R11 --> F1
-    F1 --> F2["OK: exitCode, stdout, stderr, timedOut, truncated"]
+    F1 --> F2["OK: exitCode, stdout, stderr, timedOut, truncated, cutOff"]
 ```
 
 The signal fires at the call's time limit and when the session stops: `run` kills the process group at once and the folder is removed when `run` returns. A folder that a killed `start` left behind is removed by `reapStale` of the command kind at the next start.
@@ -6832,7 +7054,7 @@ How the answer of a doctor check is made. A kind runs its one fixed, read-only r
 
 ```mermaid
 flowchart TD
-    S1["shown of a text and the hidden texts"] --> S2["hideSecrets: every hidden text becomes hidden in brackets, the longest first"]
+    S1["shown of a text and the hidden texts"] --> S2["hideSecrets: every place that a hidden text covers becomes hidden in brackets"]
     S2 --> S3["each control character and each run of white space becomes one space, the ends are trimmed"]
     S3 --> S4["OK: the text cut at 160 characters"]
     H1["hiddenOf of secrets and forms"] --> H2["OK: every secret value, then the forms the kind hides with them"]
@@ -6973,7 +7195,7 @@ flowchart TD
     P1["perform of the target, the decision and the call context"] --> P2["readRequest of the input with pathOptions again, the same request that was decided"]
     P2 --> P3["headersOf the auth and the secrets, then send with the base URL, the request, the limits and the signal"]
     P3 --> P4["OK: the result of send as it is, nothing hidden here"]
-    H1["hiddenForms of the target and the secrets"] --> H2["encodedForms of engineAuth of the auth: the base64 credential of basic auth"]
+    H1["hiddenForms of the target and the secrets"] --> H2["encodedForms of engineAuth of the auth: the base64 credential of basic auth, and jsonBodyForms of the secret values and of that credential: each as a JSON body shows it"]
 ```
 
 ### httpServiceKind, the notes and the tool
@@ -7139,7 +7361,7 @@ The check is `GET /api/whoami`. A good answer is a JSON body with a name that is
 
 ## src/kinds/engines/resp.js
 
-The resp engine speaks the Redis protocol directly over TCP or TLS, so nothing has to be installed. It imports only `node:net` and `node:tls`. The bytes a server sends and the words an agent chose are both hostile. `encodeCommand` writes one command; `ReplyReader` reads replies incrementally and strictly, with `readReply` as a one-shot form; `formatReply` prints a reply as the usual client does; `exchange` makes one call. A reply the reader refuses is a `ReplyError` (thrown by `refuse`), with `overflow` true when it passed the size limit. `MAX_DEPTH` is 32. `failure` builds the result of a failed call: exit code 1, no stdout, a fixed text on stderr.
+The resp engine speaks the Redis protocol directly over TCP or TLS, so nothing has to be installed. It imports only `node:net` and `node:tls`. The bytes a server sends and the words an agent chose are both hostile. `encodeCommand` writes one command; `ReplyReader` reads replies incrementally and strictly, with `readReply` as a one-shot form; `formatReply` prints a reply as the usual client does; `exchange` makes one call. A reply the reader refuses is a `ReplyError` (thrown by `refuse`), with `overflow` true when it passed the size limit. `MAX_DEPTH` is 32. `failure` builds the result of a failed call: exit code 1, no stdout, a fixed text on stderr. The result of a reply over the limit also says `truncated` and `ownStderr: true`: its stderr is the whole text that the exchange wrote, so the core shows it whole beside a stdout that lost its end (see `fitStreams` in the `src/tools.js` section).
 
 ### encodeCommand
 
@@ -7277,7 +7499,7 @@ flowchart TD
 
 ### formatReply, lineSink, emitLines and emitEntry
 
-`formatReply` stops building text once it has passed the output limit, so a reply that is deep and wide, which the reader lets through at the read limit (256 KiB and the margin by default, at most 4 MiB and the margin), cannot grow to many megabytes of indented lines before the cut. Below the limit the text is the same as without one. Every line is ASCII, so its length is its size in bytes.
+`formatReply` stops building text once it has passed the output limit, so a reply that is deep and wide, which the reader lets through at the read limit (`readLimit` of `src/tools.js`: 288 KiB by default, at most 4 MiB and the margin, and more for a target with a secret of more than 128 characters), cannot grow to many megabytes of indented lines before the cut. Below the limit the text is the same as without one. Every line is ASCII, so its length is its size in bytes.
 
 ```mermaid
 flowchart TD
@@ -7344,7 +7566,7 @@ flowchart TD
 flowchart TD
     Z1["comes from: exchange, setting up"] --> Z2["on connect, or secureConnect for TLS: write the first step"]
     Z2 --> Z3["on data: push, then read every complete reply"]
-    Z3 -->|"ReplyError overflow, the replies already read from this chunk are dropped"| Z4["the reply is larger than the output limit and was cut off, a fixed text without a number, truncated, exit 1"]
+    Z3 -->|"ReplyError overflow, the replies already read from this chunk are dropped"| Z4["the reply is larger than the output limit and was cut off, a fixed text without a number, truncated, exit 1,<br/>ownStderr: the core shows that text whole"]
     Z3 -->|"other ReplyError, the same drop"| Z5["the reply could not be read: the reader's own text"]
     Z3 -->|"replies"| Z6{"the last step?"}
     Z6 -->|"yes"| Z7["exit 1 for an error reply, else 0, stdout formatReply with maxBytes"]
@@ -7937,7 +8159,7 @@ flowchart TD
 
 ## src/kinds/mongodb/script.js
 
-`FIXED_SCRIPT` is the only code `mongosh` runs for the `mongodb` kind, the same text for every call; nothing in it is built from the agent's input, the inventory or the environment. `CLIENT_ARGS` is the frozen argument array of every call: `--nodb`, `--quiet`, `--norc`, `--eval` and the script. The script reads three variables of the client's environment: `MGO_URI` (the connection string), `MGO_DB` (the database) and `MGO_DOC` (the bounded document as JSON text). It uses no `eval`, `Function`, `load` or `require`, and never prints the environment.
+`FIXED_SCRIPT` is the only code `mongosh` runs for the `mongodb` kind, the same text for every call; nothing in it is built from the agent's input, the inventory or the environment. `CLIENT_ARGS` is the frozen argument array of every call: `--nodb`, `--quiet`, `--norc`, `--eval` and the script. The script reads three variables of the client's environment: `MGO_URI` (the connection string), `MGO_DB` (the database) and `MGO_DOC` (the bounded document as JSON text). It uses no `eval`, `Function`, `load` or `require`, and never prints the environment. `mongosh --eval` prints the value of the script's last expression unless it is `undefined`, so the print of the reply is a `void` expression: the reply is the whole standard output.
 
 ### The steps of the fixed script
 
@@ -7949,7 +8171,7 @@ flowchart TD
     S4 -->|"yes"| S5["runCommand killCursors: the collection from the cursor's ns after the first dot, the id from the reply"]
     S5 --> S6["the cursor id in the reply becomes 0"]
     S6 --> S7["stderr: more results exist, only the first batch is shown and the cursor was closed"]
-    S4 -->|"no"| S8["stdout: EJSON.stringify of the reply, indented by 2"]
+    S4 -->|"no"| S8["stdout: EJSON.stringify of the reply, indented by 2, in a void expression"]
     S7 --> S8
     S1 -->|"any step throws"| X1["stderr: error, the codeName, else the error's name, else Error, then the message"]
     S2 -->|"throws"| X1
@@ -8041,7 +8263,8 @@ flowchart TD
     P4 --> P5["runClient: the recorded program, CLIENT_ARGS, no words, homeInWorkFolder true"]
     P5 --> P6["the child's environment: PATH, LANG, LC_ALL, TMPDIR, MGO_URI, MGO_DB, MGO_DOC, and HOME the call's working folder"]
     P6 --> P8["OK: the result of runClient as it is, nothing hidden here"]
-    H1["hiddenForms of the target and the secrets"] --> H2["passwordParts of the connection string: each password in it as written and decoded. The core hides them with the whole string"]
+    H1["hiddenForms of the target and the secrets"] --> H2["passwordParts of the connection string: each password in it as written and decoded"]
+    H2 --> H3["then jsonForms of the whole string and those passwords: the fixed script prints the reply as extended JSON. The core hides them with the whole string"]
 ```
 
 `mongosh` keeps a log of every run under its home folder (`.mongodb/mongosh/`), with the commands it ran and their arguments, and reads its settings from there. With `HOME` set to the call's working folder, the log and the settings are written into that folder, which `runClient` removes when the call ends, also after an error or at the time limit. Nothing is written to the home folder of `ksproxy start`. No settings file is written: whether `mongosh` reads its telemetry setting from that folder is not confirmed, so telemetry is left to the owner to check.
@@ -8351,13 +8574,13 @@ flowchart TD
 
 ## src/kinds/engines/sql-service.js
 
-What the two brokered kinds `postgres` and `mysql` share. `sqlServiceKind` builds the kind object from a spec: the names, the title, the dialect, the default port, the sample, the extra inventory keys and `extra` (the client for mysql), `fixedRefusal`, `program`, `invocation`, the notes and the tool name. It runs the client through `runClient` of the command engine and finds it with `resolveProgram` of the command kind.
+What the two brokered kinds `postgres` and `mysql` share. `sqlServiceKind` builds the kind object from a spec: the names, the title, the dialect, the default port, the sample, the extra inventory keys and `extra` (the client for mysql), `fixedRefusal`, `program`, `invocation`, the notes, the tool name, and for mysql `clientFamily`, which open calls before the TLS check, and `printedForms`, which every spec has. It runs the client through `runClient` of the command engine and finds it with `resolveProgram` of the command kind.
 
 ### validate: checkDbHost, checkDbName, checkReadOnly and checkSqlAllow
 
 ```mermaid
 flowchart TD
-    V1["validate of an entry"] --> V2["checkKeys: name, host, port, database, user, passwordEnv, readOnly, description, allow, review and the extra keys"]
+    V1["validate of an entry"] --> V2["checkKeys: name, host, port, database, user, passwordEnv, readOnly, tls, caFile, description, allow, review and the extra keys"]
     V2 --> H1{"checkDbHost: a string of at most 253 characters, a letter or digit first, then letters, digits, dots and dashes?"}
     H1 -->|"no"| E1["ERROR: host: must be a host name or address of letters, digits, dot and dash, at most 253 characters, not starting with a dash"]
     H1 -->|"yes"| P1["checkInteger of port from 1 to 65535, the default port when absent: 5432 or 3306"]
@@ -8369,17 +8592,41 @@ flowchart TD
     R1 -->|"no"| R3{"a boolean?"}
     R3 -->|"no"| E3["ERROR: readOnly: must be true or false"]
     R3 -->|"yes"| R4["as written"]
-    R2 --> A1["checkSqlAllow"]
-    R4 --> A1
+    R2 --> T1["checkTls with the host, then checkCaFile with tls, see below"]
+    R4 --> T1
+    T1 --> A1["checkSqlAllow"]
     A1 --> A2{"allow is any?"}
     A2 -->|"yes"| E4["ERROR: allow: any is not supported for KIND targets, list the statements"]
     A2 -->|"no"| A3["checkAllow without any, then splitRule of each word rule"]
     A3 -->|"throws"| E5["ERROR: allow[N]: the reason of the reader"]
     A3 --> A4["extra of the kind, checkReview without programs"]
-    A4 --> A5["OK: kind, name, host, port, database, user, passwordEnv, readOnly, the extra, description or empty when absent, allow, review"]
+    A4 --> A5["OK: kind, name, host, port, database, user, passwordEnv, readOnly, tls, caFile, the extra, description or empty when absent, allow, review"]
 ```
 
 No value can become an option of the client: the host, the database and the user never start with a dash, and each is its own argument or glued to its option.
+
+### checkTls, isLoopback and checkCaFile
+
+```mermaid
+flowchart TD
+    T1["checkTls of the entry, the host and where"] --> T2{"tls absent?"}
+    T2 -->|"yes"| T3{"isLoopback: the host is localhost in any case, or 127 and three more numbers joined by dots?"}
+    T3 -->|"yes"| T4["prefer, so that a database on this machine keeps working"]
+    T3 -->|"no"| T5["verify"]
+    T2 -->|"no"| T6{"verify, require or prefer?"}
+    T6 -->|"no"| E1["ERROR: tls: must be verify, require or prefer"]
+    T6 -->|"yes"| T7["as written"]
+    C1["checkCaFile of the entry, tls and where"] --> C2{"caFile absent?"}
+    C2 -->|"yes"| C3["null"]
+    C2 -->|"no"| C4{"absolutePath: a non-empty text, absolute or after ~/?"}
+    C4 -->|"no"| E2["ERROR: caFile: must be a non-empty path, or must be an absolute path or start with ~/"]
+    C4 -->|"yes"| C5{"tls is verify?"}
+    C5 -->|"no"| E3["ERROR: caFile: is used only with tls verify, this target has tls MODE, and when tls is absent: the default for a host on this machine"]
+    C5 -->|"yes"| C6["the path with ~/ expanded, normalised"]
+```
+
+- `checkDbHost` refuses a colon and a slash, so the host is never `::1` or the path of a Unix socket: `localhost` and the addresses `127.x.x.x` are the hosts of this machine. For the mysql client, `localhost` is its Unix socket.
+- With `require` or `prefer` nothing checks the certificate, so a CA file would do nothing there; it is an inventory error instead of a setting that seems to protect and does not.
 
 ### decide and writesData
 
@@ -8406,24 +8653,74 @@ flowchart TD
 
 None of these refusals has `unmatched`, so no rule, no `regex(...)` rule, no reviewer and no `ksproxy check` gets past them. The read-only transaction of the database is the second layer.
 
-### The session: secrets, ruleWarnings, openingMessage, open, record, hint and address
+### The session: secrets, secretFiles, ruleWarnings, openingMessage, tlsText, record, learnedOf, hint and address
 
 ```mermaid
 flowchart TD
     S1["secrets of a target"] --> S2["env: passwordEnv, files: none"]
+    HF1["hiddenForms of the target and the secrets"] --> HF2["printedForms of the kind for the password: the forms a reply of the client can show it in, which the core hides with the password"]
+    F1["secretFiles of the targets, or of the raw entries of another inventory file"] --> F2["each caFile that is a text: no local target may reach it, so no agent can replace it"]
     W1["ruleWarnings of a target"] --> W2["sqlRuleWarnings of its allow list and the dialect"]
-    O1["openingMessage"] --> O2["address, then read-only, or read-write when readOnly is false"]
+    O1["openingMessage"] --> O2["address, then read-only, or read-write when readOnly is false, then tlsText"]
+    T1["tlsText"] --> T2["TLS and the mode, then with caFile when the target has one"]
     A1["address"] --> A2["USER at HOST colon PORT slash DATABASE"]
-    P1["open with the env of start"] --> P2["resolveProgram of program of the kind: psqlBin, or mysqlBin with the client"]
-    P2 --> P3{"an error?"}
-    P3 -->|"yes"| P4["FAIL: the error, the target is skipped"]
-    P3 -->|"no"| P5["OK: the absolute program as an extra"]
-    R1["record"] --> R2["the validated target without its review settings, the program, state up, review true when reviewed"]
+    R1["record"] --> R2["the validated target without its review settings, the program, learnedOf the opened, state up, review true when reviewed"]
+    L1["learnedOf of the opened"] --> L2{"open learned a family?"}
+    L2 -->|"yes"| L3["the family, which every call and the doctor check need"]
+    L2 -->|"no"| L4["nothing"]
     H1["hint"] --> H2{"a description?"}
     H2 -->|"yes"| H3["address, a dash and the description"]
     H2 -->|"no"| H4["address"]
     M1["downMessage and backMessage"] --> M2["the call service is not answering, the call service is back"]
 ```
+
+### open: the program, the CA file, the client family and the TLS check
+
+```mermaid
+flowchart TD
+    O1["open of the target, with env, secrets, signal and say"] --> O2["resolveProgram of program of the kind: psqlBin, or mysqlBin with the client"]
+    O2 -->|"an error"| F1["FAIL: the error, the target is skipped"]
+    O2 --> O3{"tls is prefer?"}
+    O3 -->|"yes"| K1["OK: the program as an extra, and nothing runs, as before"]
+    O3 -->|"no"| O4{"a caFile, and isReadableFile says it is not a file this user can read?"}
+    O4 -->|"yes"| F2["FAIL: caFile PATH is not a file that can be read"]
+    O4 -->|"no"| O5{"the kind has clientFamily?"}
+    O5 -->|"no, postgres"| C1["tlsCheck of the target"]
+    O5 -->|"yes, mysql"| O6["clientFamily of the target, the program and the context"]
+    O6 -->|"a family"| C2["tlsCheck of the target with its family"]
+    O6 -->|"an error and a way out"| S1["say the way out, on a line of its own that is never cut"]
+    C1 --> C3{"a failure?"}
+    C2 --> C3
+    C3 -->|"no"| K2["OK: the program, and the family when there is one, as extras"]
+    C3 -->|"yes"| S1
+    S1 --> F3["FAIL: the short reason, the target is skipped: SKIPPED at start, FAIL in doctor"]
+```
+
+`isReadableFile` is true for a regular file, or a link to one, that this user can read. The way out is said through `ctx.say`, because start cuts a log line to the width of the terminal and a said line is never cut.
+
+### tlsCheck and tlsFailure
+
+```mermaid
+flowchart TD
+    C1["tlsCheck of the spec, the target, the program, env, secrets and signal"] --> C2["the invocation of the kind for select 1, with the password from the secrets and TLS_CHECK_MS, 5 seconds"]
+    C2 --> C3["runClient with the program, at most 16 KiB and the signal of the context"]
+    C3 --> C4{"exit code 0?"}
+    C4 -->|"yes"| N1["null: the target opens"]
+    C4 -->|"no, also at the time limit and at a stop"| F1["tlsFailure of the standard error and the target"]
+    F1 --> F2{"root certificate file system does not exist?"}
+    F2 -->|"yes"| R1["this psql cannot use the system's CAs, way out: that needs libpq 16 or later, name the CA in caFile"]
+    F2 -->|"no"| F3{"does not support SSL, does not support it, or doesn't support it?"}
+    F3 -->|"yes"| R2["the server does not offer TLS, way out: tls MODE needs TLS, set tls to prefer to connect without it"]
+    F3 -->|"no"| F4{"the word certificate, in any case?"}
+    F4 -->|"no"| N2["null: not about TLS, the target opens and a call shows the failure"]
+    F4 -->|"yes"| F5{"a caFile?"}
+    F5 -->|"no"| R3["the server's TLS certificate did not verify, way out: checked against the system's CAs and the host name HOST, name the CA in caFile, or set tls to require or prefer"]
+    F5 -->|"yes"| R4["the same reason, way out: checked against the CA in caFile and the host name HOST, check caFile and the names in the certificate"]
+```
+
+- The check goes through the same client, settings and invocation as a call, so what it shows is what a call would do. It runs only for `verify` and `require`; a `prefer` target opens without contacting the server, as before.
+- Only a failure about TLS skips the target. A wrong password or a server that is down opens it as before, and the first call shows the error; so does a check that reaches its time limit or is stopped.
+- The texts are those of psql 17 (`SSL error: certificate verify failed`, `server certificate for ... does not match host name`, `server does not support SSL, but SSL was required`), of the MariaDB client (`TLS/SSL error: ...`) and of the MySQL client (`SSL connection error: ...`). A libpq older than 16 reads `PGSSLROOTCERT=system` as a file name and says that it does not exist. The reason and the way out are fixed texts and the host name; nothing of the client's output is shown.
 
 ### perform, the tool and the notes
 
@@ -8457,15 +8754,17 @@ The statement after a review is the query as sent, the same text the reader read
 
 ```mermaid
 flowchart TD
-    D1["doctor of opened and the context"] --> D2["the invocation of the kind for the statement select 1, with the password from the secrets and the time limit of the context"]
+    D1["doctor of opened and the context"] --> D0["the target of opened, with learnedOf the opened"]
+    D0 --> D2["the invocation of the kind for the statement select 1, with the password from the secrets and the time limit of the context"]
     D2 --> D3["runClient with the program that open resolved, 16 KiB at most and the signal"]
     D3 --> D4["clientVerdict named for the kind, with the detail select 1 answered for any exit code 0, and the secret values hidden"]
-    D4 --> D5["OK: select 1 answered, or FAIL: authentication failed, connection refused, could not connect, exited with code N, could not be started, timed out or stopped"]
+    D4 --> D6["hidden: the secret values and printedForms of the password"]
+    D6 --> D5["OK: select 1 answered, or FAIL: authentication failed, connection refused, could not connect, exited with code N, could not be started, timed out or stopped"]
 ```
 
 ## src/kinds/postgres/index.js
 
-The `postgres` kind: key `postgres`, flag `pg`, label `pg`, tool `postgres_query`, built by `sqlServiceKind` with the dialect `postgres`, the default port 5432, `program` from `psqlBin`, `postgresRefusal` and `psqlInvocation`.
+The `postgres` kind: key `postgres`, flag `pg`, label `pg`, tool `postgres_query`, built by `sqlServiceKind` with the dialect `postgres`, the default port 5432, `program` from `psqlBin`, `postgresRefusal`, `psqlInvocation` and `printedForms`: `jsonForms` of the password. `psql` prints a text value as it is, but the server writes a json, jsonb or array value with a quote and a backslash escaped, and a call can read such a value in a row.
 
 ### postgresRefusal and copiesFile
 
@@ -8514,8 +8813,13 @@ flowchart TD
     I8 --> I3["words: the statement, one argument, so it is always the value of the last --command"]
     I5 --> I7["child environment: PGPASSWORD the password, PGCONNECT_TIMEOUT 10, PGAPPNAME ksproxy, PGOPTIONS"]
     I6 --> I7
+    I7 --> T1{"tls is verify?"}
+    T1 -->|"yes"| T2["and PGSSLMODE verify-full, PGSSLROOTCERT the caFile, or system for the CAs of this system"]
+    T1 -->|"no"| T3["and PGSSLMODE from SSL_MODES: require or prefer, as tls says, and no PGSSLROOTCERT"]
 ```
 
+- `verify-full` makes libpq check the certificate against the CA and the host name against the certificate. `PGSSLROOTCERT=system` takes the CAs of this system, as the TLS library of libpq finds them; libpq 16 and later know it (psql 16 and later). Older libpq reads `system` as a file name in the working folder, which does not exist, so the check at open fails and says to name `caFile`.
+- The child gets only the variables that `runClient` passes, so a `PGSSLMODE` of the environment of `ksproxy start` never reaches psql.
 - psql runs every `--command` in order in one session, and `--single-transaction` wraps them all in one `BEGIN` and `COMMIT`. `SET TRANSACTION READ ONLY` comes first, so the agent's statement runs in a read-only transaction with the time limit set inside it, even when a connection pooler drops `PGOPTIONS` without an error. `--quiet` keeps the `SET` lines out of the output.
 - The agent's statement cannot end the transaction early: `postgresRefusal` refuses transaction control and `SET TRANSACTION` or `SET SESSION CHARACTERISTICS`, and nothing runs after the statement but the `COMMIT`.
 - A statement that cannot run inside a transaction, such as `VACUUM` or `CREATE DATABASE`, fails.
@@ -8535,7 +8839,7 @@ flowchart TD
 
 ## src/kinds/mysql/index.js
 
-The `mysql` kind, which covers MariaDB: key `mysql`, flag `mysql`, label `my`, tool `mysql_query`, built by `sqlServiceKind` with the dialect `mysql`, the default port 3306, the extra key `client`, `program` from `mysqlBin` with the client, `mysqlRefusal` and `mysqlInvocation`. At most 1000 rows per result (`sql_select_limit`).
+The `mysql` kind, which covers MariaDB: key `mysql`, flag `mysql`, label `my`, tool `mysql_query`, built by `sqlServiceKind` with the dialect `mysql`, the default port 3306, the extra key `client`, `program` from `mysqlBin` with the client, `mysqlRefusal`, `mysqlInvocation`, `clientFamily` and `printedForms` (`batchForms`). At most 1000 rows per result (`sql_select_limit`).
 
 ### mysqlRefusal
 
@@ -8576,7 +8880,7 @@ flowchart TD
     I1["mysqlInvocation of the target, the statement and the password"] --> I2{"readOnly is false?"}
     I2 -->|"no"| I3["init: SET SESSION sql_select_limit=1000, then SET SESSION TRANSACTION READ ONLY, joined by a semicolon"]
     I2 -->|"yes"| I4["init: SET SESSION sql_select_limit=1000"]
-    I3 --> I5["fixed arguments: --no-defaults --batch --quick, --default-character-set=utf8mb4, --local-infile=0, --connect-timeout=10, --host=HOST, --port=PORT, --database=DATABASE, --user=USER, --init-command=INIT"]
+    I3 --> I5["fixed arguments: --no-defaults --batch --quick, --default-character-set=utf8mb4, --local-infile=0, --connect-timeout=10, --host=HOST, --port=PORT, --database=DATABASE, --user=USER, the tlsArgs, --init-command=INIT"]
     I4 --> I5
     I5 --> I6["words: --execute= glued to the statement, one argument"]
     I6 --> I7["child environment: MYSQL_PWD the password"]
@@ -8587,6 +8891,42 @@ flowchart TD
 - `--local-infile=0`: the client never sends a file of this machine to the server.
 - `--quick`: the client prints each row as it comes instead of holding the whole result in memory.
 - `MYSQL_TEST_LOGIN_FILE`: the MySQL client reads its login file (`.mylogin.cnf`) even with `--no-defaults`, and a password stored there would replace the one of the inventory. The variable points it at a file that does not exist.
+
+### batchForms
+
+```mermaid
+flowchart TD
+    B1["batchForms of a value"] --> B2["two texts: the value, and the value as JSON writes it (jsonForms)"]
+    B2 --> B3["each with every backslash, tab, newline and NUL written as a backslash and a letter: two backslashes, backslash t, backslash n, backslash 0"]
+    B3 --> B4["OK: each result once, without the value itself. The core hides them with the password"]
+```
+
+A password with one of those characters, in a row that a call reads, is shown by the client in the first form. A JSON text that a row holds (a JSON column, a settings text) shows the password with the JSON escapes, and the client then doubles each backslash: the second form. No other escape is covered.
+
+### clientFamily and tlsArgs
+
+```mermaid
+flowchart TD
+    F1["clientFamily of the target, the program, env and signal"] --> F2["runClient of the program with --version, 5 seconds, at most 4 KiB"]
+    F2 --> F3{"exit code 0?"}
+    F3 -->|"no"| E1["error: could not run PROGRAM --version, way out: ksproxy reads the version to choose the TLS options, check that the program runs, or set tls to prefer"]
+    F3 -->|"yes"| F4{"MariaDB in the output?"}
+    F4 -->|"yes"| F5{"tls is require?"}
+    F5 -->|"yes"| E2["error: the MariaDB client cannot require TLS without a check, way out: set tls to verify, with caFile when this system does not trust the CA, or to prefer"]
+    F5 -->|"no"| M1["family mariadb"]
+    F4 -->|"no"| M2["family mysql"]
+    T1["tlsArgs of the target"] --> T2{"tls is prefer?"}
+    T2 -->|"yes"| T3["none, as before: the client uses TLS when the server offers it"]
+    T2 -->|"no"| T4{"family mariadb?"}
+    T4 -->|"yes"| T5["--ssl and --ssl-verify-server-cert"]
+    T4 -->|"no"| T6["--ssl-mode=VERIFY_IDENTITY for verify, --ssl-mode=REQUIRED for require"]
+    T5 --> T7["then --ssl-ca=FILE when the target has a caFile, else the client takes the CAs of this system"]
+    T6 --> T7
+```
+
+- The program named by `client` can be either client: on Debian and Ubuntu, `mysql` is the MariaDB client, and Homebrew's `mariadb` also installs a `mysql`. The two take different TLS options, and each stops with an unknown-option error at the options of the other, so the family comes from the version text, not from the name.
+- The MariaDB client requires TLS only when it checks the certificate: `--ssl` alone, or with `--skip-ssl-verify-server-cert`, goes on in plain text when the server offers no TLS. So `require` is refused for it, and the target is skipped.
+- `--ssl-verify-server-cert` checks the CA and the host name; without `--ssl-ca` the MariaDB client and the MySQL client both use the default CAs of their TLS library, the CAs of this system.
 
 ### Short reasons in the log
 
@@ -8607,11 +8947,11 @@ The MCP client engine: `ksproxy start` talks to one MCP server through it (the `
 
 `connectStdio` and `connectHttp` are the functions that connect. The constants: `MODERN_VERSION` (`2026-07-28`), `LEGACY_VERSION` (`2025-11-25`, asked at `initialize`), `MAX_TOOLS` (2000), `MAX_MESSAGE_BYTES` (16 MiB, the default limit of one line of stdout, of one HTTP JSON body, and of one SSE line and one SSE event) and `MAX_LIST_BYTES` (16 MiB, the default limit of all the pages of `tools/list` together, as received: what one message may hold, so a server whose list fits one message works as before, while a list ten times the 1 MiB that a session may export serves no one).
 
-Both take `hidden`, the texts the caller hides (the kind gives the secret values of the target and their forms, `hiddenOf`). Every server text the engine shows, an error of `initialize`, `server/discover` or `tools/list`, `serverInfo`, the name of an argument in a header refusal and the lines of `stderrTail`, has them hidden before it is cleaned or clipped, through `shownText`, which the kind uses too, with `dropCut`. So a clip never cuts a secret in two and shows a piece of it.
+Both take `hidden`, the texts the caller hides (the kind gives the secret values of the target and their forms, `hiddenOf`). Every server text the engine shows, an error of `initialize`, `server/discover` or `tools/list`, `serverInfo`, the name of an argument in a header refusal and the lines of `stderrTail`, has them hidden before it is cleaned or clipped, through `shownText`, which the kind uses too. So a clip never cuts a secret that the server wrote whole in two. Nothing is dropped from such a text for being a start of a secret, at its end or at the clip: the agent can make a server repeat its own words in an error message or a link, and a drop there would tell whether a guess starts a secret. `dropCut` is used only by `tailLines` of the mcp kind, for the lines of a server's stderr in the owner's terminal, which the agent never gets.
 
 The client it gives: `era` (the version in use), `serverInfo` (`name` and `version`), `listTools({ signal })` giving `{ tools, capped }`, `callTool(name, args, { timeoutMs, maxBytes, signal })` giving one of `{ result, truncated }`, `{ rpcError: { code, message } }`, `{ inputRequired: true }`, `{ timedOut: true }`, `{ tooLarge: true }` or `{ ended: { code, signal } }`, `ping({ signal })` giving true or false, `stderrTail(lines)`, `onEnd(callback)` and `close()`, a promise of the end.
 
-`connectHttp({ url, headers, fetchImpl, signal, limitMs, maxMessageBytes })` gives the same client without `stderrTail`. Its `callTool` may also give `{ httpError: { status, retryAfter } }` (any status that is not 2xx, a redirect too; `retryAfter` in seconds or null; the body is never read), `{ unreachable: true }` (fetch failed) or `{ cutOff: true }` (the answer ended or broke before it came); a value the server wants in a header that cannot go there as it is gives `{ rpcError: { code: -32602, message } }` and nothing is sent. `ping` is true for a 429 too. The end comes only from `close`, with `code` and `signal` null. `headers()` is asked before every request, for the token, and no error text holds what it gives.
+`connectHttp({ url, headers, fetchImpl, signal, limitMs, maxMessageBytes })` gives the same client without `stderrTail`. Its `callTool` may also give `{ httpError: { status, retryAfter } }` (any status that is not 2xx, a redirect too; `retryAfter` in seconds or null; the body is never read), `{ unreachable: true }` or `{ unreachable: true, reason }` (fetch failed; `reason` is a fixed text chosen by the code of the error only, see `reachReason`) or `{ cutOff: true }` (the answer ended or broke before it came); a value the server wants in a header that cannot go there as it is gives `{ rpcError: { code: -32602, message } }` and nothing is sent. `ping` is true for a 429 too. The end comes only from `close`, with `code` and `signal` null. `headers()` is asked before every request, for the token, and no error text holds what it gives.
 
 ### connectStdio
 
@@ -8729,7 +9069,7 @@ flowchart TD
 
 ### cutText
 
-`maxBytes` applies to the decoded text, not to the line: the line may be as large as `maxMessageBytes`, and the texts of the result are cut to `maxBytes` and marked truncated instead of failing. Every part after the cut is left out, so the cut is always the end of the answer: the core drops a piece of a secret at the end of a stream, and a part after the cut would hide such a piece from it.
+`maxBytes` applies to the decoded text, not to the line: the line may be as large as `maxMessageBytes`, and the texts of the result are cut to `maxBytes` and marked truncated instead of failing. Every part after the cut is left out, so the cut is always the end of the answer: the core leaves out the end of a stream that was cut (`truncated`), where a secret can be cut, and a part after the cut would put such a piece before that end.
 
 ```mermaid
 flowchart TD
@@ -8824,7 +9164,7 @@ flowchart TD
     F8 -->|"no"| F10{"httpError?"}
     F10 -->|"yes"| F11["httpText"]
     F10 -->|"no"| F12{"unreachable?"}
-    F12 -->|"yes"| F13["the MCP server could not be reached for WHAT"]
+    F12 -->|"yes"| F13["the MCP server could not be reached for WHAT, then a colon and the reason when it has one"]
     F12 -->|"no"| F14{"cutOff?"}
     F14 -->|"yes"| F15["the answer of the MCP server to WHAT ended early"]
     F14 -->|"no"| F16["the MCP server refused WHAT: its message through shownText with cleanLine, at most 300 characters"]
@@ -8853,16 +9193,18 @@ flowchart TD
 
 ### shownText and dropCut
 
-The one order for every text of the server that ksproxy clips: hide, clean, hide again, drop a cut piece, clip. The engine uses it for its own texts, and the kind for an error message, a link, a MIME type and a part type of an answer (`src/kinds/mcp/answer.js`) and for a description (`src/kinds/mcp/export.js`). A secret is hidden while it is whole, so the clip, which the agent can move by the length of its own arguments, never shows a piece of it.
+The one order for every text of the server that ksproxy clips: hide, clean, hide again, clip. The engine uses it for its own texts, and the kind for an error message, a link, a MIME type and a part type of an answer (`src/kinds/mcp/answer.js`) and for a description (`src/kinds/mcp/export.js`). A secret is hidden while it is whole, so the clip, which the agent can move by the length of its own arguments, never shows a piece of a secret that the server wrote whole. Nothing is dropped for being a start of a hidden text, at the end of the text or at the clip: the agent can make a server repeat a guess in an error message or a link, and such a drop told whether the guess starts a secret. A start of a secret that the server itself wrote is shown as it is.
+
+`dropCut` is used only by `tailLines` of the mcp kind (`src/kinds/mcp/index.js`), for the lines of a server's stderr that the owner's terminal shows, never for a text that the agent gets.
 
 ```mermaid
 flowchart TD
-    S1["shownText of a text, the hidden texts, max and clean"] --> S2["String of the text, every hidden text replaced by the hidden marker, the longest first"]
+    S1["shownText of a text, the hidden texts, max and clean"] --> S2["String of the text, every place that a hidden text covers replaced by the hidden marker by hideSecrets"]
     S2 --> S3["clean: the caller's, cleanLine here. Then every hidden text hidden again, as cleaning can join the pieces of one"]
-    S3 --> S4["dropCut at the end: a piece that a cut before ksproxy left there"]
-    S4 --> S5{"at most max characters?"}
-    S5 -->|"yes"| S6["OK: the text"]
-    S5 -->|"no"| S7["the first max less 1 characters, dropCut at the end again, then an ellipsis"]
+    S3 --> S5{"at most max characters?"}
+    S5 -->|"yes"| S6["OK: the text, nothing dropped at its end"]
+    S5 -->|"no"| S7["OK: the first max less 1 characters, nothing dropped at the clip, then an ellipsis"]
+    D0["dropCut, only for tailLines of the mcp kind, the stderr lines in the owner's terminal"] --> D1
     D1["dropCut of a text, the hidden texts, the end"] --> D2["from the size of the longest hidden text less one down to 4: the first piece at that end<br/>that a longer hidden text ends with, at the start, or starts with, at the end, is cut off"]
     D2 --> D3["none: the text as it is. Pieces of 1 to 3 characters stay, as in the stderr lines"]
 ```
@@ -9051,7 +9393,7 @@ flowchart TD
     P2 -->|"no"| P5["fetchOnce: POST, ownHeaders and the call headers, the JSON of the message, the close signal and the signal"]
     P3 -->|"the headers"| P5
     P5 --> P6{"a response?"}
-    P6 -->|"no"| P7["OK: unreachable"]
+    P6 -->|"no"| P7["OK: unreachable, with the reason of fetchOnce when it has one"]
     P6 -->|"yes"| P8["its Mcp-Session-Id header kept on the entry, for initialize"]
     P8 --> P9{"a 2xx status?"}
     P9 -->|"yes"| P10["readAnswer for the entry's id"]
@@ -9059,8 +9401,11 @@ flowchart TD
     P10 --> P12["done: what was not read is closed"]
     P11 --> P12
     F1["fetchOnce of an init and signals"] --> F2["fetchImpl of url with headersFor, redirect manual so a 3xx comes back as it is, and the signals"]
-    F2 -->|"throws: out of reach, a header that cannot be sent, headers throws, a stop"| F3["no response, so unreachable. No text of the error is kept, as it may hold a header value"]
+    F2 -->|"throws: out of reach, a header that cannot be sent, headers throws, a stop"| F3["no response, so unreachable, with reachReason of the error. No text of the error is kept, as it may hold a header value"]
     F2 --> F4["the response, and done, which aborts its own controller"]
+    R1["reachReason of an error"] --> R2{"the code of its cause, else its own code, is in the fixed list?"}
+    R2 -->|"yes"| R3["OK: the fixed reason of that code"]
+    R2 -->|"no"| R4["OK: undefined, so no reason. The message of the error is never read"]
     O1["ownHeaders of a message"] --> O2["accept application/json and text/event-stream, content-type application/json"]
     O2 --> O3{"initialize?"}
     O3 -->|"yes"| O4["MCP-Protocol-Version LEGACY_VERSION, and no session"]
@@ -9301,8 +9646,8 @@ flowchart TD
     S1["secrets"] --> S2{"url?"}
     S2 -->|"yes"| S3["authSecrets of engineAuth: the user of basic auth also in users, so it gets no short secret warning"]
     S2 -->|"no"| S4["env: each name of a fromEnv value of env, once. files: none"]
-    F1["hiddenForms of the target and its secrets"] --> F2["url: encodedForms of engineAuth, the base64 credential of basic auth"]
-    F1 --> F3["escapedForms: each value as JSON writes it inside a string, where that differs from every value"]
+    F1["hiddenForms of the target and its secrets"] --> F2["url: encodedForms of engineAuth, the base64 credential of basic auth, and jsonBodyForms of the secret values and of that credential, as the http engine gives them"]
+    F1 --> F3["command: jsonBodyForms of the secret values: each as JSON writes it inside a string, with a slash escaped and with the signs less-than, greater-than and ampersand escaped, where that differs from every value"]
     F2 --> F4["the core hides these with the values. hiddenOf: the values and these forms, for what the kind hides itself"]
     F3 --> F4
 ```
@@ -9398,7 +9743,7 @@ flowchart TD
     O6 --> O7["onEnd of the client: ended is the exit. Unless closing: say END TEXT, the target is down, then sayTail"]
     O7 --> O8["say: N tools listed, M exported. The UP line of the core has no text"]
     O8 --> O9["OK true: extras live, notes as WARN lines, which go to the log too: they hold only names the rules hold"]
-    T1["tailLines of lines and the hidden texts"] --> T2["each line: hideSecrets first"]
+    T1["tailLines of lines and the hidden texts, for the owner's terminal only, never for the agent"] --> T2["each line: hideSecrets first"]
     T2 --> T3["the first line: dropCut at the start, a piece of 4 or more characters that ends a hidden text: the 64 KiB ring may have cut it"]
     T3 --> T4["the last line: dropCut at the end, a piece of 4 or more characters that starts a hidden text"]
     T4 --> T5["each line clipped to 500 characters"]
@@ -9836,7 +10181,7 @@ flowchart TD
 
 ## src/kinds/mcp/answer.js
 
-One outcome of `callTool` as the result that `perform` gives the core, `answerOf(outcome, { maxBytes, seconds })`: `{ exitCode, stdout, stderr, timedOut?, truncated? }`. The core writes it as `exit code: N` and the two streams, hides every secret value of the target and fits the output to its limit. `exitCode` is 0 for a result, 1 for a result with `isError` and for every failure except a time limit, which gives `null` with `timedOut`. `endText`, exported from the engine `src/kinds/engines/mcp-client.js` and used here, gives the end of a server as a sentence, `cutBytes` the first bytes of a text, `INPUT_REQUIRED` the text of a server that asked for input. `plain` passes a text of the server that is not the answer itself through `shownText` of the engine, with the hidden texts that `perform` gives (the secret values of the target and their forms): each hidden first, then `asSpaces` turns each control character, U+2028, U+2029 and each direction mark into a space, each hidden again, a cut piece at the end dropped, and only then the clip. The clip edge moves with the length of the agent's own arguments when a server echoes them, so a secret clipped before it was hidden would show all but its last character. `failed` makes a failure with exit code 1. The answer itself is cut only at its end, where the core drops a piece of a secret it cut.
+One outcome of `callTool` as the result that `perform` gives the core, `answerOf(outcome, { maxBytes, seconds })`: `{ exitCode, stdout, stderr, timedOut?, truncated?, ownStderr? }`. The core writes it as `exit code: N` and the two streams, hides every secret value of the target and fits the output to its limit. `exitCode` is 0 for a result, 1 for a result with `isError` and for every failure except a time limit, which gives `null` with `timedOut`. `endText`, exported from the engine `src/kinds/engines/mcp-client.js` and used here, gives the end of a server as a sentence, `cutBytes` the first bytes of a text, `INPUT_REQUIRED` the text of a server that asked for input. `plain` passes a text of the server that is not the answer itself through `shownText` of the engine, with the hidden texts that `perform` gives (the secret values of the target and their forms): each hidden first, then `asSpaces` turns each control character, U+2028, U+2029 and each direction mark into a space, each hidden again, and only then the clip. Nothing is dropped at the end or at the clip for being a start of a secret: the agent can make a server repeat a guess in an error message or a link, and such a drop told whether the guess starts a secret. The clip edge moves with the length of the agent's own arguments when a server echoes them, so a secret clipped before it was hidden would show all but its last character. `failed` makes a failure with exit code 1. The answer itself is cut only at its end, and the result is then marked `truncated`, so the core leaves out the end of the stream, where a secret can be cut. A time limit gives `ownStderr: true`: its stderr is the whole note that this file wrote, and the core shows it whole (see `fitStreams` in the `src/tools.js` section).
 
 ### answerOf
 
@@ -9845,12 +10190,12 @@ flowchart TD
     A1["answerOf of the outcome"] --> A2{"a result?"}
     A2 -->|"yes"| R1["resultText, next diagram"]
     A2 -->|"no"| A3{"timedOut?"}
-    A3 -->|"yes"| A4["exit null, timedOut, stderr: the MCP server did not answer within N seconds"]
+    A3 -->|"yes"| A4["exit null, timedOut, ownStderr, stderr: the MCP server did not answer within N seconds"]
     A3 -->|"no"| A5{"rpcError?"}
     A5 -->|"yes"| A6["the message through plain, hidden then clipped, 1000 characters. Empty after cleaning: the without a message text.<br/>It starts ksproxy cannot send this call: as it is. Else: the MCP server answered with an error: the message"]
     A5 -->|"no"| A7{"httpError?"}
     A7 -->|"yes"| A8["the MCP server answered HTTP STATUS, then retry after N seconds for a whole number of seconds. Never the body"]
-    A7 -->|"no"| A9["unreachable: the MCP server could not be reached. cutOff: the answer of the MCP server was cut off"]
+    A7 -->|"no"| A9["unreachable: the MCP server could not be reached, then a colon and the reason when it is a text. cutOff: the answer of the MCP server was cut off"]
     A9 --> A10["ended: endText of the engine, the MCP server stopped, exit N or signal S, or the connection closed. inputRequired: INPUT_REQUIRED"]
     A10 --> A11["tooLarge: the answer of the MCP server was too large to read. Anything else: the MCP server gave an answer that ksproxy cannot read"]
 ```
@@ -9862,7 +10207,7 @@ flowchart TD
 | `the MCP server answered with an error, without a message` | `rpcError` whose message is empty after `plain` and trimming |
 | `ksproxy cannot send this call: ...` | `rpcError` whose message starts so: given as it is, without the prefix |
 | `the MCP server answered HTTP STATUS` and `, retry after N seconds` | `httpError`, the second part for a whole number of seconds that is 0 or more. STATUS is `?` when it is not a whole number |
-| `the MCP server could not be reached` | `unreachable` |
+| `the MCP server could not be reached` and `: REASON` | `unreachable`, the reason when there is one (the fixed list of `reachReason`, see MCP-SERVERS.md) |
 | `the answer of the MCP server was cut off` | `cutOff` |
 | `the MCP server stopped (signal S)`, `the MCP server stopped (exit N)` | `ended`, a signal first, then an exit code |
 | `the connection to the MCP server was closed` | `ended` with neither a code nor a signal |

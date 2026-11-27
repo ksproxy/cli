@@ -344,6 +344,12 @@ function pidGone(pid, kill) {
   }
 }
 
+// Whether a command line is the proxy a record names: it holds " proxy ", or it is only the recorded program name.
+function isProxyCommand(command, program) {
+  if (command.includes(' proxy ')) return true;
+  return typeof program === 'string' && program !== '' && command === program;
+}
+
 export function commandLine(pid) {
   const out = spawnSync('ps', ['-o', 'command=', '-p', String(pid)], {
     encoding: 'utf8', env: psEnv(), timeout: 2000,
@@ -352,8 +358,9 @@ export function commandLine(pid) {
 }
 
 // Stop proxies left behind by a start that died without cleaning up.
-// Kills a recorded pid only when it is still the same process (start time within 5 s)
-// and its command line contains " proxy ". Removes every pid file it reads.
+// Kills a recorded pid only when it is still the same process (start time within 5 s) and it is a proxy: its command
+// line contains " proxy ", or, for a kubectl that hides its arguments (the one in k3s shows only its name), the command
+// line is exactly the program name the record holds. Removes every pid file it reads.
 export async function reapStaleProxies(socketDir, {
   kill = (pid, signal) => process.kill(pid, signal), deadlineMs = 2000,
 } = {}) {
@@ -384,7 +391,7 @@ export async function reapStaleProxies(socketDir, {
       const started = processStartTime(pid);
       if (started === null || Math.abs(started - recorded) > 5000) continue;
       const command = commandLine(pid);
-      if (command === null || !command.includes(' proxy ')) continue;
+      if (command === null || !isProxyCommand(command, record.program)) continue;
       try {
         kill(pid, 'SIGTERM');
       } catch {
@@ -453,7 +460,8 @@ export async function openCluster(target, { sessionDir }, env = process.env) {
       const dir = socketDirOf(env);
       ensureDir(dir);
       pidFile = path.join(dir, `kube-${target.name}.pid`);
-      writeFileAtomic(pidFile, `${JSON.stringify({ pid: child.pid, startedAt: processStartTime(child.pid) })}\n`);
+      const record = { pid: child.pid, startedAt: processStartTime(child.pid), program: path.basename(kubectlBin(env)) };
+      writeFileAtomic(pidFile, `${JSON.stringify(record)}\n`);
     }
 
     const deadline = Date.now() + 10000;

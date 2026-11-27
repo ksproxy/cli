@@ -289,6 +289,47 @@ test('reapStaleProxies survives a failing SIGKILL', async () => {
   }
 });
 
+// A kubectl that hides its arguments, as the one in k3s does: ps shows only its name, never " proxy ".
+function hiddenHelper(title = 'kubectl') {
+  return helper(`process.title = ${JSON.stringify(title)}; setInterval(() => {}, 1e6)`);
+}
+
+async function hiddenRecord(dir, name, child, extra) {
+  await waitFor(() => processStartTime(child.pid) !== null, 10000, 'helper start time');
+  await waitFor(() => commandLine(child.pid) === 'kubectl' || commandLine(child.pid) === 'kubectlx', 10000, 'the helper to show only its title');
+  return writePidFile(dir, name, JSON.stringify({ pid: child.pid, startedAt: processStartTime(child.pid), ...extra }));
+}
+
+test('reapStaleProxies stops a proxy whose command line is only the recorded program name', async () => {
+  const dir = tmp();
+  try {
+    const child = hiddenHelper();
+    const file = await hiddenRecord(dir, 'kube-a.pid', child, { program: 'kubectl' });
+    assert.equal(await reapStaleProxies(dir, { deadlineMs: 2000 }), 1);
+    await waitFor(() => !alive(child.pid), 10000, 'the hidden proxy to stop');
+    assert.equal(fs.existsSync(file), false);
+  } finally {
+    rm(dir);
+  }
+});
+
+test('reapStaleProxies leaves a process with hidden arguments alone without a recorded name, or with another name', async () => {
+  const dir = tmp();
+  try {
+    const old = hiddenHelper();
+    await hiddenRecord(dir, 'kube-old.pid', old, {});
+    const other = hiddenHelper('kubectlx');
+    await hiddenRecord(dir, 'kube-other.pid', other, { program: 'kubectl' });
+    const odd = hiddenHelper();
+    await hiddenRecord(dir, 'kube-odd.pid', odd, { program: 42 });
+    assert.equal(await reapStaleProxies(dir), 0);
+    for (const child of [old, other, odd]) assert.equal(alive(child.pid), true);
+    assert.deepEqual(fs.readdirSync(dir), []);
+  } finally {
+    rm(dir);
+  }
+});
+
 test('reapStaleProxies tolerates a record it cannot read or remove', async () => {
   const dir = tmp();
   try {

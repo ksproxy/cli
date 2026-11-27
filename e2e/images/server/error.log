@@ -1,0 +1,5 @@
+2026/11/20 08:00:01 [notice] 1#1: nginx/1.22.1
+2026/11/20 08:14:52 [error] 31#31: *1204 open() "/srv/shop/favicon.ico" failed (2: No such file or directory), client: 192.0.2.31, server: web1.example.com
+2026/11/20 09:02:17 [warn] 31#31: *1388 upstream server temporarily disabled while connecting to upstream, client: 192.0.2.44, server: web1.example.com
+2026/11/20 09:02:18 [error] 31#31: *1388 connect() failed (111: Connection refused) while connecting to upstream, client: 192.0.2.44, server: web1.example.com
+2026/11/20 09:30:00 [notice] 1#1: signal 1 (SIGHUP) received from 412, reconfiguring

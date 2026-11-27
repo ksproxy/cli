@@ -79,6 +79,16 @@ test('status prints the listener, the token and each client after the sessions',
   ]);
 });
 
+test('status writes 1 wrong token for one and N wrong tokens for more', async () => {
+  const { env, file } = world();
+  session(env);
+  const base = record().clients[1];
+  write(file, record({ clients: [{ ...base, wrong: 1 }, { ...base, from: '192.0.2.51', wrong: 12 }] }));
+  const lines = (await status(env)).lines;
+  assert.ok(lines.includes('  refused 1 wrong token from 192.0.2.50'));
+  assert.ok(lines.includes('  refused 12 wrong tokens from 192.0.2.51'));
+});
+
 test('status says https when the listener uses TLS', async () => {
   const { env, file } = world();
   session(env);

@@ -378,7 +378,7 @@ test('one token serves both projects: the lines, calls through each URL, the eve
   assert.equal((await rpc(port, token, PING)).status, 404, 'the default is not served by this start');
   const wrong = `${token.slice(0, -1)}${token.endsWith('A') ? 'B' : 'A'}`;
   assert.equal((await rpc(port, wrong, PING, { target: '/p/ops/mcp' })).status, 401);
-  await waitFor(() => proc.stdout.text.includes('[listen] refused 1 wrong tokens from 127.0.0.1\n'), 5000, 'the refused line');
+  await waitFor(() => proc.stdout.text.includes('[listen] refused 1 wrong token from 127.0.0.1\n'), 5000, 'the refused line');
   await waitFor(() => /^\[shop\] .*vlt +v1 .*read a/m.test(proc.stdout.text), 10000, 'the brokered call line of shop');
 
   proc.emit('SIGINT');

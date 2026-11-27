@@ -61,6 +61,7 @@ section { padding: 40px 0 0; }
 p, ul, ol { margin: 0 0 16px; }
 ul, ol { padding-left: 1.4rem; }
 li { margin-bottom: 8px; }
+li > .codeblock { margin-top: 8px; }
 .links { display: flex; flex-wrap: wrap; gap: 8px 24px; margin: 20px 0 0; padding: 0; list-style: none; }
 .links li { margin: 0; }
 code, pre { font-family: var(--mono); font-size: 0.9rem; }
@@ -124,7 +125,7 @@ footer li { margin: 0; }
 <header>
   <div class="wrap">
     <h1>ksproxy</h1>
-    <p class="lede">Lets an AI agent use your ssh servers, Kubernetes clusters, local folders, databases, queues, HTTP APIs and MCP servers without ever holding a credential, through a per-target allowlist that refuses everything by default.</p>
+    <p class="lede">Lets an AI agent use your servers, clusters, databases and MCP servers without ever holding a credential. Every call goes through an allowlist that refuses everything by default.</p>
     <div class="codeblock has-copy">
       <pre tabindex="0"><code>npm install -g @ksproxy/cli</code></pre>
     </div>
@@ -141,11 +142,11 @@ footer li { margin: 0; }
 
 <section aria-labelledby="problem">
   <h2 id="problem">The problem</h2>
-  <p>An agent that manages infrastructure normally needs your ssh keys or your kubeconfig. Once it holds them, it can do whatever the credential allows, and you find out afterwards, if at all. ksproxy keeps the credential on your side: you open the connections, and the agent gets only a narrow, logged tool interface.</p>
+  <p>An agent that manages infrastructure normally needs your ssh keys, your kubeconfig or your database password. Once it holds them, it can do whatever they allow. ksproxy keeps them on your side: you open the connections, and the agent gets only a narrow, logged set of tools.</p>
   <ul>
     <li><strong>No credential for the agent.</strong> You hold it; the agent only calls tools.</li>
     <li><strong>Default deny.</strong> A call that no rule allows is refused.</li>
-    <li><strong>Everything is logged.</strong> You see each call as it happens, and read it later.</li>
+    <li><strong>Everything is logged.</strong> You see each call as it happens, and can read it later.</li>
     <li><strong>One Ctrl-C.</strong> It closes every connection and stops every proxy.</li>
   </ul>
 </section>
@@ -191,88 +192,32 @@ footer li { margin: 0; }
       <line class="line" x1="290" y1="264" x2="338" y2="264" marker-end="url(#ah)"/>
       <line class="line" x1="440" y1="236" x2="460" y2="198" marker-end="url(#ah)"/>
     </svg>
-    <figcaption>The agent never connects to a server. It can only call the MCP server, which uses the connections you opened. Database, queue, HTTP API and MCP server targets follow the same path: <code>ksproxy start</code> holds the credential and carries out the call.</figcaption>
+    <figcaption>The agent never connects to a server. It can only call the MCP server, which uses the connections you opened. Databases, queues, HTTP APIs and MCP servers follow the same path: <code>ksproxy start</code> holds the credential and carries out the call.</figcaption>
   </figure>
   <ol>
-    <li><strong>You start it.</strong> Run <code>ksproxy start</code> in a terminal, pick the targets and leave it running. It opens the ssh connections (ssh may ask for your password or key passphrase in that terminal), the <code>kubectl proxy</code> processes and the other targets.</li>
-    <li><strong>The agent calls it.</strong> Your agent talks to the built-in MCP server, <code>ksproxy mcp</code>. Each call is checked against the target's allowlist and refused unless a rule allows it. With model review turned on for a target, a model can also approve a command that no rule matches.</li>
-    <li><strong>You watch.</strong> Every call and event appears in your terminal as it happens. Ctrl-C closes every connection and stops every proxy.</li>
+    <li><strong>You start it.</strong> Run <code>ksproxy start</code> in a terminal, pick the targets and leave it running.</li>
+    <li><strong>The agent calls it.</strong> Your agent talks to the built-in MCP server. Each call is checked against the target's allowlist and refused unless a rule allows it.</li>
+    <li><strong>You watch.</strong> Every call appears in your terminal as it happens. Ctrl-C ends the session.</li>
   </ol>
 </section>
 
 <section aria-labelledby="tools">
-  <h2 id="tools">What the agent gets</h2>
-  <p>Four MCP tools for ssh, Kubernetes and local targets, one more for each kind of service target, and the tools of each MCP server. A call times out after 1 to 600 seconds (default 60). Stdout and stderr are each capped at 256 KiB, and <code>maxOutputKiB</code> raises that for one target to at most 4096 KiB.</p>
+  <h2 id="tools">What the agent can reach</h2>
   <div class="tablewrap">
     <table>
-      <thead><tr><th scope="col">Tool</th><th scope="col">What it does</th></tr></thead>
+      <thead><tr><th scope="col">Target</th><th scope="col">What a call is</th></tr></thead>
       <tbody>
-        <tr><td><code>list_targets</code></td><td>Lists the targets you opened, with their descriptions and allowed rules.</td></tr>
-        <tr><td><code>ssh_exec</code></td><td>Runs a command on an ssh target: <code>server</code>, <code>command</code>, optional <code>timeout_seconds</code>.</td></tr>
-        <tr><td><code>kubectl</code></td><td>Runs kubectl against a cluster through its local proxy: <code>cluster</code>, <code>args</code>, optional <code>timeout_seconds</code>.</td></tr>
-        <tr><td><code>local_exec</code></td><td>Runs an allowlisted command on your machine in a local target's folder: <code>target</code>, <code>command</code>, optional <code>timeout_seconds</code>. No shell is involved.</td></tr>
-        <tr><td>One tool per service kind</td><td><code>postgres_query</code>, <code>mysql_query</code>, <code>mongodb_command</code>, <code>redis_command</code>, <code>elasticsearch_request</code>, <code>rabbitmq_request</code>, <code>kafka_exec</code>, <code>http_request</code> and <code>command_exec</code>. Each is listed only when your inventory has a target of that kind.</td></tr>
-        <tr><td><code>TARGET__TOOL</code></td><td>Each allowed tool of an MCP server, such as <code>jira__jira_get_issue</code>, with the server's own input schema.</td></tr>
+        <tr><td>ssh servers</td><td>One command, with no shell syntax. A server behind another server works too.</td></tr>
+        <tr><td>Kubernetes clusters</td><td>One <code>kubectl</code> call through a local proxy. <code>exec</code>, <code>port-forward</code> and secrets are always refused.</td></tr>
+        <tr><td>Local folders</td><td>One listed command inside a folder on your machine.</td></tr>
+        <tr><td>Databases</td><td><code>postgres</code>, <code>mysql</code>, <code>mongodb</code>, <code>redis</code>: one statement or command, read-only by default where the kind has it.</td></tr>
+        <tr><td>Queues and search</td><td><code>kafka</code>, <code>rabbitmq</code>, <code>elasticsearch</code>.</td></tr>
+        <tr><td>HTTP APIs and programs</td><td><code>http</code>: any API with a token or basic auth. <code>command</code>: one client program that you name.</td></tr>
+        <tr><td>MCP servers</td><td>The tools you allow of any MCP server, local or remote, under the name <code>TARGET__TOOL</code>.</td></tr>
       </tbody>
     </table>
   </div>
-
-  <p><strong>Local targets</strong> run a short list of commands in a folder on your own machine:</p>
-  <ul>
-    <li><strong>Folder checks.</strong> Opening only checks that the folder exists, can be resolved, and is not your home directory, the root, ksproxy's own folders or a folder holding an inventory kubeconfig.</li>
-    <li><strong>Wildcards stay plain.</strong> A wildcard matches only plain names and paths, never a flag. Flags and anything else must be written literally in the rule. Each plain value, links followed, must stay inside the folder.</li>
-    <li><strong>Outside files.</strong> A file outside the folder is reachable only if you write it literally into a rule (<code>cat /etc/hosts</code>).</li>
-    <li><strong>Protected names.</strong> Paths you list in <code>protect</code>, and names that usually hold secrets, are never matched by a wildcard.</li>
-    <li><strong>Listed programs.</strong> A <code>programs</code> list with a <code>paths</code> list lets the agent run the programs you name, with any arguments, as you, inside those paths. Name only programs you would let the agent use freely. See <a href="https://github.com/ksproxy/cli/blob/main/docs/LOCAL-TARGETS.md#listed-programs-inside-chosen-paths">docs/LOCAL-TARGETS.md</a>.</li>
-  </ul>
-
-  <p><strong>Databases, queues and HTTP APIs.</strong> <code>ksproxy start</code> holds the password or token and carries out each call, so the agent never sees it. Every call goes through a strict reader of its kind, fixed refusals that no rule can lift, and your allowlist.</p>
-  <ul>
-    <li><code>postgres</code> and <code>mysql</code> (also MariaDB): one SQL statement at a time, read-only by default.</li>
-    <li><code>mongodb</code>: one command document, with results bounded.</li>
-    <li><code>redis</code>: one command, over TCP or TLS.</li>
-    <li><code>elasticsearch</code> and <code>rabbitmq</code> (management API): one HTTP request.</li>
-    <li><code>kafka</code>: the Kafka command-line clients you installed.</li>
-    <li><code>http</code>: any HTTP API, with a bearer token, basic auth or one header.</li>
-    <li><code>command</code>: one client program that you name.</li>
-  </ul>
-  <p>The rights of the account the target uses are the real boundary. The reference is <a href="https://github.com/ksproxy/cli/blob/main/docs/SERVICES.md">docs/SERVICES.md</a>.</p>
-</section>
-
-<section aria-labelledby="mcp">
-  <h2 id="mcp">MCP servers</h2>
-  <p>The <code>mcp</code> kind lets the agent use the tools of an MCP server, local or remote, without holding its credential. <code>ksproxy start</code> starts the server, or connects to it, with the credential it holds.</p>
-  <div class="codeblock has-copy">
-    <pre tabindex="0"><code>{
-  "mcp": [
-    {
-      "name": "jira",
-      "description": "Jira of jira.example.com",
-      "command": ["uvx", "mcp-atlassian@0.24.8"],
-      "env": {
-        "JIRA_URL": "https://jira.example.com",
-        "JIRA_USERNAME": "someone@example.com",
-        "JIRA_API_TOKEN": { "fromEnv": "JIRA_TOKEN" }
-      },
-      "allow": [
-        "jira_get_issue",
-        "jira_search",
-        { "tool": "jira_add_comment", "arguments": { "issue_key": "regex(SHOP-[0-9]+)" } }
-      ]
-    }
-  ]
-}</code></pre>
-  </div>
-  <ul>
-    <li><strong>Tools by name.</strong> Each allowed tool is in the agent's own tool list as <code>TARGET__TOOL</code>, for example <code>jira__jira_get_issue</code>. In a rule, write the server's own name for the tool (<code>jira_get_issue</code>).</li>
-    <li><strong>Rules.</strong> A rule is a tool name, or an object with <code>tool</code> and the <code>arguments</code> values a call must match. <code>"allow": "any"</code> is refused. <code>arguments</code> on the target pins a value for every call.</li>
-    <li><strong>Local or remote.</strong> <code>command</code> runs a local server (<code>uvx</code>, <code>npx</code>, <code>pipx</code>, <code>bunx</code>, <code>docker run -i --rm</code> or any program). <code>url</code> connects to a remote server over https, with no login, a bearer token or basic auth.</li>
-    <li><strong>Secrets stay out of the file.</strong> In <code>env</code>, write <code>{ "fromEnv": NAME }</code>. <code>start</code> holds that value and hides it everywhere.</li>
-    <li><strong>Exact versions.</strong> A package run by <code>npx</code>, <code>bunx</code>, <code>uvx</code>, <code>pipx</code> or <code>docker run</code> must name an exact version or image tag, so that the code does not change without you.</li>
-    <li><strong>Nothing new to learn.</strong> There is no new command and no new flag. Choose <code>mcp</code> targets in the picker or with <code>--all</code>, check a rule with <code>ksproxy check mcp NAME TOOL [JSON]</code>, and see the server in <code>ksproxy doctor</code>.</li>
-    <li><strong>Not supported yet.</strong> The browser OAuth login, and model review of <code>mcp</code> calls.</li>
-  </ul>
-  <p>Read "What it does not do" below before you add a local server. The details are in <a href="https://github.com/ksproxy/cli/blob/main/docs/MCP-SERVERS.md">docs/MCP-SERVERS.md</a> and the <a href="https://github.com/ksproxy/cli/blob/main/README.md#mcp-servers">README</a>.</p>
+  <p>Each kind has its own page: <a href="https://github.com/ksproxy/cli/blob/main/docs/EXAMPLES.md">examples for every kind</a>, <a href="https://github.com/ksproxy/cli/blob/main/docs/LOCAL-TARGETS.md">local targets</a>, <a href="https://github.com/ksproxy/cli/blob/main/docs/SERVICES.md">databases, queues and HTTP APIs</a>, <a href="https://github.com/ksproxy/cli/blob/main/docs/MCP-SERVERS.md">MCP servers</a>.</p>
 </section>
 
 <section aria-labelledby="allow">
@@ -287,160 +232,71 @@ footer li { margin: 0; }
       "description": "production web box",
       "allow": ["systemctl status *", "journalctl -u myapp ...", "df -h"]
     }
-  ],
-  "kubernetes": [
-    {
-      "name": "lab",
-      "kubeconfig": "~/.kube/lab-agent.yaml",
-      "proxyPort": 8001,
-      "manifestRoots": ["~/projects/lab/manifests"],
-      "description": "lab cluster",
-      "allow": ["get ...", "describe ...", "logs ...", "rollout status ...", "apply -f *"]
-    }
-  ],
-  "local": [
-    {
-      "name": "infra",
-      "cwd": "~/projects/infra",
-      "description": "terraform repo",
-      "allow": ["git status", "git log --oneline -n * ...", "terraform plan", "ls -l ..."]
-    }
   ]
 }</code></pre>
   </div>
-  <p>A rule is whitespace-separated tokens matched against the command's arguments:</p>
   <ul>
-    <li>A literal matches an argument equal to it. <code>df -h</code> allows exactly <code>df -h</code>.</li>
-    <li><code>*</code> matches exactly one argument that does not start with <code>-</code>. <code>systemctl status *</code> allows <code>systemctl status nginx</code>.</li>
-    <li><code>...</code> matches zero or more arguments of any shape, and only as the last token. <code>journalctl -u myapp ...</code> allows <code>journalctl -u myapp --since today -n 50</code>.</li>
+    <li>A plain word matches itself: <code>df -h</code> allows exactly <code>df -h</code>.</li>
+    <li><code>*</code> matches one argument that is not a flag: <code>systemctl status *</code> allows <code>systemctl status nginx</code>.</li>
+    <li><code>...</code> at the end matches any further arguments.</li>
   </ul>
-  <p>Before a rule is tried, fixed checks run that no rule can lift:</p>
-  <ul>
-    <li><strong>ssh.</strong> A command is split into tokens and every character is checked. Quotes, <code>; | &amp; $</code>, backticks, redirects, globs and newlines are refused outright, so no shell syntax reaches the remote host.</li>
-    <li><strong>Kubernetes.</strong> Arguments pass a fixed verb-and-flag allowlist first. It refuses <code>exec</code>, <code>port-forward</code>, credential flags and secret resources whatever your rules say. Files given with <code>-f</code> must sit inside <code>manifestRoots</code>.</li>
-  </ul>
-  <p><a href="https://github.com/ksproxy/cli/blob/main/docs/EXAMPLES.md">Examples: a read-only and a write target for each kind</a>.</p>
-  <p>Try a rule without opening anything (for an <code>mcp</code> target, the kind word is <code>mcp</code>):</p>
+  <p>Fixed checks run before any rule and cannot be lifted by one. Try a rule without opening anything:</p>
   <div class="codeblock has-copy">
-    <pre tabindex="0"><code>ksproxy check ssh web1 systemctl status nginx
-ksproxy check kube lab get secrets
-ksproxy check local infra git status
-ksproxy check mcp jira jira_get_issue '{"issue_key":"SHOP-1"}'</code></pre>
+    <pre tabindex="0"><code>ksproxy check ssh web1 systemctl status nginx</code></pre>
   </div>
-</section>
-
-<section aria-labelledby="review">
-  <h2 id="review">Optional model review</h2>
-  <p>When no rule matches a command, ksproxy can ask a model if it fits a policy you wrote.</p>
-  <ul>
-    <li><strong>Off by default.</strong> You turn it on per target, with any OpenAI-compatible provider. It is not available for <code>mcp</code> targets.</li>
-    <li><strong>Refuses when unsure.</strong> Anything but a clean approval is a refusal, and the tool's reply does not show the model's reason.</li>
-  </ul>
-  <div class="codeblock has-copy">
-    <pre tabindex="0"><code>{
-  "reviewers": {
-    "groq": {
-      "baseUrl": "https://api.groq.com/openai/v1",
-      "model": "&lt;model id&gt;",
-      "keyEnv": "GROQ_API_KEY"
-    }
-  },
-  "ssh": [
-    {
-      "name": "web1",
-      "host": "web1.example.com",
-      "allow": ["uptime", "df -h"],
-      "review": {
-        "reviewer": "groq",
-        "policy": "read-only diagnostics, no restarts, no file contents"
-      }
-    }
-  ]
-}</code></pre>
-  </div>
-  <p>The model judges the words of a command, not what it does, so keep write commands on the allow list. The <a href="https://github.com/ksproxy/cli/blob/main/docs/MODEL-REVIEW.md">review document</a> lists every check and limit.</p>
+  <p>More in <a href="https://github.com/ksproxy/cli/blob/main/docs/RULES.md">the rules page</a>. A model can also review a command that no rule matches, if you turn that on: <a href="https://github.com/ksproxy/cli/blob/main/docs/MODEL-REVIEW.md">model review</a>.</p>
 </section>
 
 <section aria-labelledby="log">
   <h2 id="log">You see everything</h2>
-  <ul>
-    <li><strong>Live.</strong> <code>ksproxy start</code> prints one line per agent call and per event. <code>ksproxy log</code> shows the same lines later.</li>
-    <li><strong>Refusals explain themselves.</strong> A refused call shows a short reason; the agent receives the full explanation with the allowed rules.</li>
-    <li><strong>Audit file.</strong> Every call is also kept as a JSON line in <code>logs/audit.log</code> in the state folder (command and decision, not output). The log is rotated at 5 MiB and the 5 newest old files are kept.</li>
-  </ul>
-  <div class="codeblock has-copy">
-    <pre tabindex="0"><code>12:18:40 ssh  web1       OPENING         web1
-12:18:41 ssh  web1       UP
-12:18:43 --   session    READY           2 targets, pid 31973
+  <p><code>ksproxy start</code> prints one line per call. <code>ksproxy log</code> shows the same lines later, and every call is kept in an audit file.</p>
+  <div class="codeblock">
+    <pre tabindex="0"><code>12:18:41 ssh  web1       UP
 12:19:19 ssh  web1       ok       0.1s   uptime
 12:19:20 ssh  web1       DENIED          cat /etc/shadow  [not on allowlist]
 12:19:23 kube lab        DENIED          get secrets -A  [secret resource]
-12:41:00 --   session    CLOSING         Ctrl-C
 12:41:01 --   session    CLOSED          3 calls: 1 ok, 0 failed, 2 denied</code></pre>
   </div>
 </section>
 
 <section aria-labelledby="start">
   <h2 id="start">Quick start</h2>
-  <p>Write a sample inventory. It never overwrites an existing file.</p>
-  <div class="codeblock has-copy">
-    <pre tabindex="0"><code>ksproxy init</code></pre>
-  </div>
-  <p>Edit it: your own targets, and an <code>allow</code> list for each. <a href="https://github.com/ksproxy/cli/blob/main/docs/EXAMPLES.md">Examples: a read-only and a write target for each kind</a>.</p>
-  <div class="codeblock has-copy">
-    <pre tabindex="0"><code>$EDITOR ~/.config/ksproxy/inventory.json</code></pre>
-  </div>
-  <p>Start a session, pick targets, and leave the terminal open. Ctrl-C ends it. Run it with the environment variables that your service and MCP targets name.</p>
-  <div class="codeblock has-copy">
-    <pre tabindex="0"><code>ksproxy start</code></pre>
-  </div>
-  <p>If <code>start</code> fails, run the same line with <code>doctor</code> in place of <code>start</code>. <code>start</code> stops at the first problem; <code>doctor</code> shows all of them in one run. It opens each target the way a session does, runs one fixed read-only check of its kind, and changes nothing on a target. It exits 0 when every target is OK.</p>
-  <div class="codeblock has-copy">
-    <pre tabindex="0"><code>ksproxy doctor</code></pre>
-  </div>
-  <p>Add the MCP server to your agent once. The summary printed by <code>start</code> shows the exact line; for Claude Code it has this shape:</p>
-  <div class="codeblock has-copy">
-    <pre tabindex="0"><code>claude mcp add ksproxy -- &lt;node&gt; --disable-sigusr1 &lt;path to bin/ksproxy.js&gt; mcp</code></pre>
-  </div>
-  <p>Check the session at any time.</p>
-  <div class="codeblock has-copy">
-    <pre tabindex="0"><code>ksproxy status</code></pre>
-  </div>
-</section>
-
-<section aria-labelledby="more">
-  <h2 id="more">More: projects and network access</h2>
-  <ul>
-    <li><strong>Projects.</strong> <code>--project NAME</code> on every command but <code>token</code> gives a set of targets of its own (<code>projects/NAME.json</code> in the config folder) and a state folder of its own. Two agents in two repositories each see only their own targets, and sessions of different projects run at the same time. <code>ksproxy start --project shop,ops --all</code> runs several in one terminal. Without <code>--project</code>, nothing changes. See <a href="https://github.com/ksproxy/cli/blob/main/docs/PROJECTS.md">docs/PROJECTS.md</a>.</li>
-    <li><strong>Network access.</strong> By default ksproxy opens no network port. <code>ksproxy start --listen HOST:PORT</code> also serves the projects of that start over HTTP, at <code>/mcp</code> and <code>/p/NAME/mcp</code>, to an agent on another device of your network. The address must be a loopback or private IP address of this machine. One token opens every project of that start; <code>ksproxy token</code> shows its dates, never the token; <code>ksproxy token revoke</code> ends it. Plain HTTP is the default, and <code>--tls-cert FILE --tls-key FILE</code> turn on TLS. See <a href="https://github.com/ksproxy/cli/blob/main/docs/NETWORK-ACCESS.md">docs/NETWORK-ACCESS.md</a>.</li>
-    <li><strong>A server behind another server.</strong> <code>jumps</code> on an ssh target reaches a server that only another server can reach. See <a href="https://github.com/ksproxy/cli/blob/main/docs/JUMPS.md">docs/JUMPS.md</a>.</li>
-  </ul>
+  <ol>
+    <li>Write a sample inventory, then put your own targets and rules in it.
+      <div class="codeblock has-copy">
+        <pre tabindex="0"><code>ksproxy init</code></pre>
+      </div>
+    </li>
+    <li>Start a session, pick targets, and leave the terminal open.
+      <div class="codeblock has-copy">
+        <pre tabindex="0"><code>ksproxy start</code></pre>
+      </div>
+    </li>
+    <li>Add the MCP server to your agent once. <code>start</code> prints the exact line for it.</li>
+  </ol>
+  <p>If <code>start</code> fails, run <code>ksproxy doctor</code> with the same arguments: it checks every target and shows every problem in one run. The <a href="https://github.com/ksproxy/cli#quick-start">README</a> has the full steps.</p>
 </section>
 
 <section aria-labelledby="limits">
   <h2 id="limits">What it does not do</h2>
-  <p>The allowlist is a second lock; the first is that the agent never holds a credential. These limits matter when you decide what to allow. The full list is in the <a href="https://github.com/ksproxy/cli/blob/main/README.md#security-model-and-limits">README</a> and <a href="https://github.com/ksproxy/cli/blob/main/SECURITY.md">SECURITY.md</a>.</p>
+  <p>The allowlist is a second lock; the first is that the agent never holds a credential. Know these limits before you decide what to allow.</p>
   <ul class="limits">
-    <li><strong>The allowlist binds only the MCP path.</strong> An agent that also has an unrestricted local shell can use the ssh sockets and proxy ports directly.</li>
-    <li><strong>Files it can edit.</strong> An agent that can edit the inventory or the session files can widen its own rules.</li>
-    <li><strong>Your own user is not a wall.</strong> A process that runs as you and can inspect processes or read your files can reach the credentials that <code>ksproxy start</code> holds. Run the agent without a shell of your user, in a sandbox, or as another user. Projects do not change this.</li>
-    <li><strong>Programs can do more than they say.</strong> A rule is only as safe as the program it allows. <code>find ...</code>, <code>awk ...</code>, <code>vim</code>, <code>less</code> and <code>sudo ...</code> can run other commands.</li>
-    <li><strong>Output is not redacted.</strong> Command output is returned as-is. A program that prints a secret leaks it to the agent. Replacing local paths and proxy addresses in the output is not redaction.</li>
-    <li><strong>Rights are the boundary.</strong> The remote user's permissions and Kubernetes RBAC remain the boundary. A workload the identity may create, such as a Pod that mounts a Secret or a service-account token, is not inspected by this tool.</li>
-    <li><strong>Rules match words, not meaning.</strong> The rights of a database or service account are the real boundary, and a secret that a service returns in its own output reaches the agent. Only the credentials that ksproxy holds are hidden.</li>
-    <li><strong><code>"allow": "any"</code>.</strong> On an ssh target the command is sent as written, so pipes and redirects work. <code>"any"</code> is an error for <code>local</code>, <code>command</code>, <code>postgres</code>, <code>mysql</code>, <code>mongodb</code>, <code>kafka</code> and <code>mcp</code> targets (and ssh targets with <code>jumps</code>).</li>
-    <li><strong>A local command runs as you.</strong> It runs on the machine that holds your keys, so give local targets the shortest allow list of all. The folder check looks at arguments only: a program can still read other files by itself, and some programs (<code>git</code>, <code>make</code>, <code>npm</code>, <code>terraform plan</code>) run code they find in the folder. The full list is in <a href="https://github.com/ksproxy/cli/blob/main/docs/LOCAL-TARGETS.md">docs/LOCAL-TARGETS.md</a>.</li>
-    <li><strong>Listed programs.</strong> A listed program that can act as you (an interpreter, <code>ps</code>, <code>gh</code>, <code>aws</code>, an archive program such as <code>tar</code>) gives the agent your whole account. <code>ksproxy start</code> and <code>ksproxy check</code> warn when you list one. The refused options of listed programs are a best effort.</li>
-    <li><strong>Protected locations.</strong> They are those recorded by <code>ksproxy start</code> (its own state and configuration folders and every inventory kubeconfig), not whatever the agent host's environment says. Programs are found through the absolute entries of your <code>PATH</code>; relative entries and entries inside any local target's folder are dropped. A path is replaced whole in output, also when its letter case differs and where the output limit cuts the text.</li>
-    <li><strong>Hard kills.</strong> After a SIGKILL or power loss, connections and proxies it opened can outlive it until the next <code>ksproxy start</code> closes them.</li>
-    <li><strong>A local MCP server is third-party code, run as you, without a sandbox.</strong> It gets the credential it needs, and it can read your files and reach the sockets and proxies of this session. ksproxy's rules check what the agent asks, not what the server's code does. Read what a server does before you add it, and give it an account with only the rights the agent needs.</li>
-    <li><strong>A rule cannot limit what a query reads.</strong> A pattern on a JQL, CQL or search string can be passed by a query that reads more. Rules choose tools and fixed values; the rights of the account limit the data.</li>
-    <li><strong>A pin fixes the package, not its dependencies.</strong> An image tag can still be moved by whoever publishes it; only a digest fixes it. <code>uvx --exclude-newer DATE</code> fixes dependencies to a date.</li>
-    <li><strong>A remote MCP server</strong> sees what the agent sends and decides what it answers. Its descriptions and answers can try to steer the agent, as any output can.</li>
-    <li><strong>One token opens every project</strong> of a <code>start --listen</code>. Plain HTTP lets anyone who can record that network read the token and every answer, so use TLS on a shared network. The token does not say which device holds it.</li>
-    <li><strong>Out of scope.</strong> Creating server users, sudoers rules, RBAC, tokens or kubeconfigs; file transfer; interactive shells; port forwarding for the agent; redacting secrets from output; Windows.</li>
+    <li><strong>The rules bind only the MCP path.</strong> An agent that also has a shell of your user can reach the connections, the files and the credentials directly. Run the agent without a general shell, in a sandbox, or as another user.</li>
+    <li><strong>Rights are the real boundary.</strong> Rules match words, not meaning. What the remote user, the Kubernetes role or the database account may do is what limits the agent.</li>
+    <li><strong>A rule is only as safe as the program it allows.</strong> <code>find</code>, <code>awk</code>, <code>vim</code>, <code>git</code> and <code>sudo</code> can run other commands.</li>
+    <li><strong>Output is returned as it is.</strong> Only the credentials that ksproxy holds are hidden in it. A secret that a program or a service prints reaches the agent.</li>
+    <li><strong>A local command or a local MCP server runs as you,</strong> without a sandbox. Give local targets the shortest allow list of all.</li>
   </ul>
-  <p>Reliable setups for the agent side are an agent with no general shell, or one whose shell runs in a sandbox that cannot read <code>~/.ksproxy</code> or <code>~/.config/ksproxy</code> and cannot reach local sockets and ports.</p>
+  <p>The full list is in <a href="https://github.com/ksproxy/cli/blob/main/SECURITY.md">SECURITY.md</a>.</p>
+</section>
+
+<section aria-labelledby="more">
+  <h2 id="more">More</h2>
+  <ul>
+    <li><a href="https://github.com/ksproxy/cli/blob/main/docs/PROJECTS.md">Projects</a>: a set of targets and a session of its own for each repository.</li>
+    <li><a href="https://github.com/ksproxy/cli/blob/main/docs/NETWORK-ACCESS.md">Network access</a>: an agent on another device of your network, with a token.</li>
+    <li><a href="https://github.com/ksproxy/cli/blob/main/docs/DOCTOR.md">Doctor</a> and <a href="https://github.com/ksproxy/cli/blob/main/docs/SESSION-AND-LOG.md">the session and the log</a>.</li>
+  </ul>
 </section>
 
 </div>

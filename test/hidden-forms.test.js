@@ -15,9 +15,13 @@ import { tempDir } from './temp.js';
 // password, the decoded mongodb password) are hidden by the core before any cut, so a piece of one is never shown.
 
 const VISIBLE = 262144;
-const NOTE = '[output truncated at 262144 bytes per stream]';
+// The cut lines of a brokered stdout: one that shows its first bytes up to the visible limit, and one that did not end
+// on its own and lost its end back to a newline.
+const AT_LIMIT = '\n[stdout cut at 256 KiB: the rest was left out]\n';
+const END_LEFT_OUT = '\n[stdout cut: the stream did not end on its own, so its end was left out]\n';
 const STEP = 4;
-// How many bytes of a form come before the visible limit: with fewer than 10, [hidden] itself crosses the limit and is cut.
+// How many bytes of a form come before the visible limit: with fewer than 9 ([hidden] and the byte after it), the
+// stream once hidden is longer than the visible limit, and [hidden] itself is cut there.
 const INTO = [1, 5, 10, 20, 30];
 
 const root = fs.realpathSync(tempDir('ks-forms-', os.tmpdir()));
@@ -52,8 +56,8 @@ function call(kind, target, secrets, input) {
 
 function stdoutOf(text) {
   const from = text.indexOf('--- stdout ---\n') + 15;
-  const ends = [text.indexOf('\n--- stderr ---'), text.indexOf(`\n${NOTE}`)].filter((at) => at !== -1);
-  return text.slice(from, ends.length === 0 ? text.length : Math.min(...ends));
+  const end = text.indexOf('\n--- stderr ---');
+  return text.slice(from, end === -1 ? text.length : end);
 }
 
 // No piece of the form of four characters or more is shown, the whole form included.
@@ -113,8 +117,12 @@ function describeHttp() {
     for (let lead = 0; lead < unit; lead += STEP) {
       const answer = await call('http', target(), secrets, { method: 'GET', path: '/many', query: { lead } });
       assertNoPiece(answer.text, BASIC, `lead ${lead}`);
-      assert.ok(answer.text.endsWith(NOTE), `lead ${lead}`);
-      assert.ok(stdoutOf(answer.text).startsWith(`${HEAD}${'x'.repeat(lead)}Basic [hidden]\n`), `lead ${lead}`);
+      // Hidden, the stream is shorter than the visible limit: it loses its end back to a newline, so it shows whole
+      // lines only.
+      assert.ok(answer.text.includes(END_LEFT_OUT), `lead ${lead}`);
+      const shown = stdoutOf(answer.text);
+      assert.ok(shown.startsWith(`${HEAD}${'x'.repeat(lead)}`), `lead ${lead}`);
+      assert.match(shown.slice(HEAD.length + lead), /^(?:Basic \[hidden\]\n)+Basic \[hidden\]$/, `lead ${lead}`);
     }
     assertNoPiece(auditText(), BASIC, 'the audit log');
   });
@@ -124,7 +132,11 @@ function describeHttp() {
       const lead = VISIBLE - HEAD.length - 'Basic '.length - into;
       const answer = await call('http', target(), secrets, { method: 'GET', path: '/once', query: { lead } });
       assertNoPiece(answer.text, BASIC, `${into} bytes in`);
-      assert.ok(answer.text.endsWith(into < 10 ? NOTE : 'xBasic [hidden]'), `${into} bytes in`);
+      // With less than 9 bytes in, the stream once hidden is longer than the visible limit: its first visible bytes
+      // are shown, which end in a start of [hidden]. Else it is shown whole.
+      assert.ok(answer.text.endsWith(`xBasic ${into < 9 ? '[hidden]'.slice(0, into) : '[hidden]'}`), `${into} bytes in`);
+      assert.equal(answer.text.includes(AT_LIMIT), into < 9, `${into} bytes in`);
+      assert.equal(answer.text.includes('[stdout cut'), into < 9, `${into} bytes in`);
     }
   });
 }
@@ -172,19 +184,30 @@ function describeRedis() {
       answers.push(await call('redis', { ...target(), port: big.port }, { FORMS_REDIS_PASSWORD: password }, 'GET big'));
     }
     assert.equal(answers[0].text, answers[1].text);
-    assert.equal(answers[0].text, 'exit code: 1\n--- stderr ---\nthe reply is larger than the output limit and was cut off\n[output truncated at 262144 bytes per stream]');
+    // The reader stopped: stdout has its line though it is empty, and stderr, the engine's own words, is shown whole.
+    assert.equal(answers[0].text, [
+      'exit code: 1',
+      '[stdout cut: the stream did not end on its own, so its end was left out]',
+      'narrow it: SCAN with COUNT, or a narrower key pattern',
+      '--- stderr ---',
+      'the reply is larger than the output limit and was cut off',
+    ].join('\n'));
   });
 
   test('redis: the escaped password past the read limit or across the visible limit is never shown in part', async () => {
     const many = await call('redis', target(), secrets, 'GET many');
     assertNoPiece(many.text, ESCAPED, 'many');
-    assert.ok(many.text.endsWith(NOTE));
+    // Hidden, the reply is shorter than the visible limit: it loses its end back to a newline, so it shows whole lines.
+    assert.ok(many.text.includes(END_LEFT_OUT));
+    assert.match(stdoutOf(many.text), /^(?: *\d+\) "\[hidden\]"\n)+ *\d+\) "\[hidden\]"$/, stdoutOf(many.text).slice(0, 40));
     assert.ok(stdoutOf(many.text).startsWith('   1) "[hidden]"\n'), stdoutOf(many.text).slice(0, 40));
     for (const into of INTO) {
       // The line of the password starts after 1) "x...x" and a newline and 2) and a quote: 10 bytes more than the x.
       const answer = await call('redis', target(), secrets, `GET once ${VISIBLE - 10 - into}`);
       assertNoPiece(answer.text, ESCAPED, `${into} bytes in`);
-      assert.ok(answer.text.endsWith(into < 10 ? NOTE : 'x"\n2) "[hidden]"'), `${into} bytes in`);
+      assert.ok(answer.text.endsWith(`x"\n2) "${into < 9 ? '[hidden]"'.slice(0, into) : '[hidden]"'}`), `${into} bytes in`);
+      assert.equal(answer.text.includes(AT_LIMIT), into < 9, `${into} bytes in`);
+      assert.equal(answer.text.includes('[stdout cut'), into < 9, `${into} bytes in`);
     }
     assertNoPiece(auditText(), ESCAPED, 'the audit log');
   });
@@ -223,14 +246,17 @@ function describeMongo() {
       fs.writeFileSync(modeFile, `repeat ${lead}`);
       const answer = await call('mongodb', target, secrets, { command: { ping: 1 } });
       assertNoPiece(answer.text, DECODED, `lead ${lead}`);
-      assert.ok(answer.text.endsWith(NOTE), `lead ${lead}`);
-      assert.ok(stdoutOf(answer.text).startsWith(`${'x'.repeat(lead)}[hidden][hidden]`), `lead ${lead}`);
+      // Hidden, the stream is shorter than the visible limit and has no newline: nothing of it is shown.
+      assert.ok(answer.text.includes(END_LEFT_OUT.trimEnd()), `lead ${lead}`);
+      assert.ok(!answer.text.includes('--- stdout ---'), `lead ${lead}`);
     }
     for (const into of INTO) {
       fs.writeFileSync(modeFile, `once ${VISIBLE - into}`);
       const answer = await call('mongodb', target, secrets, { command: { ping: 1 } });
       assertNoPiece(answer.text, DECODED, `${into} bytes in`);
-      assert.ok(answer.text.endsWith(into < 10 ? NOTE : 'x[hidden]'), `${into} bytes in`);
+      assert.ok(answer.text.endsWith(`x${into < 9 ? '[hidden]'.slice(0, into) : '[hidden]'}`), `${into} bytes in`);
+      assert.equal(answer.text.includes(AT_LIMIT), into < 9, `${into} bytes in`);
+      assert.equal(answer.text.includes('[stdout cut'), into < 9, `${into} bytes in`);
     }
     assertNoPiece(auditText(), DECODED, 'the audit log');
   });

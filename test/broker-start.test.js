@@ -233,7 +233,8 @@ test('perform: failures are refusals with the fixed text, and the limits on time
 
   const started = Date.now();
   const hung = await vaultCall(world, 'hang', { timeout_seconds: 1 });
-  assert.equal(hung.text, 'timed out after 1s\n--- stdout ---\npartial after 1000 ms');
+  // A call that timed out loses the last 1 KiB of each stream back to a newline: the short partial line goes.
+  assert.equal(hung.text, 'timed out after 1s\n[stdout cut: the stream did not end on its own, so its end was left out]');
   assert.equal(hung.isError, true);
   const stuck = await vaultCall(world, 'stuck', { timeout_seconds: 1 });
   assert.deepEqual(stuck, { text: 'timed out after 1s', isError: true });
@@ -244,15 +245,14 @@ test('perform: failures are refusals with the fixed text, and the limits on time
 
   const flood = await vaultCall(world, 'flood');
   assert.equal(flood.isError, false);
-  assert.ok(flood.text.endsWith('[output truncated at 262144 bytes per stream]'));
-  assert.equal(flood.text.split('\n')[2].length, 262144);
+  assert.equal(flood.text, `exit code: 0\n[stdout cut at 256 KiB: the rest was left out]\n--- stdout ---\n${'f'.repeat(262144)}`);
   assert.ok(callsOf(world, 'flood')[0].stdoutBytes > 262144 + 100);
-  // The token starts with t: a last character that could be the start of a cut secret is dropped, whatever ended the text.
-  assert.ok((await vaultCall(world, 'cut')).text.endsWith('cut shor\n[output truncated at 262144 bytes per stream]'));
+  // A stream that its reader stopped did not end on its own: it loses its last 1 KiB back to a newline, by count and
+  // never by what it holds, so the short text goes whole, though its last character starts the token.
+  assert.equal((await vaultCall(world, 'cut')).text, 'exit code: 0\n[stdout cut: the stream did not end on its own, so its end was left out]');
   const ctl = await vaultCall(world, 'ctl');
   assert.equal(ctl.isError, false);
-  assert.ok(ctl.text.startsWith(`exit code: 0\n--- stdout ---\n${'\u0001'.repeat(1000)}`));
-  assert.ok(ctl.text.endsWith('\n[output truncated at 131072 bytes per stream]'));
+  assert.equal(ctl.text, `exit code: 0\n[stdout cut at 256 KiB: the rest was left out; showing 128 KiB]\n--- stdout ---\n${'\u0001'.repeat(131072)}`);
   assert.equal(callsOf(world, 'ctl')[0].decision, 'allowed');
   const where = await vaultCall(world, 'where');
   assert.equal(where.text, 'exit code: 0\n--- stdout ---\nstate in <ksproxy>/x');

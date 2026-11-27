@@ -44,7 +44,7 @@ test('runClient: the exact argument array, a small environment with the given en
   const { env, root } = world();
   const result = await call(env, { childEnv: { REPORT_TOKEN: SECRET, DOC: '{"a": "$(id)"}' } });
   assert.equal(result.exitCode, 0, result.stderr);
-  assert.deepEqual(Object.keys(result).sort(), ['exitCode', 'stderr', 'stdout', 'timedOut', 'truncated']);
+  assert.deepEqual(Object.keys(result).sort(), ['cutOff', 'exitCode', 'stderr', 'stdout', 'timedOut', 'truncated']);
   assert.equal(result.timedOut, false);
   assert.equal(result.truncated, false);
   const report = JSON.parse(result.stdout);
@@ -106,7 +106,7 @@ test('runClient: a failing program, and a program that cannot be started', async
   const { env, root } = world();
   const failed = await call(env, { words: ['fail'] });
   assert.deepEqual(failed, {
-    exitCode: 3, stdout: '', stderr: 'it failed\n', timedOut: false, truncated: false,
+    exitCode: 3, stdout: '', stderr: 'it failed\n', timedOut: false, truncated: false, cutOff: false,
   });
   const missing = await call(env, { program: path.join(root, '..', 'gone') });
   assert.equal(missing.exitCode, null);

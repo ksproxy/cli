@@ -1,6 +1,8 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { decide, describeAllow, isRegexRule } from '../../allowlist.js';
 import {
-  InventoryError, checkAllow, checkInteger, checkKeys, checkReview, checkSecretVariable,
+  InventoryError, absolutePath, checkAllow, checkInteger, checkKeys, checkReview, checkSecretVariable,
 } from '../../checks.js';
 import { REVIEWED } from '../shared.js';
 import { resolveProgram } from '../command/index.js';
@@ -11,10 +13,20 @@ import { matchStatementRule, readStatement, splitRule, sqlRuleWarnings } from '.
 // What postgres and mysql share: the inventory fields, the session, the decision and running the client. A kind
 // gives its names, its dialect, its fixed refusals, how its client is called and its notes.
 
-const BASE_KEYS = ['name', 'host', 'port', 'database', 'user', 'passwordEnv', 'readOnly', 'description', 'allow', 'review'];
+const BASE_KEYS = ['name', 'host', 'port', 'database', 'user', 'passwordEnv', 'readOnly', 'tls', 'caFile', 'description', 'allow', 'review'];
 const HOST = /^[A-Za-z0-9][A-Za-z0-9.-]*$/;
 const MAX_HOST = 253;
 const DB_NAME = /^[A-Za-z0-9_.][A-Za-z0-9_.-]{0,62}$/;
+const TLS_MODES = ['verify', 'require', 'prefer'];
+// A host on this machine: localhost, or an IPv4 address 127.x.x.x. The host field holds no IPv6 address and no socket.
+const LOOPBACK = /^(localhost|127(\.\d{1,3}){3})$/i;
+// The time limit of the TLS check when a target opens; a check that ends at it opens the target, as before.
+const TLS_CHECK_MS = 5000;
+// What the clients print when TLS fails: libpq older than 16 reads PGSSLROOTCERT=system as a file name; psql, the
+// MariaDB client and the MySQL client each say the server does not support TLS; every check of a certificate names it.
+const OLD_LIBPQ = /root certificate file "system" does not exist/;
+const NO_TLS = /does not support SSL|does not support it|doesn't support it/i;
+const BAD_CERT = /certificate/i;
 // First words that change data, the schema or the server's statistics, in postgres or in mysql; refused on a
 // read-only target before the rules. A word of one dialect only is not a statement in the other.
 const WRITE_WORDS = [
@@ -46,6 +58,72 @@ function checkReadOnly(value, where) {
   return value;
 }
 
+// Whether the host is this machine, where no one between ksproxy and the server can read the connection.
+export const isLoopback = (host) => LOOPBACK.test(host);
+
+// verify when left out, unless the host is this machine: then prefer, so that a local database keeps working.
+function checkTls(entry, host, where) {
+  if (entry.tls === undefined) return isLoopback(host) ? 'prefer' : 'verify';
+  if (!TLS_MODES.includes(entry.tls)) throw new InventoryError(`${where}: tls: must be "verify", "require" or "prefer"`);
+  return entry.tls;
+}
+
+// The CA file a verify target trusts: absolute or after ~/, expanded and normalised; null when left out. With require
+// or prefer nothing checks the certificate, so the file would do nothing there.
+function checkCaFile(entry, tls, where) {
+  if (entry.caFile === undefined) return null;
+  const file = path.resolve(absolutePath(entry.caFile, `${where}: caFile`));
+  if (tls !== 'verify') {
+    const why = entry.tls === undefined ? ', the default for a host on this machine' : '';
+    throw new InventoryError(`${where}: caFile: is used only with "tls": "verify"; this target has "tls": "${tls}"${why}`);
+  }
+  return file;
+}
+
+function isReadableFile(file) {
+  try {
+    fs.accessSync(file, fs.constants.R_OK);
+    return fs.statSync(file).isFile();
+  } catch {
+    return false;
+  }
+}
+
+// Why a failed TLS check skips the target, from the client's standard error: { error, wayOut }, or null when the
+// failure is not about TLS. error is the short reason of the SKIPPED line; wayOut names the fields that fix it.
+export function tlsFailure(text, target) {
+  if (OLD_LIBPQ.test(text)) {
+    return { error: 'this psql cannot use the system\'s CAs', wayOut: 'using the system\'s CAs needs libpq 16 or later; name the CA that signed the server\'s certificate in "caFile"' };
+  }
+  if (NO_TLS.test(text)) {
+    return { error: 'the server does not offer TLS', wayOut: `"tls" is "${target.tls}", which needs TLS; set "tls" to "prefer" to connect without it` };
+  }
+  if (!BAD_CERT.test(text)) return null;
+  return {
+    error: 'the server\'s TLS certificate did not verify',
+    wayOut: target.caFile === null
+      ? `the certificate was checked against the system's CAs and the host name ${target.host}; name the CA that signed it in "caFile", or set "tls" to "require" or "prefer" to skip the check`
+      : `the certificate was checked against the CA in "caFile" and the host name ${target.host}; check that "caFile" names the CA that signed it, and that the certificate names this host`,
+  };
+}
+
+// The TLS check when a target opens: select 1 through the client and the settings of a call. Gives what tlsFailure
+// gives for a failure; any answer, any other failure, the time limit and a stop give null.
+async function tlsCheck(spec, target, program, { env, secrets, signal }) {
+  const {
+    fixedArgs, words, childEnv, folderPaths,
+  } = spec.invocation(target, 'select 1', { password: secrets[target.passwordEnv], timeoutMs: TLS_CHECK_MS });
+  const result = await runClient({
+    program, fixedArgs, words, env, childEnv, folderPaths, timeoutMs: TLS_CHECK_MS, maxBytes: DOCTOR_MAX_BYTES, signal,
+  });
+  return result.exitCode === 0 ? null : tlsFailure(result.stderr, target);
+}
+
+// What open learned about the client and every call needs: the mysql family, when there is one.
+const learnedOf = (opened) => (opened.family === undefined ? {} : { family: opened.family });
+
+const tlsText = (target) => `TLS ${target.tls}${target.caFile === null ? '' : ' with caFile'}`;
+
 // A list of rules, never "any", each word rule split by the SQL reader.
 function checkSqlAllow(entry, where, noun, dialect) {
   if (entry.allow === 'any') {
@@ -76,7 +154,8 @@ function address(target) {
 }
 
 // spec: key, flag, label, word, noun, countNoun, title, dialect, defaultPort, sample, extraKeys, extra(entry, where),
-// fixedRefusal(words), program(target, env), invocation(target, statement, { password, timeoutMs }), notes, tool.
+// fixedRefusal(words), program(target, env), invocation(target, statement, { password, timeoutMs }), notes, tool, and
+// optionally clientFamily(target, program, ctx), which gives { family } or { error, wayOut } before the TLS check.
 export function sqlServiceKind(spec) {
   const { key, dialect } = spec;
   const match = (words, rule) => matchStatementRule(words, rule, dialect);
@@ -100,6 +179,8 @@ export function sqlServiceKind(spec) {
       const user = checkDbName(entry.user, `${where}: user`);
       const passwordEnv = checkSecretVariable(entry.passwordEnv, `${where}: passwordEnv`, 'the password');
       const readOnly = checkReadOnly(entry.readOnly, where);
+      const tls = checkTls(entry, host, where);
+      const caFile = checkCaFile(entry, tls, where);
       const allow = checkSqlAllow(entry, where, spec.noun, dialect);
       return {
         kind: key,
@@ -110,6 +191,8 @@ export function sqlServiceKind(spec) {
         user,
         passwordEnv,
         readOnly,
+        tls,
+        caFile,
         ...spec.extra(entry, where),
         description: entry.description ?? '',
         allow,
@@ -119,20 +202,42 @@ export function sqlServiceKind(spec) {
     secrets(target) {
       return { env: [target.passwordEnv], files: [] };
     },
+    // The password as a reply of this client can show it when that is not the password as it is, from the kind's
+    // printedForms; the core hides these forms with the password.
+    hiddenForms(target, secrets) {
+      return spec.printedForms(secrets[target.passwordEnv]);
+    },
+    // The CA files, which no local target may reach, so that no agent can replace one. The entries of another
+    // inventory file come here as they are written; otherSecretFiles keeps the texts that are paths.
+    secretFiles(targets) {
+      return targets.map((target) => target.caFile).filter((file) => typeof file === 'string');
+    },
     ruleWarnings(target) {
       return sqlRuleWarnings(target.allow, dialect);
     },
     openingMessage(target) {
-      return `${address(target)}, ${target.readOnly === false ? 'read-write' : 'read-only'}`;
+      return `${address(target)}, ${target.readOnly === false ? 'read-write' : 'read-only'}, ${tlsText(target)}`;
     },
-    open(target, { env }) {
-      const resolved = resolveProgram(spec.program(target, env), env);
-      return resolved.error === undefined ? { ok: true, extras: { program: resolved.program } } : { ok: false, error: resolved.error };
+    // The program; for verify and require also the CA file, what the kind learns about its client, and the TLS check.
+    // A failure skips the target, and the way out is said on a line of its own, which is never cut.
+    async open(target, ctx) {
+      const resolved = resolveProgram(spec.program(target, ctx.env), ctx.env);
+      if (resolved.error !== undefined) return { ok: false, error: resolved.error };
+      const { program } = resolved;
+      if (target.tls === 'prefer') return { ok: true, extras: { program } };
+      if (target.caFile !== null && !isReadableFile(target.caFile)) {
+        return { ok: false, error: `caFile ${target.caFile} is not a file that can be read` };
+      }
+      const learned = spec.clientFamily === undefined ? {} : await spec.clientFamily(target, program, ctx);
+      const failure = learned.error === undefined ? await tlsCheck(spec, { ...target, ...learned }, program, ctx) : learned;
+      if (failure === null) return { ok: true, extras: { program, ...learned } };
+      ctx.say(failure.wayOut);
+      return { ok: false, error: failure.error };
     },
     record(opened, { reviewed }) {
       const { review, ...target } = opened.target;
       return {
-        ...target, program: opened.program, state: 'up', ...(reviewed ? { review: true } : {}),
+        ...target, program: opened.program, ...learnedOf(opened), state: 'up', ...(reviewed ? { review: true } : {}),
       };
     },
     downMessage() {
@@ -165,11 +270,12 @@ export function sqlServiceKind(spec) {
         program: target.program, fixedArgs, words, env, childEnv, folderPaths, timeoutMs, maxBytes, signal,
       });
     },
-    // The doctor check: select 1 through the same client and invocation as a call, on the program open resolved.
+    // The doctor check: select 1 through the same client and invocation as a call, on the program open resolved, with
+    // what open learned about the client.
     async doctor(opened, {
       env, secrets, timeoutMs, signal,
     }) {
-      const { target } = opened;
+      const target = { ...opened.target, ...learnedOf(opened) };
       const {
         fixedArgs, words, childEnv, folderPaths,
       } = spec.invocation(target, 'select 1', { password: secrets[target.passwordEnv], timeoutMs });
@@ -177,10 +283,11 @@ export function sqlServiceKind(spec) {
         program: opened.program, fixedArgs, words, env, childEnv, folderPaths, timeoutMs, maxBytes: DOCTOR_MAX_BYTES, signal,
       });
       return clientVerdict(result, {
-        name: spec.word, describe: () => 'select 1 answered', hidden: hiddenOf(secrets), signal,
+        name: spec.word, describe: () => 'select 1 answered', hidden: hiddenOf(secrets, spec.printedForms(secrets[target.passwordEnv])), signal,
       });
     },
     toolBullet: `- \`${spec.tool.name} { target, query, timeout_seconds? }\` - run one allowlisted SQL statement on a ${spec.title} target.`,
+    cutHint: 'fewer columns, a WHERE and a LIMIT, or count(*) first',
     agentSection(target) {
       const lines = [
         `### ${spec.title} target \`${target.name}\`${target.description ? ` - ${target.description}` : ''}`,

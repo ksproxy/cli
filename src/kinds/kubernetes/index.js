@@ -195,6 +195,7 @@ export default {
     return out;
   },
   toolBullet: '- `kubectl { cluster, args, timeout_seconds? }` - run kubectl against a cluster.',
+  cutHint: 'logs --tail=200 or --since=10m, -l to select, -o name',
   agentSection(target) {
     const lines = [
       `### Kubernetes cluster \`${target.name}\`${target.description ? ` - ${target.description}` : ''}`,

@@ -457,7 +457,8 @@ test('passwordParts: the password of the connection string and of every option n
   assert.deepEqual(passwordParts('mongodb://h/?password=x&proxyPassword=y&passwordless=z&emptyPassword='), ['x', 'x', 'y', 'y']);
 });
 
-// Runs the fixed script with stand-ins for what mongosh gives it, as data: no client and no database.
+// Runs the fixed script with stand-ins for what mongosh gives it, as data: no client and no database. The streams'
+// write returns true, as Node's does. last is the value of the script, which mongosh --eval would print.
 function runScript({ reply, error, doc = '{"find":"orders"}' } = {}) {
   const seen = {
     uri: [], database: [], commands: [], out: '', err: '', quit: [],
@@ -469,7 +470,7 @@ function runScript({ reply, error, doc = '{"find":"orders"}' } = {}) {
       return seen.commands.length === 1 ? reply : { ok: 1 };
     },
   };
-  vm.runInNewContext(FIXED_SCRIPT, {
+  seen.last = vm.runInNewContext(FIXED_SCRIPT, {
     connect(uri) {
       seen.uri.push(uri);
       return { getSiblingDB(name) { seen.database.push(name); return database; } };
@@ -477,8 +478,8 @@ function runScript({ reply, error, doc = '{"find":"orders"}' } = {}) {
     EJSON: { parse: (text) => ({ parsed: JSON.parse(text) }), stringify: (value, replacer, space) => JSON.stringify(value, replacer, space) },
     process: {
       env: { MGO_URI: 'mongodb://h/', MGO_DB: 'shop', MGO_DOC: doc },
-      stdout: { write(text) { seen.out += text; } },
-      stderr: { write(text) { seen.err += text; } },
+      stdout: { write(text) { seen.out += text; return true; } },
+      stderr: { write(text) { seen.err += text; return true; } },
     },
     quit(code) { seen.quit.push(code); },
   });
@@ -492,6 +493,7 @@ test('the fixed script: connects, parses, runs, closes an open cursor, prints; a
   assert.deepEqual(plain.commands, [{ parsed: { count: 'orders' } }]);
   assert.equal(plain.out, `${JSON.stringify({ n: 3, ok: 1 }, null, 2)}\n`);
   assert.deepEqual([plain.err, plain.quit], ['', []]);
+  assert.equal(plain.last, undefined, 'mongosh --eval prints the value of the script after the reply unless it is undefined');
 
   const closed = runScript({ reply: { cursor: { firstBatch: [], id: 0, ns: 'shop.orders' }, ok: 1 } });
   assert.equal(closed.commands.length, 1, 'no killCursors for a closed cursor');
@@ -766,7 +768,11 @@ test('a session with a mongodb target: bounded calls, fixed refusals before any 
   assert.deepEqual(fs.readdirSync(world.env.HOME), [], 'nothing is written under the home folder of start');
   world.client.mode('flood');
   const flood = await call({ target: 'orders', command: { ping: 1 } });
-  assert.ok(flood.text.endsWith('\n[output truncated at 262144 bytes per stream]'));
+  assert.ok(flood.text.includes([
+    '[stdout cut at 256 KiB: the rest was left out]',
+    'narrow it: a filter, a projection and a limit; page with _id greater than the last one',
+    '--- stdout ---',
+  ].join('\n')));
   world.client.mode('ok');
   const reviewed = await call({ target: 'orders', command: { distinct: 'customers', key: 'city' } });
   assert.equal(reviewed.isError, false, reviewed.text);

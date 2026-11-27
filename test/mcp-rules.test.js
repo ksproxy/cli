@@ -318,6 +318,8 @@ test('answerOf: every part, every failure, isError, and the byte limit', () => {
   failed({ httpError: { status: 'x', retryAfter: -1 } }, 'the MCP server answered HTTP ?');
   failed({ httpError: { status: 500, retryAfter: '30 <b>body</b>' } }, 'the MCP server answered HTTP 500');
   failed({ unreachable: true }, 'the MCP server could not be reached');
+  failed({ unreachable: true, reason: 'the connection was refused' }, 'the MCP server could not be reached: the connection was refused');
+  failed({ unreachable: true, reason: { text: 'x' } }, 'the MCP server could not be reached');
   failed({ cutOff: true }, 'the answer of the MCP server was cut off');
   failed({ rpcError: { code: -32602, message: 'ksproxy cannot send this call: the value of Mcp-Param-Key is not printable' } }, 'ksproxy cannot send this call: the value of Mcp-Param-Key is not printable');
   failed({ ended: { code: 3, signal: null } }, 'the MCP server stopped (exit 3)');
@@ -328,7 +330,7 @@ test('answerOf: every part, every failure, isError, and the byte limit', () => {
   failed({ tooLarge: true }, 'the answer of the MCP server was too large to read');
   failed({}, 'the MCP server gave an answer that ksproxy cannot read');
   assert.deepEqual(answerOf({ timedOut: true }, { maxBytes: 10, seconds: 5, hidden: [] }), {
-    exitCode: null, stdout: '', stderr: 'the MCP server did not answer within 5 seconds', timedOut: true,
+    exitCode: null, stdout: '', stderr: 'the MCP server did not answer within 5 seconds', timedOut: true, ownStderr: true,
   });
   assert.equal(endText({ code: 0, signal: null }), 'the MCP server stopped (exit 0)');
   assert.deepEqual(cutBytes('abc', 3), { text: 'abc', cut: false });
@@ -361,9 +363,15 @@ test('answerOf: each form of a secret is hidden before a server text is clipped,
     ];
     for (const part of parts) shown(answerOf({ result: { content: [part] } }, at).stdout, form);
   }
-  // The exact texts: the secret hidden, then the clip; a piece of a secret that an earlier cut left at the end is dropped.
+  // The exact texts: the secret hidden, then the clip. A start of a secret that the server itself wrote at the end is
+  // shown as written, right or wrong: dropping it told the agent whether its own guess, repeated in an error, starts
+  // the secret.
   assert.equal(answerOf({ rpcError: { code: -32000, message: `${'x'.repeat(995)}${secret} end` } }, at).stderr, `the MCP server answered with an error: ${'x'.repeat(995)}[hid\u2026`);
-  assert.equal(answerOf({ rpcError: { code: -32000, message: `token ${secret.slice(0, 12)}` } }, at).stderr, 'the MCP server answered with an error: token ');
+  for (const guess of [secret.slice(0, 12), `${secret.slice(0, 11)}#`]) {
+    assert.equal(answerOf({ rpcError: { code: -32000, message: `token ${guess}` } }, at).stderr, `the MCP server answered with an error: token ${guess}`);
+    assert.equal(answerOf({ result: { content: [{ type: 'resource_link', uri: `x://a/${guess}` }] } }, at).stdout, `[link: x://a/${guess}]`);
+    assert.equal(answerOf({ rpcError: { code: -32000, message: `${'x'.repeat(999 - guess.length)}${guess} and more` } }, at).stderr, `the MCP server answered with an error: ${'x'.repeat(999 - guess.length)}${guess}\u2026`);
+  }
   assert.equal(answerOf({ result: { content: [{ type: 'resource_link', uri: `https://shop.example.com/?k=${secret}` }] } }, at).stdout, '[link: https://shop.example.com/?k=[hidden]]');
 });
 

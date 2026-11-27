@@ -1,0 +1,14 @@
+# The audit policy of the e2e API server. It records every request of the identities of the namespace shop (lab-viewer
+# and lab-deployer) with its body, and every request without a valid identity (no token, or one that the API server
+# does not accept), so the driver can show which calls of the agent reached the API server and which never did. Other
+# identities are not recorded: the cluster's own components, and the seed as admin. One entry per request: the stage
+# RequestReceived is left out.
+apiVersion: audit.k8s.io/v1
+kind: Policy
+omitStages: ["RequestReceived"]
+rules:
+  - level: Request
+    userGroups: ["system:serviceaccounts:shop"]
+  - level: None
+    userGroups: ["system:authenticated"]
+  - level: Metadata

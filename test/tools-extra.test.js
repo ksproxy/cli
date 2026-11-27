@@ -87,11 +87,20 @@ test('scrubOutput works for a session that has no target list', () => {
   assert.equal(out, 'seen <ksproxy>/s/ssh-web1');
 });
 
-test('output over the size limit is cut and flagged as truncated', async () => {
+test('output over the size limit is cut, says how much near the top, and shows its end', async () => {
   const r = await callTool('ssh_exec', { server: 'web1', command: 'big' }, { ...env, KSPROXY_SSH: flood });
   assert.equal(r.isError, false);
-  assert.ok(r.text.startsWith('exit code: 0\n--- stdout ---\n'));
-  assert.ok(r.text.endsWith('[output truncated at 262144 bytes per stream]'));
+  assert.ok(r.text.startsWith([
+    'exit code: 0',
+    '[stdout cut: showing 256 KiB of 293 KiB]',
+    'narrow it: tail -n 200, head -n 200, grep -m 50 PATTERN, or wc -l first',
+    '--- stdout ---',
+    'x'.repeat(262144 - 16383 - 64),
+    '[... 37 KiB cut here ...]',
+    'x'.repeat(16383),
+  ].join('\n')));
+  // The 16 KiB of the end part count the trailing newline, which is then trimmed.
+  assert.ok(r.text.endsWith(`\n${'x'.repeat(16383)}`));
   const entry = auditEntries().filter((e) => e.event === 'call').at(-1);
   assert.equal(entry.stdoutBytes, 300001);
 });
@@ -99,11 +108,11 @@ test('output over the size limit is cut and flagged as truncated', async () => {
 test('a path that crosses the visible limit is replaced whole before the output is cut', async () => {
   const r = await callTool('ssh_exec', { server: 'web1', command: 'big' }, { ...env, KSPROXY_SSH: pathFlood });
   assert.equal(r.isError, false);
-  const stdout = r.text.slice(r.text.indexOf('--- stdout ---\n') + 15, r.text.indexOf('\n[output truncated'));
-  assert.equal(Buffer.byteLength(stdout), 262144);
-  assert.equal(stdout.slice(262144 - 5), '<kspr');
+  const stdout = r.text.slice(r.text.indexOf('--- stdout ---\n') + 15);
+  assert.ok(Buffer.byteLength(stdout) <= 262144);
+  assert.ok(r.text.startsWith('exit code: 0\n[stdout cut: showing '));
+  assert.ok(r.text.endsWith(`${'x'.repeat(100)}<ksproxy>/y`));
   assert.ok(!r.text.includes(base.slice(0, 5)));
-  assert.ok(r.text.endsWith('[output truncated at 262144 bytes per stream]'));
 });
 
 test('a path that straddles the visible end of a stream that reached the read limit is never shown in part', async () => {
@@ -111,7 +120,8 @@ test('a path that straddles the visible end of a stream that reached the read li
     const script = path.join(base, `path-at-drop-${into}.js`);
     fs.writeFileSync(script, `#!/usr/bin/env node\nprocess.stdout.write('x'.repeat(${262144 - into}) + ${JSON.stringify(base)} + '/file\\n' + 'y'.repeat(400000));\n`, { mode: 0o755 });
     const r = await callTool('ssh_exec', { server: 'web1', command: 'big' }, { ...env, KSPROXY_SSH: script });
-    assert.ok(r.text.endsWith('\n[output truncated at 262144 bytes per stream]'), `${into}`);
+    assert.match(r.text, /\n\[stdout cut: showing 256 KiB of 64\d KiB\]\n/, `${into}`);
+    assert.ok(r.text.endsWith(`\n${'y'.repeat(16384)}`), `${into}`);
     for (let n = 2; n <= base.length; n += 1) assert.ok(!r.text.includes(`x${base.slice(0, n)}`), `${into}: ${n} characters of the path are shown`);
   }
 });
@@ -121,7 +131,7 @@ test('output just under the visible limit after scrubbing is shown whole and not
   fs.writeFileSync(short, `#!/usr/bin/env node\nprocess.stdout.write('x'.repeat(262144 - ${base.length} + 5) + ${JSON.stringify(base)} + '/y');\n`, { mode: 0o755 });
   const r = await callTool('ssh_exec', { server: 'web1', command: 'big' }, { ...env, KSPROXY_SSH: short });
   assert.ok(r.text.endsWith(`${'x'.repeat(10)}<ksproxy>/y`));
-  assert.ok(!r.text.includes('[output truncated'));
+  assert.ok(!r.text.includes('cut'));
 });
 
 test('a call whose output cannot be scrubbed is still audited as run, and the agent gets no output', async () => {

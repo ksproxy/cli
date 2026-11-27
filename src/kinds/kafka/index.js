@@ -292,6 +292,7 @@ export default {
     return found.error === undefined ? { target: { ...target, programs: found.programs } } : { refusal: found.error };
   },
   toolBullet: '- `kafka_exec { target, command, timeout_seconds? }` - run one allowlisted Kafka client command on a kafka target.',
+  cutHint: 'a narrower command or option',
   agentSection(target) {
     const lines = [
       `### Kafka target \`${target.name}\`${target.description ? ` - ${target.description}` : ''}`,

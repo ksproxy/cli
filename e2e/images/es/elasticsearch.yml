@@ -1,0 +1,18 @@
+# The settings of the e2e node: one node, security on, https on port 9200 with the key and the certificate of the run
+# (mounted at config/certs), and nothing that reaches the internet or needs more memory than the tests do.
+cluster.name: e2e
+node.name: es
+network.host: 0.0.0.0
+discovery.type: single-node
+path.logs: /eslog
+
+xpack.security.enabled: true
+xpack.security.http.ssl.enabled: true
+xpack.security.http.ssl.key: certs/server.key
+xpack.security.http.ssl.certificate: certs/server.crt
+xpack.security.transport.ssl.enabled: false
+
+xpack.ml.enabled: false
+ingest.geoip.downloader.enabled: false
+# The disk of a Docker machine may be fuller than the default limits allow; the tests write a few documents only.
+cluster.routing.allocation.disk.threshold_enabled: false

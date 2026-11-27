@@ -174,6 +174,7 @@ export default {
     return respVerdict(result, { hidden: hiddenOf(secrets, Object.values(secrets).map(escapeText)), signal });
   },
   toolBullet: '- `redis_command { target, command, timeout_seconds? }` - run one Redis command on a redis target.',
+  cutHint: 'SCAN with COUNT, or a narrower key pattern',
   agentSection(target) {
     const lines = [
       `### redis target \`${target.name}\`${target.description ? ` - ${target.description}` : ''}`,

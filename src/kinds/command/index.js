@@ -300,6 +300,7 @@ export default {
     return resolved.error === undefined ? { target: { ...target, program: resolved.program } } : { refusal: resolved.error };
   },
   toolBullet: '- `command_exec { target, command, timeout_seconds? }` - run one allowlisted command of a command target.',
+  cutHint: 'a narrower command or option',
   agentSection(target) {
     const lines = [
       `### Command target \`${target.name}\`${target.description ? ` - ${target.description}` : ''}`,
