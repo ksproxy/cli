@@ -5,6 +5,26 @@
 // CA of the run, which main.js copies there (see sql-tls.js). The rules of the examples are kept word for word;
 // only the calls are adapted to what the containers have (see ssh.js), and kafka-ops has one more rule for a cluster of
 // one node (see kafka.js). Each group of the run (see main.js) writes the kinds of its servers only.
+//
+// The service tunnels (docs/TUNNELS.md): one target of postgres, mysql, mongodb, redis, rabbitmq and elasticsearch
+// each, and two of http (https, and plain http), with a tunnel through web1 and one jump to app1, the only server that
+// allows TCP forwarding (see e2e/driver/tunnels.js). inner-db and inner-mongo are on the network back only, which the
+// runner is not on; crm-db, cache, mq, grafana and es are on both networks.
+
+// The jump of the tunnels: the key of the jumps example (app1 above), on web1, named by its full path. The ssh target
+// app1 names it as .ssh/app_key, and its jump is in session.json by design (the ssh kind records it), so this other
+// spelling is what lets the leak check show that the route of a tunnel reaches no agent-facing text.
+export const TUNNEL_KEY = '/home/ops/.ssh/app_key';
+export const TUNNEL_JUMP = `ssh -i ${TUNNEL_KEY} -o LogLevel=ERROR opsuser@app1`;
+const ROUTE = { host: 'web1', jumps: [TUNNEL_JUMP] };
+// A jump with a key on web1 that app1 does not accept.
+export const WRONG_KEY_JUMP = 'ssh -i /home/ops/.ssh/wrong_key -o LogLevel=ERROR opsuser@app1';
+// The keys limited on web1 (docs/TUNNELS.md, "Keys limited on the servers"; e2e/setup/secrets.sh): web1-fwd is the
+// login fwd, whose key may open a stream to grafana:443 only and run no command, and web1-jmp is ops with a key whose
+// one forced command is the jump text of gf-forced. Both are Host names of the runner's ssh configuration
+// (tunnels.js, limitedHosts).
+const FWD_ROUTE = { host: 'web1-fwd' };
+const FORCED_ROUTE = { host: 'web1-jmp', jumps: [TUNNEL_JUMP] };
 
 export const MCP_PACKAGE = '@modelcontextprotocol/server-everything@2.3.1';
 // The words of the local MCP server. npx finds the package in its cache: the image ran these same words at build.
@@ -92,6 +112,18 @@ export const inventory = {
       description: 'shop database, any select, read only',
       allow: ['select ...'],
     },
+    {
+      // Through the tunnel the certificate is still checked against caFile and the real name inner-db.
+      name: 'pg-tunnel',
+      host: 'inner-db',
+      database: 'shop',
+      user: 'agent_ro',
+      passwordEnv: 'SHOP_DB_PASSWORD',
+      caFile: '~/certs/db-ca.pem',
+      tunnel: ROUTE,
+      description: 'shop database behind app1, any select, read only',
+      allow: ['select ...'],
+    },
   ],
   mcp: [
     {
@@ -161,6 +193,18 @@ export const inventory = {
       description: 'crm database, any select, read only',
       allow: ['select ...'],
     },
+    {
+      // Neither tls nor caFile: TLS prefer, the only mode a mysql target may have through a tunnel besides require.
+      // Its own login, tunnel_ro, so that its connections are told apart in the general log.
+      name: 'my-tunnel',
+      host: 'crm-db',
+      database: 'crm',
+      user: 'tunnel_ro',
+      passwordEnv: 'CRM_DB_TUNNEL_PASSWORD',
+      tunnel: ROUTE,
+      description: 'crm database through app1, any select, read only',
+      allow: ['select ...'],
+    },
   ],
   redis: [
     {
@@ -189,6 +233,18 @@ export const inventory = {
         'SET feature:new-checkout off',
       ],
     },
+    {
+      // The stream of the tunnel is the socket; TLS is checked against the real name cache.
+      name: 'rds-tunnel',
+      host: 'cache',
+      port: 6380,
+      tls: true,
+      userEnv: 'REDIS_USER',
+      passwordEnv: 'REDIS_PASSWORD',
+      tunnel: ROUTE,
+      description: 'session cache through app1, read only',
+      allow: ['GET *'],
+    },
   ],
   mongodb: [
     {
@@ -206,6 +262,15 @@ export const inventory = {
       description: 'orders, may update orders and add notes',
       allow: ['find orders', 'count orders', 'update orders', 'insert order_notes'],
     },
+    {
+      // The host of the connection string, inner-mongo, is what app1 connects to.
+      name: 'mgo-tunnel',
+      uriEnv: 'ORDERS_MONGO_TUNNEL_URI',
+      database: 'shop',
+      tunnel: ROUTE,
+      description: 'orders behind app1, read only',
+      allow: ['find orders', 'count orders'],
+    },
   ],
   rabbitmq: [
     {
@@ -215,6 +280,16 @@ export const inventory = {
       passwordEnv: 'MQ_PASSWORD',
       description: 'management API, read only',
       allow: ['GET /api/overview', 'GET /api/nodes', 'GET /api/queues/%2F/...', 'GET /api/exchanges/%2F/...'],
+    },
+    {
+      // Through the tunnel the certificate is still checked against the real name mq.
+      name: 'mq-tunnel',
+      url: 'https://mq:15671',
+      userEnv: 'MQ_USER',
+      passwordEnv: 'MQ_PASSWORD',
+      tunnel: ROUTE,
+      description: 'management API through app1, read only',
+      allow: ['GET /api/overview'],
     },
     {
       name: 'mq-ops',
@@ -245,6 +320,52 @@ export const inventory = {
       description: 'dashboards, may add annotations',
       allow: ['GET /api/search', 'GET /api/dashboards/uid/*', 'GET /api/annotations', 'POST /api/annotations +body'],
     },
+    {
+      // The stream of the tunnel is the socket of the request; the certificate is checked against the real name
+      // grafana, which is also the Host header.
+      name: 'gf-tunnel',
+      baseUrl: 'https://grafana',
+      auth: { bearerEnv: 'GRAFANA_TOKEN' },
+      tunnel: ROUTE,
+      description: 'dashboards through app1, read only',
+      allow: ['GET /api/search'],
+    },
+    {
+      // Plain http through the tunnel: start warns, and the check of doctor and of the trial is OPTIONS *.
+      name: 'gf-plain',
+      baseUrl: 'http://grafana',
+      auth: { bearerEnv: 'GRAFANA_TOKEN' },
+      tunnel: ROUTE,
+      description: 'dashboards in plain http through app1, read only',
+      allow: ['GET /api/search'],
+    },
+    {
+      // Without jumps, through the key of fwd that may forward to grafana:443 only.
+      name: 'gf-fwd',
+      baseUrl: 'https://grafana',
+      auth: { bearerEnv: 'GRAFANA_TOKEN' },
+      tunnel: FWD_ROUTE,
+      description: 'dashboards through a limited key, read only',
+      allow: ['GET /api/search'],
+    },
+    {
+      // With the jump, through the key of ops whose forced command is this route's jump text.
+      name: 'gf-forced',
+      baseUrl: 'https://grafana',
+      auth: { bearerEnv: 'GRAFANA_TOKEN' },
+      tunnel: FORCED_ROUTE,
+      description: 'dashboards through app1, read only',
+      allow: ['GET /api/search'],
+    },
+    {
+      // The same key with a jump whose key app1 does not accept: web1 runs its forced command instead.
+      name: 'gf-badjump',
+      baseUrl: 'https://grafana',
+      auth: { bearerEnv: 'GRAFANA_TOKEN' },
+      tunnel: { host: 'web1-jmp', jumps: [WRONG_KEY_JUMP] },
+      description: 'dashboards through app1, read only',
+      allow: ['GET /api/search'],
+    },
   ],
   elasticsearch: [
     {
@@ -272,6 +393,15 @@ export const inventory = {
         'GET /products/_doc/*',
         'POST /products/_update/* +body',
       ],
+    },
+    {
+      // Through the tunnel the certificate is still checked against the real name es.
+      name: 'es-tunnel',
+      url: 'https://es:9200',
+      apiKeyEnv: 'ES_LOGS_API_KEY',
+      tunnel: ROUTE,
+      description: 'logs through app1, read only',
+      allow: ['GET /_cluster/health'],
     },
   ],
   kafka: [

@@ -744,3 +744,30 @@ test('a server out of reach gives a reason from a fixed list, chosen by the code
   assert.deepEqual(await failing.callTool('tool_1', {}, { timeoutMs: 10000 }), { unreachable: true });
   await failing.close();
 });
+
+test('a token that holds a space is hidden whole in a server error, at the start and in a call, not word by word', async () => {
+  const { encodedForms } = await import('../src/kinds/engines/http.js');
+  for (const token of ['ab12 SECRETWORDLONG', 'SECRETWORDLONG ab12', ' SECRETWORDLONG xy9']) {
+    const said = `bad token: ${token} end, and SECRETWORDLONG alone`;
+    const shown = 'bad token: [hidden] end, and [hidden] alone';
+    const kindHidden = [token, ...encodedForms({ bearerEnv: 'T' }, { T: token })];
+    for (const hidden of [[], kindHidden]) {
+      const headers = () => ({ authorization: `Bearer ${token}` });
+      const refusing = async (url, init) => Response.json({ jsonrpc: '2.0', id: JSON.parse(init.body).id, error: { code: -32000, message: said } });
+      await assert.rejects(connectHttp({
+        url: 'http://127.0.0.1:9/mcp', headers, fetchImpl: refusing, hidden,
+      }), new Error(`the MCP server refused initialize: ${shown}`));
+      const calling = async (url, init) => {
+        if (typeof init.body !== 'string') return new Response(null, { status: 202 });
+        const { id, method } = JSON.parse(init.body);
+        if (method === 'server/discover') return Response.json({ jsonrpc: '2.0', id, result: { serverInfo: { name: 's', version: '1' } } });
+        return Response.json({ jsonrpc: '2.0', id, error: { code: -32000, message: said } });
+      };
+      const client = await connectHttp({
+        url: 'http://127.0.0.1:9/mcp', headers, fetchImpl: calling, hidden,
+      });
+      assert.deepEqual(await client.callTool('tool_1', {}, { timeoutMs: 10000 }), { rpcError: { code: -32000, message: shown } });
+      await client.close();
+    }
+  }
+});

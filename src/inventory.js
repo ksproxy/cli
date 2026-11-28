@@ -4,6 +4,7 @@ import {
   isObject,
 } from './checks.js';
 import { KINDS } from './kinds/index.js';
+import { checkTunnel } from './kinds/engines/tunnel.js';
 
 export { InventoryError };
 
@@ -44,6 +45,32 @@ function checkReviewers(raw) {
   return out;
 }
 
+// The routes of the service tunnels, per inventory that validateInventory gave: "KIND:NAME" to a frozen
+// { host, jumps }. They are kept here, outside the inventory and its targets, so that no spread, JSON.stringify,
+// structuredClone or inspect of either can carry a route (jump commands with key paths) into session.json, AGENT.md,
+// list_targets or any other output. Neither a kind key nor a target name holds a ":".
+const ROUTES = new WeakMap();
+
+// The route of one target of an inventory that validateInventory gave: { host, jumps }, frozen, jumps a list of jump
+// texts, or null when the target has no tunnel. Any other object, a copy of such an inventory included, throws: a
+// lost route must never look like a target without one, which would connect straight from this machine.
+export function tunnelRoute(inventory, kindKey, name) {
+  const routes = ROUTES.get(inventory);
+  if (routes === undefined) throw new Error('tunnelRoute: not an inventory that validateInventory gave');
+  return routes.get(`${kindKey}:${name}`) ?? null;
+}
+
+// The tunnel of one entry. Only a brokered kind is concerned; ssh and local refuse it as an unknown key, and the
+// kubernetes kind checks its own tunnel. A brokered kind gets the entry without tunnel; with a tunnel, a kind with
+// tunnelTo gets the route that checkTunnel gives, any other brokered kind is refused.
+function takeTunnel(kind, entry, where) {
+  if (kind.brokered !== true) return { own: entry, route: null };
+  const { tunnel, ...own } = entry;
+  if (tunnel === undefined) return { own, route: null };
+  if (kind.tunnelTo === undefined) throw new InventoryError(`${where}: this kind cannot use a tunnel`);
+  return { own, route: checkTunnel(tunnel, where) };
+}
+
 export function validateInventory(raw) {
   if (!isObject(raw)) throw new InventoryError('inventory: top level must be an object');
   checkKeys(raw, [...KINDS.map((kind) => kind.key), 'reviewers'], 'inventory');
@@ -55,18 +82,29 @@ export function validateInventory(raw) {
 
   const ctx = { reviewers: checkReviewers(raw.reviewers), seenPorts: new Set() };
   const validated = {};
+  const routes = new Map();
   for (const kind of KINDS) {
     const seenNames = new Set();
     validated[kind.key] = (raw[kind.key] ?? []).map((entry, i) => {
       const where = checkCommon(kind.key, entry, i, seenNames);
-      // maxOutputKiB is checked here, the same for every kind, and the kind checks the rest of the entry.
+      // maxOutputKiB and the tunnel are checked here, the same for every kind, and the kind checks the rest of the entry.
       const { maxOutputKiB, ...rest } = entry;
       const limit = checkInteger(maxOutputKiB, undefined, DEFAULT_OUTPUT_KIB, MAX_OUTPUT_KIB, `${where}: maxOutputKiB`);
-      const target = kind.validate(rest, where, ctx);
-      return limit === undefined ? target : { ...target, maxOutputKiB: limit };
+      const { own, route } = takeTunnel(kind, rest, where);
+      const checked = kind.validate(own, where, ctx);
+      const target = limit === undefined ? checked : { ...checked, maxOutputKiB: limit };
+      if (route !== null) {
+        // tunnelProblem is pure and sees no secret: a text it gives refuses the route of this target.
+        const problem = kind.tunnelProblem === undefined ? null : kind.tunnelProblem(target);
+        if (typeof problem === 'string') throw new InventoryError(`${where}: tunnel: ${problem}`);
+        routes.set(`${kind.key}:${target.name}`, Object.freeze({ host: route.host, jumps: Object.freeze([...route.jumps]) }));
+      }
+      return target;
     });
   }
-  return { ...validated, reviewers: ctx.reviewers };
+  const inventory = { ...validated, reviewers: ctx.reviewers };
+  ROUTES.set(inventory, routes);
+  return inventory;
 }
 
 export function loadInventory(file, initHint = 'ksproxy init') {

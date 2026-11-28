@@ -249,17 +249,88 @@ function secretProperties(raw) {
   });
 }
 
+// The pieces of a connection string, as text, by one rule: after the scheme, the host part runs to the first ? or #;
+// the user information is the host part before its last @, so a raw / in the password is kept; the host list runs
+// from that @ to the first /, and the path from that /. auth is the user information with its @, or '' without one;
+// query is the text between ? and #, or null without a ?; fragment is the text from #, or ''. null without a scheme.
+// Joined again in this order they give the string back unchanged.
+export function uriPieces(uri) {
+  const scheme = SCHEME.exec(uri);
+  if (scheme === null) return null;
+  const rest = uri.slice(scheme[0].length);
+  const end = rest.search(HOST_END);
+  const hostPart = end === -1 ? rest : rest.slice(0, end);
+  const after = hostPart.slice(hostPart.lastIndexOf('@') + 1);
+  const slash = after.indexOf('/');
+  const tail = end === -1 ? '' : rest.slice(end);
+  const hash = tail.indexOf('#');
+  return {
+    scheme: scheme[0],
+    auth: hostPart.slice(0, hostPart.length - after.length),
+    hosts: slash === -1 ? after : after.slice(0, slash),
+    path: slash === -1 ? '' : after.slice(slash),
+    query: tail.startsWith('?') ? tail.slice(1, hash === -1 ? tail.length : hash) : null,
+    fragment: hash === -1 ? '' : tail.slice(hash),
+  };
+}
+
+// The name of each option of a query as the driver reads it (URLSearchParams: + is a space, percent-decoded, a bad
+// escape kept as written), lower-cased as the driver compares names. A spelling in other letters or in percent escapes
+// is the same name.
+const optionNames = (query) => (query === null ? [] : [...new URLSearchParams(query).keys()].map((name) => name.toLowerCase()));
+
+export const MONGO_PORT = 27017;
+// The refusals of a connection string through a tunnel. No text holds any part of the string.
+export const TUNNEL_REFUSALS = Object.freeze({
+  srv: 'a mongodb+srv:// connection string cannot be used through a tunnel: the driver finds its hosts in DNS',
+  at: 'the connection string has an @ that is not percent-encoded (%40) other than the one before its host',
+  slash: 'the user name or the password of the connection string has a / that is not percent-encoded (%2F)',
+  noHost: 'the connection string names no host',
+  several: 'the connection string names several hosts; a tunnel reaches one',
+  socket: 'the host of the connection string is a socket file or is percent-encoded',
+  tls: 'the connection string has a TLS option (tls, ssl, or a name that starts with tls or ssl): through a tunnel the driver cannot check the certificate against the real host',
+  loadBalanced: 'the connection string has the option loadBalanced, which cannot be used through a tunnel',
+  proxy: 'the connection string has a proxy option (a name that starts with proxy), which would send the connection past the tunnel',
+});
+
+// The address of the service through a tunnel: the one host of the connection string, with port 27017 when it names
+// none ([v6]:port for an IPv6 host), or { error } with a refusal. The string has passed uriProblem.
+export function serviceAddress(uri) {
+  if (uri.startsWith('mongodb+srv://')) return { error: TUNNEL_REFUSALS.srv };
+  const pieces = uriPieces(uri);
+  if (uri.split('@').length - 1 > (pieces.auth === '' ? 0 : 1)) return { error: TUNNEL_REFUSALS.at };
+  if (pieces.auth.includes('/')) return { error: TUNNEL_REFUSALS.slash };
+  const { hosts } = pieces;
+  if (hosts === '') return { error: TUNNEL_REFUSALS.noHost };
+  if (hosts.includes(',')) return { error: TUNNEL_REFUSALS.several };
+  if (hosts.includes('%') || hosts.toLowerCase().endsWith('.sock')) return { error: TUNNEL_REFUSALS.socket };
+  const names = optionNames(pieces.query);
+  if (names.some((name) => name.startsWith('tls') || name.startsWith('ssl'))) return { error: TUNNEL_REFUSALS.tls };
+  if (names.includes('loadbalanced')) return { error: TUNNEL_REFUSALS.loadBalanced };
+  if (names.some((name) => name.startsWith('proxy'))) return { error: TUNNEL_REFUSALS.proxy };
+  const close = hosts.startsWith('[') ? hosts.indexOf(']') : -1;
+  return hosts.includes(':', close + 1) ? hosts : `${hosts}:${MONGO_PORT}`;
+}
+
+// The connection string that mongosh gets through a tunnel, made as text: the host list replaced by address, a / when
+// there is no path, every directConnection option taken out (any spelling of the name, as optionNames reads it) and
+// directConnection=true added as the last option, before the fragment. Empty options are dropped. The user
+// information, the path, every other option and the fragment are kept as written: nothing is decoded and written again.
+export function throughTunnel(uri, address) {
+  const {
+    scheme, auth, path, query, fragment,
+  } = uriPieces(uri);
+  const kept = query === null ? [] : query.split('&').filter((piece) => piece !== '' && optionNames(piece)[0] !== 'directconnection');
+  return `${scheme}${auth}${address}${path === '' ? '/' : path}?${[...kept, 'directConnection=true'].join('&')}${fragment}`;
+}
+
 // The secrets of a connection string, each as written and percent-decoded: the password of the user information,
 // which ends at the last @ before the first ? or #, so a raw / in the password is kept; the value of every option
 // whose name ends in password, in any case; and the secret entries of authMechanismProperties. None when there is none.
 export function passwordParts(uri) {
-  const scheme = SCHEME.exec(uri);
-  if (scheme === null) return [];
-  const rest = uri.slice(scheme[0].length);
-  const end = rest.search(HOST_END);
-  const hostPart = end === -1 ? rest : rest.slice(0, end);
-  const at = hostPart.lastIndexOf('@');
-  const userInfo = at === -1 ? '' : hostPart.slice(0, at);
+  const pieces = uriPieces(uri);
+  if (pieces === null) return [];
+  const userInfo = pieces.auth.slice(0, -1);
   const colon = userInfo.indexOf(':');
   const password = colon === -1 ? '' : userInfo.slice(colon + 1);
   const options = [...uri.matchAll(PASSWORD_OPTION)].map((match) => match[2]);

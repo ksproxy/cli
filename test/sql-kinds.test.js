@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import postgres, { postgresRefusal, psqlInvocation } from '../src/kinds/postgres/index.js';
 import mysql, { clientFamily, mysqlInvocation, mysqlRefusal } from '../src/kinds/mysql/index.js';
-import { isLoopback, tlsFailure, writesData } from '../src/kinds/engines/sql-service.js';
+import { tlsFailure, writesData } from '../src/kinds/engines/sql-service.js';
 import { readStatement } from '../src/kinds/engines/sql.js';
 import {
   KINDS, kindByFlag, kindByKey, kindByTool, secretFilesOf,
@@ -63,14 +63,14 @@ test('psqlBin and mysqlBin: the override for tests, else the client name', () =>
 
 test('an entry is validated into a target, with read-only on, the default port and the default client', () => {
   assert.deepEqual(onePg({ description: 'd', review: undefined }), {
-    kind: 'postgres', name: 'shop', host: 'db.internal', port: 5432, database: 'shop', user: 'agent_ro', passwordEnv: 'SHOP_DB_PASSWORD', readOnly: true, tls: 'verify', caFile: null, description: 'd', allow: ['select ...'],
+    kind: 'postgres', name: 'shop', host: 'db.internal', port: 5432, database: 'shop', user: 'agent_ro', passwordEnv: 'SHOP_DB_PASSWORD', readOnly: true, tls: 'prefer', caFile: null, description: 'd', allow: ['select ...'],
   });
   assert.equal(onePg({ port: undefined }).port, 5432);
   assert.equal(onePg({ readOnly: false }).readOnly, false);
   assert.equal(onePg({ readOnly: true }).readOnly, true);
   assert.deepEqual(onePg({ allow: undefined }).allow, []);
   assert.deepEqual(oneMy({}), {
-    kind: 'mysql', name: 'crm', host: 'crm-db.internal', port: 3306, database: 'crm', user: 'agent_ro', passwordEnv: 'CRM_DB_PASSWORD', readOnly: true, tls: 'verify', caFile: null, client: 'mysql', description: '', allow: ['select ...'],
+    kind: 'mysql', name: 'crm', host: 'crm-db.internal', port: 3306, database: 'crm', user: 'agent_ro', passwordEnv: 'CRM_DB_PASSWORD', readOnly: true, tls: 'prefer', caFile: null, client: 'mysql', description: '', allow: ['select ...'],
   });
   assert.equal(oneMy({ client: 'mariadb' }).client, 'mariadb');
   assert.equal(onePg({ host: 'h'.repeat(253) }).host.length, 253);
@@ -268,9 +268,11 @@ test('the menu, the opening line, the secrets, open, the record and the notes', 
   const target = onePg({ description: 'shop db', allow: ['select ...'] });
   assert.equal(postgres.hint(target), 'agent_ro@db.internal:5432/shop - shop db');
   assert.equal(postgres.hint({ ...target, description: '' }), 'agent_ro@db.internal:5432/shop');
-  assert.equal(postgres.openingMessage(target), 'agent_ro@db.internal:5432/shop, read-only, TLS verify');
+  assert.equal(postgres.openingMessage(target), 'agent_ro@db.internal:5432/shop, read-only, TLS prefer');
+  assert.equal(postgres.openingMessage(onePg({ tls: 'verify' })), 'agent_ro@db.internal:5432/shop, read-only, TLS verify');
   assert.equal(postgres.openingMessage(onePg({ caFile: '/ca/db.pem' })), 'agent_ro@db.internal:5432/shop, read-only, TLS verify with caFile');
-  assert.equal(mysql.openingMessage(oneMy({ readOnly: false })), 'agent_ro@crm-db.internal:3306/crm, read-write, TLS verify');
+  assert.equal(mysql.openingMessage(oneMy({ readOnly: false })), 'agent_ro@crm-db.internal:3306/crm, read-write, TLS prefer');
+  assert.equal(mysql.openingMessage(oneMy({ readOnly: false, tls: 'verify' })), 'agent_ro@crm-db.internal:3306/crm, read-write, TLS verify');
   assert.equal(mysql.openingMessage(oneMy({ host: 'localhost' })), 'agent_ro@localhost:3306/crm, read-only, TLS prefer');
   assert.equal(postgres.openingMessage(onePg({ tls: 'require' })), 'agent_ro@db.internal:5432/shop, read-only, TLS require');
   assert.deepEqual(postgres.secrets(target), { env: ['SHOP_DB_PASSWORD'], files: [] });
@@ -284,7 +286,7 @@ test('the menu, the opening line, the secrets, open, the record and the notes', 
   assert.deepEqual(await mysql.open(oneMy({ client: 'mariadb' }), { env: { ...env, PATH: '/nonexistent-ks' }, secrets: {} }), { ok: false, error: 'program mariadb was not found on PATH' });
   const reviewed = { ...target, review: { reviewer: 'r1', policy: 'p', accept: ['sure'] } };
   assert.deepEqual(postgres.record({ target: reviewed, program: fakePsql }, { reviewed: true }), {
-    kind: 'postgres', name: 'shop', host: 'db.internal', port: 5432, database: 'shop', user: 'agent_ro', passwordEnv: 'SHOP_DB_PASSWORD', readOnly: true, tls: 'verify', caFile: null, description: 'shop db', allow: ['select ...'], program: fakePsql, state: 'up', review: true,
+    kind: 'postgres', name: 'shop', host: 'db.internal', port: 5432, database: 'shop', user: 'agent_ro', passwordEnv: 'SHOP_DB_PASSWORD', readOnly: true, tls: 'prefer', caFile: null, description: 'shop db', allow: ['select ...'], program: fakePsql, state: 'up', review: true,
   });
   assert.equal(postgres.record({ target, program: fakePsql }, { reviewed: false }).review, undefined);
   // The client family that open learned is kept in the record, for each call.
@@ -327,20 +329,22 @@ const {
   CERT, NO_TLS, OLD_PSQL, MARIADB_REQUIRE, SYSTEM_WAY, CA_WAY, NONE_WAY, OLD_WAY, MARIADB_WAY, VERSION_WAY,
 } = TLS_TEXT;
 
-test('tls: verify by default, prefer for a host on this machine; caFile: a path that only verify uses', () => {
-  for (const host of ['localhost', 'LocalHost', '127.0.0.1', '127.10.0.2']) {
-    assert.equal(isLoopback(host), true, host);
+test('tls: prefer by default for every host, verify when the entry names a caFile; caFile: a path that only verify uses', () => {
+  for (const host of ['localhost', 'LocalHost', '127.0.0.1', '127.10.0.2', 'db.internal', 'web1.example.com', '192.0.2.10', '127.0.0.1.example.com']) {
     assert.equal(onePg({ host }).tls, 'prefer', host);
     assert.equal(oneMy({ host }).tls, 'prefer', host);
+    assert.equal(onePg({ host }).caFile, null, host);
   }
-  for (const host of ['db.internal', '10.0.0.5', '127.0.0.1.example.com', 'localhost.example.com', 'my-localhost', '128.0.0.1', '1127.0.0.1']) {
-    assert.equal(isLoopback(host), false, host);
-    assert.equal(onePg({ host }).tls, 'verify', host);
-    assert.equal(oneMy({ host }).tls, 'verify', host);
+  for (const host of ['localhost', '127.0.0.1', 'db.internal', 'web1.example.com']) {
+    assert.equal(onePg({ host, caFile: '/ca.pem' }).tls, 'verify', host);
+    assert.equal(oneMy({ host, caFile: '/ca.pem' }).tls, 'verify', host);
+    assert.equal(onePg({ host, caFile: '/ca.pem' }).caFile, '/ca.pem', host);
   }
   for (const tls of ['verify', 'require', 'prefer']) {
-    assert.equal(onePg({ tls }).tls, tls);
-    assert.equal(oneMy({ host: 'localhost', tls }).tls, tls);
+    for (const host of ['db.internal', 'localhost']) {
+      assert.equal(onePg({ host, tls }).tls, tls, `${host} ${tls}`);
+      assert.equal(oneMy({ host, tls }).tls, tls, `${host} ${tls}`);
+    }
   }
   assert.equal(onePg({ caFile: '/etc/ssl/../ssl//db-ca.pem' }).caFile, '/etc/ssl/db-ca.pem');
   assert.equal(oneMy({ caFile: '~/certs/db-ca.pem' }).caFile, path.join(os.homedir(), 'certs', 'db-ca.pem'));
@@ -352,7 +356,7 @@ test('tls: verify by default, prefer for a host on this machine; caFile: a path 
     fails(one, { caFile: 'certs/ca.pem' }, `${label}: caFile: must be an absolute path or start with "~/"`);
     fails(one, { caFile: '/ca.pem', tls: 'prefer' }, `${label}: caFile: is used only with "tls": "verify"; this target has "tls": "prefer"`);
     fails(one, { caFile: '/ca.pem', tls: 'require' }, `${label}: caFile: is used only with "tls": "verify"; this target has "tls": "require"`);
-    fails(one, { caFile: '/ca.pem', host: '127.0.0.1' }, `${label}: caFile: is used only with "tls": "verify"; this target has "tls": "prefer", the default for a host on this machine`);
+    fails(one, { caFile: '/ca.pem', tls: 'prefer', host: '127.0.0.1' }, `${label}: caFile: is used only with "tls": "verify"; this target has "tls": "prefer"`);
   }
 });
 
@@ -465,16 +469,19 @@ test('open: prefer runs nothing; verify and require learn the client family and 
   const [mysqlProgram, mariadbProgram, fromMaria] = ['mysql', 'mariadb', 'mysql-from-mariadb'].map((name) => path.join(w.bin, name));
   assert.deepEqual(await postgres.open(onePg({ tls: 'prefer' }), w.ctx()), { ok: true, extras: { program: fakePsql } });
   assert.deepEqual(await mysql.open(oneMy({ host: '127.0.0.1' }), w.ctx()), { ok: true, extras: { program: mysqlProgram } });
-  assert.equal(w.starts(), 0, 'nothing runs for prefer');
+  // A remote host without tls is prefer too.
   assert.deepEqual(await postgres.open(onePg(), w.ctx()), { ok: true, extras: { program: fakePsql } });
+  assert.deepEqual(await mysql.open(oneMy(), w.ctx()), { ok: true, extras: { program: mysqlProgram } });
+  assert.equal(w.starts(), 0, 'nothing runs for prefer');
+  assert.deepEqual(await postgres.open(onePg({ tls: 'verify' }), w.ctx()), { ok: true, extras: { program: fakePsql } });
   assert.deepEqual(await postgres.open(onePg({ tls: 'require' }), w.ctx()), { ok: true, extras: { program: fakePsql } });
   assert.deepEqual(await postgres.open(onePg({ caFile: w.ca }), w.ctx()), { ok: true, extras: { program: fakePsql } });
   assert.equal(w.starts(), 3, 'one select 1 for each');
-  assert.deepEqual(await mysql.open(oneMy(), w.ctx()), { ok: true, extras: { program: mysqlProgram, family: 'mysql' } });
+  assert.deepEqual(await mysql.open(oneMy({ tls: 'verify' }), w.ctx()), { ok: true, extras: { program: mysqlProgram, family: 'mysql' } });
   assert.deepEqual(await mysql.open(oneMy({ tls: 'require' }), w.ctx()), { ok: true, extras: { program: mysqlProgram, family: 'mysql' } });
   assert.deepEqual(await mysql.open(oneMy({ client: 'mariadb', caFile: w.ca }), w.ctx()), { ok: true, extras: { program: mariadbProgram, family: 'mariadb' } });
   // The family comes from the version, not from the name: here the program mysql is the MariaDB client.
-  assert.deepEqual(await mysql.open(oneMy(), w.ctx({ KSPROXY_MYSQL: fromMaria })), { ok: true, extras: { program: fromMaria, family: 'mariadb' } });
+  assert.deepEqual(await mysql.open(oneMy({ tls: 'verify' }), w.ctx({ KSPROXY_MYSQL: fromMaria })), { ok: true, extras: { program: fromMaria, family: 'mariadb' } });
   assert.equal(w.starts(), 3 + 8, '--version, then select 1, for each');
   assert.deepEqual(await clientFamily(oneMy(), mysqlProgram, w.ctx()), { family: 'mysql' });
   assert.deepEqual(w.said, [], 'nothing is said when the check passes');
@@ -482,7 +489,7 @@ test('open: prefer runs nothing; verify and require learn the client family and 
   assert.deepEqual(await mysql.open(oneMy({ client: 'mariadb', tls: 'require' }), w.ctx()), { ok: false, error: MARIADB_REQUIRE });
   assert.deepEqual(await mysql.open(oneMy({ tls: 'require' }), w.ctx({ KSPROXY_MYSQL: fromMaria })), { ok: false, error: MARIADB_REQUIRE });
   const broken = w.script('mysql-broken', 'exit 1');
-  assert.deepEqual(await mysql.open(oneMy(), w.ctx({ KSPROXY_MYSQL: broken })), { ok: false, error: `could not run ${broken} --version` });
+  assert.deepEqual(await mysql.open(oneMy({ tls: 'verify' }), w.ctx({ KSPROXY_MYSQL: broken })), { ok: false, error: `could not run ${broken} --version` });
   assert.deepEqual(w.said, [MARIADB_WAY, MARIADB_WAY, VERSION_WAY(broken)]);
 });
 
@@ -494,19 +501,22 @@ test('open: a TLS failure skips the target with a fixed reason and says the way 
   for (const [kind, one] of [[postgres, onePg], [mysql, oneMy], [mysql, mariaOne]]) {
     const at = `${kind.key} ${one({}).client ?? ''}`;
     w.said.length = 0;
-    assert.deepEqual(await kind.open(one({ host: bad }), w.ctx()), { ok: false, error: CERT }, at);
+    assert.deepEqual(await kind.open(one({ host: bad, tls: 'verify' }), w.ctx()), { ok: false, error: CERT }, at);
     assert.deepEqual(await kind.open(one({ host: bad, caFile: w.ca }), w.ctx()), { ok: false, error: CERT }, at);
-    assert.deepEqual(await kind.open(one({ host: none }), w.ctx()), { ok: false, error: NO_TLS }, at);
+    assert.deepEqual(await kind.open(one({ host: none, tls: 'verify' }), w.ctx()), { ok: false, error: NO_TLS }, at);
     assert.deepEqual(w.said, [SYSTEM_WAY(bad), CA_WAY(bad), NONE_WAY('verify')], at);
     assert.equal((await kind.open(one({ host: bad, tls: 'prefer' }), w.ctx())).ok, true, at);
     assert.equal((await kind.open(one({ host: none, tls: 'prefer' }), w.ctx())).ok, true, at);
+    // Without tls and without caFile it is prefer: the same hosts open.
+    assert.equal((await kind.open(one({ host: bad }), w.ctx())).ok, true, at);
+    assert.equal((await kind.open(one({ host: none }), w.ctx())).ok, true, at);
   }
   w.said.length = 0;
   for (const [kind, one] of [[postgres, onePg], [mysql, oneMy]]) {
     assert.deepEqual(await kind.open(one({ host: none, tls: 'require' }), w.ctx()), { ok: false, error: NO_TLS });
     assert.equal((await kind.open(one({ host: bad, tls: 'require' }), w.ctx())).ok, true, 'require does not check the certificate');
   }
-  assert.deepEqual(await postgres.open(onePg({ host: 'old-libpq.example.com' }), w.ctx()), { ok: false, error: OLD_PSQL });
+  assert.deepEqual(await postgres.open(onePg({ host: 'old-libpq.example.com', tls: 'verify' }), w.ctx()), { ok: false, error: OLD_PSQL });
   assert.equal((await postgres.open(onePg({ host: 'old-libpq.example.com', caFile: w.ca }), w.ctx())).ok, true);
   assert.deepEqual(w.said, [NONE_WAY('require'), NONE_WAY('require'), OLD_WAY]);
 
@@ -528,12 +538,12 @@ test('open: a TLS failure skips the target with a fixed reason and says the way 
 
   // A failure that is not about TLS (a wrong password, a server that is down) opens the target: a call shows it.
   const refused = w.script('psql-refused', 'echo \'psql: error: connection to server at "db" (192.0.2.4), port 5432 failed: FATAL:  password authentication failed\' >&2\nexit 2');
-  assert.deepEqual(await postgres.open(onePg(), w.ctx({ KSPROXY_PSQL: refused })), { ok: true, extras: { program: refused } });
+  assert.deepEqual(await postgres.open(onePg({ tls: 'verify' }), w.ctx({ KSPROXY_PSQL: refused })), { ok: true, extras: { program: refused } });
   // A stop while the check runs ends it at once, and the target opens; start then closes what opened during a stop.
   const started = path.join(w.base, 'started');
   const slow = w.script('psql-slow', `echo up > '${started}'\nexec sleep 60`);
   const controller = new AbortController();
-  const opening = postgres.open(onePg(), w.ctx({ KSPROXY_PSQL: slow }, controller.signal));
+  const opening = postgres.open(onePg({ tls: 'verify' }), w.ctx({ KSPROXY_PSQL: slow }, controller.signal));
   await waitUntil(() => fs.existsSync(started));
   const began = Date.now();
   controller.abort();

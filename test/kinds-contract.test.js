@@ -90,6 +90,20 @@ test('the contract check holds a brokered kind to perform, and every other kind 
   assert.throws(() => brokered({ brokered: 'yes' }), /brokered is true or left out/);
   assert.doesNotThrow(() => brokered({ cutHint: 'a narrower call' }));
   assert.doesNotThrow(() => brokered({ probe: undefined, secrets: undefined }));
+  const hooks = { tunnelTo: () => 'vault.example.com:8200', tunnelProblem: () => null };
+  assert.doesNotThrow(() => brokered(hooks));
+  assert.doesNotThrow(() => brokered({ ...hooks, tunnelListener: true }));
+  assert.doesNotThrow(() => brokered({ tunnelTo: hooks.tunnelTo }));
+  assert.throws(() => brokered({ tunnelTo: 'x' }), /vault: tunnelTo/);
+  assert.throws(() => brokered({ ...hooks, tunnelProblem: 'x' }), /vault: tunnelProblem/);
+  assert.throws(() => brokered({ tunnelProblem: hooks.tunnelProblem }), /tunnelProblem is only for a kind with tunnelTo/);
+  assert.throws(() => brokered({ tunnelListener: true }), /tunnelListener is only for a kind with tunnelTo/);
+  assert.doesNotThrow(() => brokered({ ...hooks, tunnelChecksCertificate: () => true }));
+  assert.throws(() => brokered({ ...hooks, tunnelChecksCertificate: true }), /vault: tunnelChecksCertificate/);
+  assert.throws(() => brokered({ tunnelChecksCertificate: () => true }), /tunnelChecksCertificate is only for a kind with tunnelTo/);
+  assert.throws(() => brokered({ ...hooks, tunnelListener: false }), /tunnelListener is true or left out/);
+  assert.throws(() => brokered({ ...hooks, tunnelListener: 'yes' }), /tunnelListener is true or left out/);
+  assert.throws(() => brokered({ ...hooks, sample: [{ ...vault.sample[0], tunnel: { host: 'bastion1' } }] }), /a sample has no tunnel/);
   const plain = (change) => {
     const kind = { ...ssh, ...change };
     checkKind(kind, [kind, kubernetes]);
@@ -99,6 +113,10 @@ test('the contract check holds a brokered kind to perform, and every other kind 
   assert.throws(() => plain({ perform: async () => ({}) }), /perform is only for a brokered kind/);
   assert.throws(() => plain({ probe: async () => 'up' }), /probe is only for a brokered kind/);
   assert.throws(() => plain({ brokered: false }), /brokered is true or left out/);
+  for (const name of ['tunnelTo', 'tunnelProblem', 'tunnelChecksCertificate']) {
+    assert.throws(() => plain({ [name]: () => null }), new RegExp(`${name} is only for a brokered kind`));
+  }
+  assert.throws(() => plain({ tunnelListener: true }), /tunnelListener is only for a brokered kind/);
   assert.ok(KINDS.slice(0, 3).every((kind) => kind.brokered === undefined && kind.secrets === undefined));
 });
 

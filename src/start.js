@@ -8,7 +8,9 @@ import {
 import { agentMdText, mcpConfig } from './agent-md.js';
 import { allowWarnings } from './allowlist.js';
 import { reapDoctorFolders } from './doctor-folder.js';
-import { InventoryError, loadInventory } from './inventory.js';
+import { InventoryError, loadInventory, tunnelRoute } from './inventory.js';
+import { openListener, sharedMasters } from './kinds/engines/tunnel.js';
+import { clip } from './text.js';
 import {
   auditLogPath, callSocketPath, ensureDir, initCommand, inventoryPath, logDir as logDirOf, projectOf, reviewSocketPath,
   rootStateDir, sessionDir as sessionDirOf, socketDir as socketDirOf, stateDir as stateDirOf, writeFileAtomic,
@@ -25,7 +27,9 @@ import { checkbox } from './select.js';
 import {
   clearSession, liveSession, processStartTime, writeSession,
 } from './session.js';
-import { answerCall, targetState } from './tools.js';
+import {
+  answerCall, holdTunnel, keepTunnel, targetState, tunnelControl,
+} from './tools.js';
 
 const BIN_PATH = fileURLToPath(new URL('../bin/ksproxy.js', import.meta.url));
 const FOLLOW_INTERVAL_MS = 500;
@@ -350,14 +354,219 @@ export function prepareTargets(selection, env) {
   return prepared;
 }
 
-// One opened target of a kind that has close, bounded by the kind's closeMs unless limits names the kind's closeLimit,
-// with the kind's onCloseTimeout past it.
-export function closeTarget(kind, o, env, limits) {
-  return bounded(
-    kind.close(o, { env }),
-    limits[kind.closeLimit] ?? kind.closeMs,
-    kind.onCloseTimeout === undefined ? undefined : () => kind.onCloseTimeout(o),
-  );
+// One opened target: close of its kind when it has one, bounded by the kind's closeMs unless limits names the kind's
+// closeLimit, with the kind's onCloseTimeout past it; then its tunnel when it has one, bounded by limits.tunnelCloseMs.
+export async function closeTarget(kind, o, env, limits) {
+  if (kind.close !== undefined) {
+    await bounded(
+      kind.close(o, { env }),
+      limits[kind.closeLimit] ?? kind.closeMs,
+      kind.onCloseTimeout === undefined ? undefined : () => kind.onCloseTimeout(o),
+    );
+  }
+  const control = tunnelControl(o);
+  if (control !== undefined) await bounded(control.close(), limits.tunnelCloseMs ?? TUNNEL_CLOSE_MS);
+}
+
+// The service tunnels. The time limit of the trial is TUNNEL_STEP_MS for the first server and for each jump, and
+// TUNNEL_STEP_MS more; host.limits.tunnelStepMs replaces it in tests.
+export const TUNNEL_STEP_MS = 10000;
+const TUNNEL_CLOSE_MS = 5000;
+// After a failed trial, how long each of its streams is given to end, so that its reason is known.
+const TRIAL_EXIT_MS = 3000;
+const REASON_MAX = 300;
+const ADDRESS_FAILED = 'the address of the service could not be found';
+// The state a target with a tunnel has once its shared connection is gone, and the core's own DOWN text for it.
+const TUNNEL_GONE = 'tunnel gone';
+export function tunnelGoneText(host) {
+  return `the shared connection to ${host} is gone: the target stays down until ksproxy start is run again`;
+}
+export const NO_CERTIFICATE_WHY = 'the servers on the route can read and change the traffic: this target does not check the certificate of the service';
+
+// The routes of a selection, by "KIND:NAME", in the order start opens the targets: only the targets that have one.
+export function routesOf(inventory, selection) {
+  const routes = new Map();
+  for (const kind of KINDS) {
+    for (const t of selection[kind.key]) {
+      const route = tunnelRoute(inventory, kind.key, t.name);
+      if (route !== null) routes.set(`${kind.key}:${t.name}`, route);
+    }
+  }
+  return routes;
+}
+
+// The socket of the shared connection of every first server of routes, before anything opens: the first path over
+// its limit, or two hosts on one socket, throws.
+export function checkRouteSockets(routes, masters) {
+  for (const route of routes.values()) masters.socketFor(route.host);
+}
+
+// The first-server phase: each distinct first server of routes, one at a time in their order, opened once through
+// masters; stopped() is asked before each. A failure is kept by masters and skips the targets behind it later.
+export async function openFirstServers(routes, masters, stopped) {
+  for (const host of new Set([...routes.values()].map((route) => route.host))) {
+    if (stopped()) return;
+    await masters.open(host);
+  }
+}
+
+// What the OPENING line adds for a route: the first server, and the number of jumps when there are some.
+export function routeText(route) {
+  const count = route.jumps.length;
+  if (count === 0) return `through ${route.host}`;
+  return `through ${route.host}, then ${count} ${count === 1 ? 'jump' : 'jumps'}`;
+}
+
+// The opened entry with its tunnel, not enumerable, so that no spread or JSON of the entry carries it.
+function withTunnel(entry, tunnel) {
+  return Object.defineProperty(entry, 'tunnel', { value: tunnel, enumerable: false });
+}
+
+// The address of the service from tunnelTo of the kind: { address } for a text, { error } for { error: text }, the
+// kind's refusal. A throw, or anything else, gives ADDRESS_FAILED: its message may hold a secret.
+function addressOf(kind, t, secrets) {
+  let given;
+  try {
+    given = kind.tunnelTo(t, secrets);
+  } catch {
+    return { error: ADDRESS_FAILED };
+  }
+  if (typeof given === 'string') return { address: given };
+  if (given !== null && typeof given === 'object' && typeof given.error === 'string') return { error: given.error };
+  return { error: ADDRESS_FAILED };
+}
+
+// The promise's value, or fallback once ms passed.
+function within(promise, ms, fallback) {
+  let timer;
+  const late = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(fallback), ms);
+  });
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
+}
+
+// The trial: the doctor hook of the kind, run once through the tunnel with the entry without the extras of open,
+// within ms and until stop fires: { ok, detail }. A kind without the hook passes. A hook that throws or gives another
+// shape fails with "the check failed".
+async function trialOf(kind, probe, ctx, ms, stop) {
+  if (kind.doctor === undefined) return { ok: true, detail: 'no check' };
+  const controller = new AbortController();
+  const signal = AbortSignal.any([stop, controller.signal]);
+  const failed = { ok: false, detail: 'the check failed' };
+  const checked = Promise.resolve()
+    .then(() => kind.doctor(probe, { ...ctx, timeoutMs: ms, signal }))
+    .then(
+      (r) => (r !== null && typeof r === 'object' && typeof r.ok === 'boolean' && typeof r.detail === 'string'
+        ? { ok: r.ok, detail: r.detail }
+        : failed),
+      () => failed,
+    );
+  const stopped = new Promise((resolve) => {
+    if (stop.aborted) resolve({ ok: false, detail: 'stopped' });
+    signal.addEventListener('abort', () => resolve({ ok: false, detail: 'stopped' }), { once: true });
+  });
+  try {
+    return await within(Promise.race([checked, stopped]), ms, { ok: false, detail: `the check did not finish within ${ms / 1000} seconds` });
+  } finally {
+    controller.abort();
+  }
+}
+
+// Why the route of a failed trial failed, or null when it did not: the error of a connection that could not be made,
+// else the reason of the first stream of the trial whose ssh ended with an error, each given TRIAL_EXIT_MS to end.
+async function routeFailure(seen) {
+  if (seen.errors.length > 0) return seen.errors[0];
+  const reasons = await Promise.all(seen.streams.map((s) => within(s.exited.then((r) => r.reason), TRIAL_EXIT_MS, null)));
+  return reasons.find((reason) => reason !== null) ?? null;
+}
+
+// What a stream kind's hold gives, and what takes the error of a stream so that it is never unhandled.
+const nothing = () => {};
+
+const oneLine = (text) => clip(text.trim().replace(/\s*\n\s*/g, '; '), REASON_MAX);
+
+// The tunnel of one target before its kind's open: the first server, tunnelTo, the connector, the listener for a kind
+// with tunnelListener, then the trial. Gives { tunnel } (kept with keepTunnel), { skipped, firstServer? }, or { late }
+// when the signal fired (all closed). The tunnel is { connect } or { host, port, hold }; its streams never throw an
+// unhandled error. listen opens the listener (openListener; a test gives one that fails).
+export async function openTunnel(kind, t, secrets, {
+  route, masters, env, signal, stepMs = TUNNEL_STEP_MS, listen = openListener,
+}) {
+  const first = await masters.open(route.host);
+  if (!first.ok) return { skipped: first.error, firstServer: route.host };
+  const to = addressOf(kind, t, secrets);
+  if (to.error !== undefined) return { skipped: to.error };
+  let raw;
+  try {
+    raw = masters.connector(route, to.address);
+  } catch (err) {
+    return { skipped: err.message };
+  }
+  const live = new Set();
+  let seen = null;
+  const connect = () => {
+    let stream;
+    try {
+      stream = raw();
+    } catch (err) {
+      seen?.errors.push(err.message);
+      throw err;
+    }
+    stream.on('error', nothing);
+    live.add(stream);
+    stream.once('close', () => live.delete(stream));
+    seen?.streams.push(stream);
+    return stream;
+  };
+  const control = {
+    host: route.host, down: false, check: () => masters.check(route.host),
+  };
+  let listener = null;
+  let tunnel;
+  if (kind.tunnelListener === true) {
+    try {
+      listener = await listen(connect);
+    } catch (err) {
+      return { skipped: `the loopback port could not be opened: ${err.message}` };
+    }
+    const hold = () => (control.down ? () => {} : listener.hold());
+    control.hold = hold;
+    tunnel = Object.freeze({ host: listener.host, port: listener.port, hold });
+  } else {
+    control.hold = () => nothing;
+    tunnel = Object.freeze({ connect });
+  }
+  control.close = async () => {
+    control.down = true;
+    if (listener !== null) await listener.close();
+    await Promise.all([...live].map((s) => new Promise((resolve) => {
+      s.once('close', resolve);
+      s.destroy();
+    })));
+  };
+  keepTunnel(tunnel, control);
+
+  seen = { errors: [], streams: [] };
+  const probe = withTunnel({ kind: kind.key, target: t }, tunnel);
+  const release = control.hold();
+  const ms = stepMs * (route.jumps.length + 1) + stepMs;
+  let trial;
+  try {
+    trial = await trialOf(kind, probe, { env, secrets }, ms, signal);
+  } finally {
+    release();
+  }
+  const trialSeen = seen;
+  seen = null;
+  if (signal.aborted) {
+    await control.close();
+    return { late: true };
+  }
+  if (trial.ok) return { tunnel };
+  const reason = await routeFailure(trialSeen);
+  await control.close();
+  if (reason !== null) return { skipped: `the route failed: ${oneLine(reason)}` };
+  return { skipped: `the service did not answer through the tunnel: ${oneLine(trial.detail)}` };
 }
 
 // The signals that open gets as ctx.signal, one per target, so that no signal gathers the listeners of many targets:
@@ -387,7 +596,7 @@ export function stopSignals() {
 // short secrets follow; a failed open is SKIPPED with its error. Gives { opened, secrets }, { skipped } with the text
 // of the SKIPPED line, or { late }.
 export async function openTarget(kind, t, {
-  held, ports, context, lifecycle, open, onOpened,
+  held, ports, context, lifecycle, open, onOpened, onSecrets = () => {}, tunnel: route,
 }) {
   const line = (event, message) => lifecycle({
     event, kind: kind.label, target: t.name, message,
@@ -397,7 +606,8 @@ export async function openTarget(kind, t, {
   for (const warning of kind.ruleWarnings === undefined ? allowWarnings(t.allow) : kind.ruleWarnings(t)) {
     line('target_warn', warning);
   }
-  line('target_opening', kind.openingMessage(t));
+  line('target_opening', route === undefined ? kind.openingMessage(t) : `${kind.openingMessage(t)}, ${routeText(route.route)}`);
+  if (route !== undefined && kind.tunnelChecksCertificate?.(t) !== true) line('target_warn', NO_CERTIFICATE_WHY);
   const blocked = portProblem(kind, t, ports);
   if (blocked !== null) {
     line('target_skipped', blocked);
@@ -408,14 +618,42 @@ export async function openTarget(kind, t, {
     line('target_skipped', secrets.error);
     return { skipped: secrets.error };
   }
-  // The result of open is always awaited.
-  const r = await open(() => kind.open(t, { ...context, secrets: secrets.secrets }), secrets.secrets);
-  if (r.late) return { late: true };
+  onSecrets(secrets.secrets);
+  let tunnel;
+  if (route !== undefined) {
+    const made = await openTunnel(kind, t, secrets.secrets, { ...route, env: context.env, signal: context.signal });
+    if (made.late) return { late: true };
+    if (made.skipped !== undefined) {
+      line('target_skipped', made.skipped);
+      return made;
+    }
+    ({ tunnel } = made);
+  }
+  const control = tunnel === undefined ? undefined : tunnelControl({ tunnel });
+  const shut = () => (control === undefined ? undefined : control.close());
+  // The result of open is always awaited; the listener of a tunnel accepts connections while it runs.
+  const ctx = tunnel === undefined ? { ...context, secrets: secrets.secrets } : { ...context, secrets: secrets.secrets, tunnel };
+  const release = control === undefined ? () => {} : control.hold();
+  let r;
+  try {
+    r = await open(() => kind.open(t, ctx), secrets.secrets);
+  } catch (err) {
+    release();
+    await shut();
+    throw err;
+  }
+  release();
+  if (r.late) {
+    await shut();
+    return { late: true };
+  }
   if (!r.ok) {
+    await shut();
     line('target_skipped', r.error);
     return { skipped: r.error };
   }
   const opened = { kind: kind.key, target: t, ...r.extras };
+  if (tunnel !== undefined) withTunnel(opened, tunnel);
   onOpened(opened, secrets.secrets);
   if (r.warn === undefined) {
     lifecycle({ event: 'target_up', kind: kind.label, target: t.name });
@@ -512,6 +750,8 @@ export async function start(options, startEnv = process.env, host = {}) {
   let healthRun = null;
   let closingShown = false;
   let closedShown = false;
+  // The shared connections of the service tunnels of this start, once the selection is known.
+  let masters = null;
   const counts = { ok: 0, failed: 0, denied: 0 };
 
   const record = (entry) => {
@@ -581,8 +821,11 @@ export async function start(options, startEnv = process.env, host = {}) {
         }
       }
       if (reviewStart) await bounded(reviewStart.then((server) => server.close()), 2000);
-      await Promise.all(opened.filter((o) => kindByKey(o.kind).close !== undefined)
+      // Each target's kind, then its tunnel; then the shared connections, after their opens ended, before the
+      // socket folder is emptied.
+      await Promise.all(opened.filter((o) => kindByKey(o.kind).close !== undefined || o.tunnel !== undefined)
         .map((o) => closeOne(kindByKey(o.kind), o)));
+      if (masters !== null) await masters.closeAll();
       if (!owns) return;
       try {
         clearSession(sessionDirOf(env));
@@ -632,12 +875,27 @@ export async function start(options, startEnv = process.env, host = {}) {
       opened: o,
       secrets: secretsOf.get(`${o.kind}:${o.target.name}`),
       up: sessionTargets[i].state === 'up',
+      tunnel: tunnelControl(o),
     }));
-    // A kind with probe is asked with the target's secrets and its opened entry; every other target goes through
-    // targetState.
-    const stateNow = (item) => (item.of.probe === undefined
-      ? stateOf(item.target, env)
-      : item.of.probe(item.target, { env, secrets: item.secrets, opened: item.opened }));
+    // A target with a tunnel asks its shared connection first: once it is gone the target stays down, its listener
+    // takes no connection, and its kind is not asked again. Then a kind with probe is asked with the target's
+    // secrets and its opened entry, while the listener's gate is held; every other target goes through targetState.
+    const stateNow = async (item) => {
+      if (item.tunnel !== undefined && (item.tunnel.down || !(await item.tunnel.check()))) {
+        item.tunnel.down = true;
+        return TUNNEL_GONE;
+      }
+      if (item.of.probe === undefined) return stateOf(item.target, env);
+      const release = holdTunnel(item.opened);
+      try {
+        return await item.of.probe(item.target, { env, secrets: item.secrets, opened: item.opened });
+      } finally {
+        release();
+      }
+    };
+    const downText = (item, state) => (state === TUNNEL_GONE
+      ? tunnelGoneText(item.tunnel.host)
+      : item.of.downMessage(item.target, state, item.opened));
     const checkOnce = async () => {
       for (const item of items) {
         if (stopping) return;
@@ -660,7 +918,7 @@ export async function start(options, startEnv = process.env, host = {}) {
           });
         } else {
           lifecycle({
-            event: 'target_down', kind: item.kind, target: item.name, message: item.of.downMessage(item.target, state, item.opened),
+            event: 'target_down', kind: item.kind, target: item.name, message: downText(item, state),
           });
         }
       }
@@ -768,13 +1026,31 @@ export async function start(options, startEnv = process.env, host = {}) {
       say(err.message);
       return 1;
     }
+    // The routes of the service tunnels, and the sockets of their shared connections, checked before anything opens.
+    const routes = routesOf(inventory, selection);
+    masters = sharedMasters(env);
+    try {
+      checkRouteSockets(routes, masters);
+    } catch (err) {
+      say(err.message);
+      return 1;
+    }
+    let firstServers = false;
 
     try {
       for (const kind of KINDS) {
         for (const t of selection[kind.key]) {
           if (stopping) break;
+          const route = routes.get(`${kind.key}:${t.name}`);
+          // Before the first target with a route, every first server of this start, once.
+          if (route !== undefined && !firstServers) {
+            firstServers = true;
+            await openFirstServers(routes, masters, () => stopping);
+            if (stopping) break;
+          }
           // A kind with close is closed again when a stop arrived while it opened.
           const result = await openTarget(kind, t, {
+            tunnel: route === undefined ? undefined : { route, masters, stepMs: limits.tunnelStepMs },
             held,
             ports,
             context: {

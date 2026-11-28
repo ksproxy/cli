@@ -21,13 +21,18 @@ export function doctor(args, env) {
 }
 
 // Gives the output of each run, for the leak check. httpsTargets are the targets that must fail without the CA; a group
-// without one skips that run.
+// without one skips that run. tunnelled are the targets with a tunnel (label and name), each of which must have its
+// own OK line.
 export async function doctorScenario({
-  checks, env, count, httpsTargets,
+  checks, env, count, httpsTargets, tunnelled = [],
 }) {
   checks.begin('doctor');
   const all = await doctor([], env);
   checks.check(`every target is OK (${count} of ${count})`, all.code === 0 && all.text.includes(`${count} of ${count} targets OK`), all.text);
+  if (tunnelled.length > 0) {
+    const notOk = tunnelled.filter(([label, name]) => !new RegExp(`(^|\\s)${label} +${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} +OK\\b`).test(all.text));
+    checks.check(`the tunnelled targets are OK: ${tunnelled.map(([, name]) => name).join(', ')}`, notOk.length === 0, `not OK: ${notOk.map(([, name]) => name).join(', ')}\n${all.text}`);
+  }
   if (httpsTargets.length === 0) return [all.text];
   const withoutCa = { ...env };
   delete withoutCa.NODE_EXTRA_CA_CERTS;

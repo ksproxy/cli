@@ -12,9 +12,12 @@ import { everySecretFile, otherInventories, usedPorts } from './projects.js';
 import {
   LineStream, listenerProblem, loadProject, nameOf, parseAddresses, readTls, runningSession, tokenProblem,
 } from './start-many.js';
+import { sharedMasters } from './kinds/engines/tunnel.js';
 import {
-  chooseTargets, closeTarget, credentialVariables, namesByKind, openTarget, prepareTargets, stopSignals, withoutVariables,
+  checkRouteSockets, chooseTargets, closeTarget, credentialVariables, namesByKind, openFirstServers, openTarget, prepareTargets,
+  routesOf, stopSignals, withoutVariables,
 } from './start.js';
+import { holdTunnel } from './tools.js';
 import { clip } from './text.js';
 import { tokenState } from './token.js';
 
@@ -178,7 +181,7 @@ export async function doctor(plan, env, host) {
   // Every credential of the project, the target's own secrets and their hidden forms are hidden in each line, also in
   // a line the kind says through ctx.say, which goes with the other lines of the target, never clipped.
   const checkTarget = async (kind, t, {
-    stream, held, heldValues, ports, context,
+    stream, held, heldValues, ports, context, tunnel,
   }) => {
     const { env: openEnv } = context;
     let hide = heldValues;
@@ -188,29 +191,41 @@ export async function doctor(plan, env, host) {
     const say = (text) => write(stream, `${formatSaidLine({
       ts: new Date().toISOString(), kind: kind.label, target: t.name, text: hideSecrets(String(text), hide),
     })}\n`);
-    // A kind with close is closed again when a stop arrived while it opened, as start does.
-    const open = async (call, secrets) => {
+    // The secrets are hidden from the moment they are read, before the tunnel's trial. A kind with close is closed
+    // again when a stop arrived while it opened, as start does.
+    const onSecrets = (secrets) => {
       hide = [...heldValues, ...Object.values(secrets), ...formsOf(kind, t, secrets)];
+    };
+    const open = async (call) => {
       const r = await call();
       if (!r.ok || !stopping || kind.close === undefined) return r;
       await closeTarget(kind, { kind: kind.key, target: t, ...r.extras }, openEnv, limits);
       return { ok: false, late: true };
     };
     const result = await openTarget(kind, t, {
-      held, ports, context: { ...context, signal: signals.signal(), say }, lifecycle, open, onOpened: () => {},
+      held, ports, context: { ...context, signal: signals.signal(), say }, lifecycle, open, onOpened: () => {}, onSecrets, tunnel,
     });
     if (result.skipped !== undefined) {
-      report(stream, false, { kind: kind.label, target: t.name, message: result.skipped }, hide);
+      // A failure of a first server names it: the text of ssh alone does not say which layer failed.
+      const message = result.firstServer === undefined ? result.skipped : `the first server ${result.firstServer} failed: ${result.skipped}`;
+      report(stream, false, { kind: kind.label, target: t.name, message }, hide);
       return;
     }
     if (result.late) return;
-    const check = stopping ? null : await runCheck(kind, result.opened, { env: openEnv, secrets: result.secrets }, limits.checkMs, stopped);
+    // The listener of a tunnel accepts connections while the check runs.
+    const release = holdTunnel(result.opened);
+    let check = null;
+    try {
+      if (!stopping) check = await runCheck(kind, result.opened, { env: openEnv, secrets: result.secrets }, limits.checkMs, stopped);
+    } finally {
+      release();
+    }
     if (check !== null) {
       if (check.ok) counts.ok += 1;
       const detail = clip(hideSecrets(check.detail, hide), DETAIL_MAX);
       report(stream, check.ok, { kind: kind.label, target: t.name, message: detail }, hide);
     }
-    if (kind.close !== undefined) await closeTarget(kind, result.opened, openEnv, limits);
+    await closeTarget(kind, result.opened, openEnv, limits);
   };
 
   // One project with a loaded inventory and no live session: its selection, the socket paths of start, then each
@@ -242,27 +257,40 @@ export async function doctor(plan, env, host) {
       report(stream, false, { target: 'sockets', message: err.message }, heldValues);
     }
     const folder = makeDoctorFolder(env, proc.pid);
+    const openEnv = { ...bare, [STATE_FOLDER]: folder };
+    const routes = routesOf(inventory, selection);
+    const masters = sharedMasters(openEnv);
     try {
-      const openEnv = { ...bare, [STATE_FOLDER]: folder };
       ensureDir(socketDir(openEnv));
       ensureDir(sessionDir(openEnv));
       let prepared;
       try {
         prepared = prepareTargets(selection, openEnv);
+        checkRouteSockets(routes, masters);
       } catch (err) {
         report(stream, false, { target: 'sockets', message: err.message }, heldValues);
         return;
       }
+      let firstServers = false;
       for (const { kind, t } of chosen) {
         if (stopping) break;
+        const route = routes.get(`${kind.key}:${t.name}`);
+        // Before the first target with a route, every first server of this project, once, as start does.
+        if (route !== undefined && !firstServers) {
+          firstServers = true;
+          await openFirstServers(routes, masters, () => stopping);
+          if (stopping) break;
+        }
         const context = {
           env: openEnv, sessionDir: sessionDir(openEnv), secretFiles: [...files, ...tlsKey], secretFilesProblem, prepared: prepared.get(kind.key).get(t.name),
         };
         await checkTarget(kind, t, {
-          stream, held, heldValues, ports, context,
+          stream, held, heldValues, ports, context, tunnel: route === undefined ? undefined : { route, masters, stepMs: limits.tunnelStepMs },
         });
       }
     } finally {
+      // The shared connections of this project live for its run: closed before its temporary folder is removed.
+      await masters.closeAll();
       fs.rmSync(folder, { recursive: true, force: true });
     }
   };

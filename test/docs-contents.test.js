@@ -26,6 +26,7 @@ const PAGES = {
   'docs/RULES.md': 2,
   'docs/SERVICES.md': 2,
   'docs/SESSION-AND-LOG.md': 2,
+  'docs/TUNNELS.md': 2,
 };
 
 // The anchor GitHub gives a heading: lower case, punctuation other than - and _ dropped, spaces as -.

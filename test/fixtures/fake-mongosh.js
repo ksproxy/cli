@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
 
 // A stand-in for mongosh. It never reads or runs the script it is given. As mongosh does, it writes a log under
@@ -42,6 +43,34 @@ if (mode === 'ok') {
   const decoded = decodeURIComponent(userinfo.slice(userinfo.indexOf(':') + 1));
   const tail = name === 'once' ? `${decoded}\n` : decoded.repeat(Math.ceil((4 * 262144) / decoded.length));
   process.stdout.write(`${'x'.repeat(Number(count))}${tail}`);
+} else if (mode === 'tunnel' || mode === 'address') {
+  // tunnel: connects to the host of the connection string (after its last @, up to the first /), sends PING for the
+  // ping command and GET NAME for another, and prints the line that comes back, as the service of a tunnel test
+  // answers. address: prints the address and the connection string, as and inside JSON, the way an error of the
+  // driver can name them, and exits 1.
+  const authority = uri.slice(uri.indexOf('://') + 3).split(/[?#]/)[0];
+  const address = authority.slice(authority.lastIndexOf('@') + 1).split('/')[0];
+  const at = address.lastIndexOf(':');
+  if (mode === 'address') {
+    process.stdout.write(`${JSON.stringify({ uri, address })}\n`);
+    process.stderr.write(`error: MongoServerSelectionError: connect ECONNREFUSED ${address}; ${uri}\n`);
+    process.exitCode = 1;
+  } else {
+    const [name] = Object.keys(JSON.parse(doc));
+    const socket = net.connect({ host: address.slice(0, at), port: Number(address.slice(at + 1)) });
+    let text = '';
+    socket.on('data', (chunk) => {
+      text += chunk;
+      if (!text.includes('\n')) return;
+      process.stdout.write(`${JSON.stringify({ reply: text.split('\n')[0], ok: 1 })}\n`);
+      socket.destroy();
+    });
+    socket.on('error', (err) => {
+      process.stderr.write(`error: MongoServerSelectionError: ${err.message}\n`);
+      process.exitCode = 1;
+    });
+    socket.write(name === 'ping' ? 'PING\n' : `GET ${name}\n`);
+  }
 } else if (mode === 'sleep') {
   setTimeout(() => {}, 60000);
 } else if (mode === 'flood') {

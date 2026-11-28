@@ -5,7 +5,7 @@ import {
 } from '../../checks.js';
 import { REVIEWED } from '../shared.js';
 import { DOCTOR_MAX_BYTES, hiddenOf, respVerdict } from '../engines/doctor.js';
-import { escapeText, exchange } from '../engines/resp.js';
+import { escapeText, exchange, streamConnector } from '../engines/resp.js';
 import {
   fixedRefusal, matchCommandRule, normalizeWords, readCommand,
 } from './words.js';
@@ -49,6 +49,21 @@ function judged(input) {
   }
   const fixed = fixedRefusal(words);
   return fixed === null ? { words } : { refusal: { allowed: false, ...fixed } };
+}
+
+// What exchange needs for one connection of this target: the target's own settings, the credentials, and, behind a
+// tunnel, the connect hook that takes the tunnel's stream as the socket. Without a tunnel there is no hook, so the
+// connection is the direct one it always was.
+function connection(target, secrets, tunnel) {
+  return {
+    host: target.host,
+    port: target.port,
+    tls: target.tls,
+    db: target.db,
+    user: target.userEnv === null ? undefined : secrets[target.userEnv],
+    password: target.passwordEnv === null ? undefined : secrets[target.passwordEnv],
+    ...(tunnel === undefined ? {} : { connect: streamConnector(tunnel) }),
+  };
 }
 
 // The redis kind: ksproxy start speaks the Redis protocol itself through the resp engine and holds the password.
@@ -102,6 +117,14 @@ export default {
     const db = target.db === 0 ? '' : `, database ${target.db}`;
     return `${target.host}:${target.port}${tls}${db}, ${authText(target)}`;
   },
+  // The service address for the tunnel: the target's own host and port, an IPv6 host in brackets.
+  tunnelTo(target) {
+    return `${target.host.includes(':') ? `[${target.host}]` : target.host}:${target.port}`;
+  },
+  // With tls the certificate is always checked, against the real host, with the system's authorities.
+  tunnelChecksCertificate(target) {
+    return target.tls === true;
+  },
   open() {
     return { ok: true, extras: {} };
   },
@@ -134,18 +157,13 @@ export default {
   // The command is read and checked against the fixed list again, so that no path (a reviewer's approval included)
   // can send a fixed refusal; a refusal here throws, which the core turns into a refusal.
   async perform(target, decision, {
-    secrets, timeoutMs, maxBytes, signal, input,
+    secrets, timeoutMs, maxBytes, signal, input, opened,
   }) {
     const words = normalizeWords(readCommand(input));
     const fixed = fixedRefusal(words);
     if (fixed !== null) throw new Error(fixed.reason);
     return exchange({
-      host: target.host,
-      port: target.port,
-      tls: target.tls,
-      db: target.db,
-      user: target.userEnv === null ? undefined : secrets[target.userEnv],
-      password: target.passwordEnv === null ? undefined : secrets[target.passwordEnv],
+      ...connection(target, secrets, opened?.tunnel),
       words,
       timeoutMs,
       maxBytes,
@@ -160,12 +178,7 @@ export default {
   async doctor(opened, { secrets, timeoutMs, signal }) {
     const { target } = opened;
     const result = await exchange({
-      host: target.host,
-      port: target.port,
-      tls: target.tls,
-      db: target.db,
-      user: target.userEnv === null ? undefined : secrets[target.userEnv],
-      password: target.passwordEnv === null ? undefined : secrets[target.passwordEnv],
+      ...connection(target, secrets, opened.tunnel),
       words: ['PING'],
       timeoutMs,
       maxBytes: DOCTOR_MAX_BYTES,

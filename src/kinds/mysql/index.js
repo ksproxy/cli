@@ -7,6 +7,7 @@ import {
   calledFunction, hasPair, headWords, plainName,
 } from '../engines/sql.js';
 
+const TUNNEL_VERIFY = '"tls": "verify" cannot be used through a tunnel, because the MySQL and MariaDB clients check the certificate\'s name against the address they connect to, which is 127.0.0.1 there; write "tls": "prefer" instead and leave out "caFile", which only "verify" uses';
 const CLIENTS = ['mysql', 'mariadb'];
 const ROW_LIMIT = 1000;
 const VERSION_MS = 5000;
@@ -66,6 +67,12 @@ export function mysqlRefusal(words) {
   return null;
 }
 
+// Both clients check the certificate's name against --host, which is the loopback address through a tunnel, so verify
+// could never pass; the text names the way out.
+export function mysqlTunnelProblem(target) {
+  return target.tls === 'verify' ? TUNNEL_VERIFY : null;
+}
+
 function checkClient(entry, where) {
   if (entry.client === undefined) return { client: 'mysql' };
   if (!CLIENTS.includes(entry.client)) throw new InventoryError(`${where}: client: must be "mysql" or "mariadb"`);
@@ -95,7 +102,8 @@ export async function clientFamily(target, program, { env, signal }) {
   return { family };
 }
 
-// The TLS options of a call: none for prefer, as before, so the client uses TLS when the server offers it. The MariaDB
+// The TLS options of a call: none for prefer, as before: the MySQL client then uses TLS when the server offers it, and
+// a MariaDB client before 11.4 does not try TLS at all. The MariaDB
 // client checks the certificate and the host name with --ssl-verify-server-cert, the MySQL client with
 // --ssl-mode=VERIFY_IDENTITY; both read the CA file from --ssl-ca, else the CAs of this system. open never lets require
 // reach the MariaDB client.
@@ -109,12 +117,16 @@ function tlsArgs(target) {
 // The client with fixed options, the statement glued to --execute= as one argument, the password in the environment.
 // utf8mb4 keeps the client from reading a backtick as part of a multi-byte character of the machine's locale; the
 // login file named inside the empty working folder does not exist, so no stored login replaces the password.
-export function mysqlInvocation(target, statement, { password }) {
+// Through a tunnel the client connects to the tunnel's loopback address and port over TCP, never a socket.
+export function mysqlInvocation(target, statement, { password, tunnel }) {
   const init = [`SET SESSION sql_select_limit=${ROW_LIMIT}`, ...(target.readOnly === false ? [] : ['SET SESSION TRANSACTION READ ONLY'])];
   return {
     fixedArgs: [
       '--no-defaults', '--batch', '--quick', '--default-character-set=utf8mb4', '--local-infile=0', '--connect-timeout=10',
-      `--host=${target.host}`, `--port=${target.port}`, `--database=${target.database}`, `--user=${target.user}`,
+      ...(tunnel === undefined
+        ? [`--host=${target.host}`, `--port=${target.port}`]
+        : [`--host=${tunnel.host}`, `--port=${tunnel.port}`, '--protocol=TCP']),
+      `--database=${target.database}`, `--user=${target.user}`,
       ...tlsArgs(target), `--init-command=${init.join('; ')}`,
     ],
     words: [`--execute=${statement}`],
@@ -163,6 +175,7 @@ export default sqlServiceKind({
   invocation: mysqlInvocation,
   printedForms: batchForms,
   clientFamily,
+  tunnelProblem: mysqlTunnelProblem,
   notes: [
     '- Double quotes make a string here; quote a name with backticks. A backslash is refused inside a string too, and `#` starts a comment.',
     `- At most ${ROW_LIMIT} rows per result. Never allowed, whatever the rules: LOAD DATA, INTO OUTFILE and INTO DUMPFILE, commands of the mysql client, server commands, global settings, users and other server objects, transaction control, LOAD_FILE, and SLEEP, BENCHMARK and the lock and wait functions. The time limit stops the client; the server may go on with the statement until it ends.`,

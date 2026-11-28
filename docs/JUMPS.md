@@ -26,15 +26,15 @@ Some servers are only reachable from another server, with a key that is stored t
 `ksproxy start` opens the connection to `host`. For the call `uptime`, ksproxy sends exactly this over it:
 
 ```text
-ssh -T -o BatchMode=yes -i .ssh/app_key -o LogLevel=ERROR -o ConnectTimeout=10 opsuser@192.0.2.10 -- uptime
+ssh -T -e none -o BatchMode=yes -i .ssh/app_key -o LogLevel=ERROR -o ConnectTimeout=10 opsuser@192.0.2.10 -- uptime
 ```
 
-ksproxy adds `-T`, `-o BatchMode=yes`, `-o ConnectTimeout=10` and the `--`. The rest is your text.
+ksproxy adds `-T`, `-e none` (no escape character), `-o BatchMode=yes`, `-o ConnectTimeout=10` and the `--`. The rest is your text.
 
 With a second jump `ssh -i .ssh/inner_rsa deploy@10.0.0.5`, each ssh command is nested after the `--` of the one before it:
 
 ```text
-ssh -T -o BatchMode=yes -i .ssh/app_key -o LogLevel=ERROR -o ConnectTimeout=10 opsuser@192.0.2.10 -- ssh -T -o BatchMode=yes -i .ssh/inner_rsa -o ConnectTimeout=10 deploy@10.0.0.5 -- uptime
+ssh -T -e none -o BatchMode=yes -i .ssh/app_key -o LogLevel=ERROR -o ConnectTimeout=10 opsuser@192.0.2.10 -- ssh -T -e none -o BatchMode=yes -i .ssh/inner_rsa -o ConnectTimeout=10 deploy@10.0.0.5 -- uptime
 ```
 
 `ksproxy check ssh app1 uptime` prints the string that would be sent, so you can compare it with what you type by hand.

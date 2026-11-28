@@ -70,8 +70,10 @@ export function postgresRefusal(words) {
 // psql with fixed options, the statement as the one argument after the last --command, the password in the
 // environment. The settings ride on the startup options and are set again inside the one transaction that wraps
 // every --command, because a connection pooler may drop the startup options without an error. TLS is set in the
-// environment too: PGSSLMODE, and for verify PGSSLROOTCERT, the CA file or system for the CAs of this system.
-export function psqlInvocation(target, statement, { password, timeoutMs }) {
+// environment too: PGSSLMODE, and for verify PGSSLROOTCERT, the CA file or system for the CAs of this system. Through
+// a tunnel the port is the tunnel's and PGHOSTADDR is its loopback address, while --host stays the real name, which
+// libpq checks the certificate against.
+export function psqlInvocation(target, statement, { password, timeoutMs, tunnel }) {
   const readOnly = target.readOnly !== false;
   const options = [
     ...(readOnly ? ['-c default_transaction_read_only=on'] : []),
@@ -86,7 +88,7 @@ export function psqlInvocation(target, statement, { password, timeoutMs }) {
   return {
     fixedArgs: [
       '--no-psqlrc', '--quiet', '--no-align', '--set', 'ON_ERROR_STOP=1', '--set', 'FETCH_COUNT=1000', '--pset', 'footer=off',
-      '--single-transaction', '--host', target.host, '--port', String(target.port), '--dbname', target.database,
+      '--single-transaction', '--host', target.host, '--port', String(tunnel === undefined ? target.port : tunnel.port), '--dbname', target.database,
       '--username', target.user, '--no-password', ...settings.flatMap((setting) => ['--command', setting]), '--command',
     ],
     words: [statement],
@@ -95,6 +97,7 @@ export function psqlInvocation(target, statement, { password, timeoutMs }) {
       PGCONNECT_TIMEOUT: '10',
       PGAPPNAME: 'ksproxy',
       PGOPTIONS: options.join(' '),
+      ...(tunnel === undefined ? {} : { PGHOSTADDR: tunnel.host }),
       PGSSLMODE: SSL_MODES[target.tls],
       ...(target.tls === 'verify' ? { PGSSLROOTCERT: target.caFile ?? 'system' } : {}),
     },
@@ -126,6 +129,7 @@ export default sqlServiceKind({
   fixedRefusal: postgresRefusal,
   program: (target, env) => psqlBin(env),
   invocation: psqlInvocation,
+  checksCertificate: true,
   // psql prints a text value as it is, but the server writes a json, jsonb or array value with a quote and a backslash
   // escaped: the password as JSON writes it covers those.
   printedForms: (password) => jsonForms([password]),

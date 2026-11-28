@@ -1,4 +1,5 @@
-# An ssh server for the e2e tests: web1, which the runner reaches, and app1, which only web1 reaches (jumps). The
+# An ssh server for the e2e tests: web1, which the runner reaches, and app1, which only web1 reaches (jumps, and the
+# last server of the service tunnels, the only one that allows TCP forwarding: see start.sh). The
 # download here is openssh-server from Debian. The host keys of the package are removed: start.sh installs the ones of
 # the run.
 FROM node:24

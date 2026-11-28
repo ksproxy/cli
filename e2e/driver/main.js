@@ -29,28 +29,40 @@ import {
   LOG_FOLDER, SESSION_FOLDER, STATE, pidsOf, startPlain, startSession,
 } from './session.js';
 import { sshScenario } from './ssh.js';
+import {
+  ROUTE_VALUES, TUNNELLED_TARGETS, esTunnelScenario, installLimitedHosts, limitedKeysScenario, stillListening,
+  tunnelProjectScenario, tunnelScenario, tunnelSsh,
+} from './tunnels.js';
 
-// The groups: the kinds of the inventory, the scenarios, and the targets over https with the CA of the run, which fail
-// the check of doctor without it.
+// The groups: the kinds of the inventory, the scenarios, the targets over https with the CA of the run, which fail
+// the check of doctor without it, and the tunnelled targets (label and name), whose route is a secret of the run for
+// the leak check.
 const GROUPS = {
   a: {
     kinds: ['ssh', 'postgres', 'mysql', 'redis', 'mongodb', 'rabbitmq', 'http', 'mcp'],
     scenarios: [
       ['ssh', sshScenario], ['postgres', postgresScenario], ['mysql', mysqlScenario], ['redis', redisScenario],
       ['mongodb', mongodbScenario], ['rabbitmq', rabbitmqScenario], ['http', httpScenario], ['mcp', mcpScenario],
-      ['network access', listenScenario],
+      ['tunnels', tunnelScenario], ['keys limited', limitedKeysScenario], ['network access', listenScenario],
     ],
-    httpsTargets: ['everything-net', 'grafana'],
+    tunnels: true,
+    tunnelled: TUNNELLED_TARGETS,
+    httpsTargets: ['everything-net', 'grafana', 'gf-tunnel'],
   },
   b: {
     kinds: ['elasticsearch', 'kafka', 'command'],
-    scenarios: [['elasticsearch', elasticsearchScenario], ['kafka', kafkaScenario], ['command', commandScenario]],
-    httpsTargets: ['es-logs', 'search-rw'],
+    scenarios: [
+      ['elasticsearch', elasticsearchScenario], ['elasticsearch tunnel', esTunnelScenario], ['kafka', kafkaScenario],
+      ['command', commandScenario],
+    ],
+    tunnelled: [['es', 'es-tunnel']],
+    httpsTargets: ['es-logs', 'search-rw', 'es-tunnel'],
   },
   // The kubeconfig of each kubernetes target holds the CA of the cluster, so doctor needs no CA of the run.
   c: {
     kinds: ['kubernetes'],
     scenarios: [['kubernetes', kubernetesScenario]],
+    tunnelled: [],
     httpsTargets: [],
   },
 };
@@ -81,6 +93,10 @@ if (group.kinds.includes('kubernetes')) Object.assign(secrets, installKubeconfig
 // crm-db, goes where the examples name it.
 const sqlTls = group.kinds.includes('postgres');
 if (sqlTls) installCaFile();
+// The service tunnels (groups a and b): their route, the jump and its key path, must reach no answer or file either.
+if (group.tunnelled.length > 0) Object.assign(secrets, ROUTE_VALUES);
+// The Host names of the keys limited on web1 (group a only), in the runner's ssh configuration.
+if (group.tunnels) installLimitedHosts();
 const keep = (name, text) => fs.writeFileSync(path.join(OUT, name), text);
 
 fs.mkdirSync(OUT, { recursive: true });
@@ -97,12 +113,14 @@ const ownerEnv = {
   EVERYTHING_TOKEN: secretFile('mcp_token'),
   CRM_DB_PASSWORD: secretFile('crm_db_password'),
   CRM_DB_RW_PASSWORD: secretFile('crm_db_rw_password'),
+  CRM_DB_TUNNEL_PASSWORD: secretFile('crm_db_tunnel_password'),
   REDIS_USER: secretFile('redis_user'),
   REDIS_PASSWORD: secretFile('redis_password'),
   REDIS_OPS_USER: secretFile('redis_ops_user'),
   REDIS_OPS_PASSWORD: secretFile('redis_ops_password'),
   ORDERS_MONGO_URI: secretFile('orders_mongo_uri'),
   ORDERS_MONGO_RW_URI: secretFile('orders_mongo_rw_uri'),
+  ORDERS_MONGO_TUNNEL_URI: secretFile('orders_mongo_tunnel_uri'),
   MQ_USER: secretFile('mq_user'),
   MQ_PASSWORD: secretFile('mq_password'),
   MQ_OPS_USER: secretFile('mq_ops_user'),
@@ -179,12 +197,24 @@ const leftOver = (what) => waitFor(() => (ofStart().length === 0 ? [] : null), {
   .catch(() => ofStart());
 const left = await leftOver('the processes of start to end');
 checks.check('no ssh connection, MCP server, client program, kubectl proxy or start process is left', left.length === 0, left.join('\n'));
+// The loopback ports of the tunnels, which the tunnels scenario saw start listen on.
+if (group.tunnels) {
+  const ports = context.tunnelPorts ?? [];
+  const open = await stillListening(ports);
+  checks.check('no loopback port of the tunnels is left', ports.length > 0 && open.length === 0, `seen: ${ports.join(', ')}; still listening: ${open.join(', ')}`);
+}
+if (group.tunnelled.length > 0) {
+  const streams = await waitFor(() => (tunnelSsh().length === 0 ? [] : null), { ms: 10000, what: 'the ssh of the tunnels to end' }).catch(tunnelSsh);
+  checks.check('no shared connection or stream ssh of the tunnels is left', streams.length === 0, streams.join('\n'));
+}
 
 const doctorText = await checks.step('doctor: the scenario ran to its end', () => doctorScenario({
-  checks, env: ownerEnv, count: opened.length, httpsTargets: group.httpsTargets,
+  checks, env: ownerEnv, count: opened.length, httpsTargets: group.httpsTargets, tunnelled: group.tunnelled,
 }));
 // Targets without caFile, in a project of their own, through doctor and start; then the logs of the SQL servers.
 const tlsText = sqlTls ? await checks.step('sql tls: the scenario ran to its end', () => sqlTlsScenario({ checks, env: ownerEnv })) : [];
+// The routes of the tunnels that cannot work, in a project of their own, through start.
+const tunnelText = group.tunnels ? await checks.step('tunnels, project: the scenario ran to its end', () => tunnelProjectScenario({ checks, env: ownerEnv })) : '';
 const leftByDoctor = await leftOver('the processes of doctor to end');
 checks.check('doctor leaves no ssh connection, MCP server, client program or kubectl proxy', leftByDoctor.length === 0, leftByDoctor.join('\n'));
 
@@ -226,6 +256,7 @@ leakChecks(checks, {
   'the terminal output of start': session.output(),
   'the output of doctor': (doctorText ?? []).join('\n'),
   'the output of doctor and start for the targets without caFile': (tlsText ?? []).join('\n'),
+  ...(group.tunnels ? { 'the output of start for the project tunnels': tunnelText ?? '' } : {}),
   ...(group.kinds.includes('kubernetes') ? { 'the audit log of the API server': fs.readFileSync(KUBE_AUDIT_LOG, 'utf8') } : {}),
 }, secrets, session.token);
 
@@ -235,6 +266,7 @@ keep('audit.txt', auditText);
 keep('session-while-running.txt', sessionWhileRunning);
 keep('doctor.txt', (doctorText ?? []).join('\n'));
 keep('sql-tls.txt', (tlsText ?? []).join('\n'));
+if (group.tunnels) keep('tunnels-terminal.txt', tunnelText ?? '');
 keep('checks.json', `${JSON.stringify(checks.list, null, 2)}\n`);
 
 const seconds = ((Date.now() - began) / 1000).toFixed(1);

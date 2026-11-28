@@ -124,7 +124,8 @@ const SOCKET_LIMIT = 100;
 // OpenSSH binds a master socket at its control path plus a dot and 16 random characters, then renames it to the
 // control path: those 17 bytes must fit as well, so an ssh master socket is at most 83 bytes.
 const SSH_TEMPORARY_BYTES = 17;
-const SSH_MASTERS = ['ssh', 'tun'];
+// ssh: an ssh target, tun: the tunnel of a kubernetes target, tnl: a shared connection of the service tunnels.
+const SSH_MASTERS = ['ssh', 'tun', 'tnl'];
 
 export function socketPath(kind, name, env = process.env) {
   const p = path.join(socketDir(env), `${kind}-${name}`);

@@ -213,6 +213,23 @@ Any HTTP API. `ksproxy start` holds the credential and sends each request. A rul
 - **Refused:** `ksproxy check http grafana-notes DELETE /api/annotations/17`: no rule allows `DELETE`.
 - **Safety:** `+body` allows any JSON body, because a rule cannot see what the body says. Give the token only the right to write annotations.
 
+**Behind a server:** the read-only target of this kind, for a Grafana that only `bastion1` can reach.
+
+```json
+{
+  "name": "grafana-via",
+  "baseUrl": "https://grafana.internal.example.com",
+  "auth": { "bearerEnv": "GRAFANA_TOKEN" },
+  "tunnel": {
+    "host": "bastion1"
+  },
+  "description": "dashboards through bastion1, read only",
+  "allow": ["GET /api/search", "GET /api/dashboards/uid/*"]
+}
+```
+
+No loopback port is opened for `http`: each request goes through the ssh stream. The certificate of an `https` URL is still checked against `grafana.internal.example.com`, and a plain `http` URL is allowed but gets a warning. See [TUNNELS.md](TUNNELS.md).
+
 ## command
 
 One program that you name, such as the command-line client of a service. The agent gives the words after the program, and the rules say which words may follow it. The token reaches the program only through `env`.
@@ -312,6 +329,26 @@ The REST API of Elasticsearch. Rules work as for `http`. Bulk writes, deletes by
 - **Refused:** `ksproxy check es search-rw POST /products/_delete_by_query +body`: `_delete_by_query` is never allowed.
 - **Safety:** a rule cannot see what the update body changes. A body key that runs a script is always refused, but give the user write rights on `products` only.
 
+**Behind a server:** the read-only target of this kind, for a cluster that only `bastion1` can reach.
+
+```json
+{
+  "name": "es-via",
+  "url": "https://es.internal.example.com:9200",
+  "apiKeyEnv": "ES_LOGS_API_KEY",
+  "tunnel": {
+    "host": "bastion1"
+  },
+  "description": "logs through bastion1, read only",
+  "allow": [
+    "GET /_cluster/health",
+    "POST /*/_search +body"
+  ]
+}
+```
+
+No loopback port is opened for `elasticsearch`. The certificate is still checked against `es.internal.example.com`. See [TUNNELS.md](TUNNELS.md).
+
 ## rabbitmq
 
 The management HTTP API of RabbitMQ. It cannot publish or take messages, and it cannot purge a queue. The default virtual host `/` is written `%2F` in a path.
@@ -356,6 +393,27 @@ The management HTTP API of RabbitMQ. It cannot publish or take messages, and it 
 - **Allowed:** `ksproxy check mq mq-ops PUT /api/queues/%2F/orders-retry +body`
 - **Refused:** `ksproxy check mq mq-ops POST /api/exchanges/%2F/orders/publish +body`: publishing a message is never allowed.
 - **Safety:** a rule cannot see the body, such as the settings of the new queue. Give the user permissions that cover only these names.
+
+**Behind a server:** the read-only target of this kind, for a broker that only `bastion1` can reach, through one jump.
+
+```json
+{
+  "name": "mq-via",
+  "url": "https://mq.internal.example.com:15671",
+  "userEnv": "MQ_USER",
+  "passwordEnv": "MQ_PASSWORD",
+  "tunnel": {
+    "host": "bastion1",
+    "jumps": [
+      "ssh -i .ssh/app_key opsuser@192.0.2.10"
+    ]
+  },
+  "description": "management API through bastion1 and one jump, read only",
+  "allow": ["GET /api/overview", "GET /api/nodes"]
+}
+```
+
+No loopback port is opened for `rabbitmq`. With `jumps`, each call makes a full ssh login on every hop. See [TUNNELS.md](TUNNELS.md).
 
 ## redis
 
@@ -408,9 +466,30 @@ ksproxy speaks the Redis protocol itself. A command is plain words, so a value w
 - **Refused:** `ksproxy check redis cache-ops FLUSHDB`: never allowed on a redis target.
 - **Safety:** give the Redis user an ACL limited to these commands and these keys (plus `PING` for `ksproxy doctor`), so that the server enforces the same limits.
 
+**Behind a server:** the read-only target of this kind, for a cache that only `bastion1` can reach.
+
+```json
+{
+  "name": "cache-via",
+  "host": "10.0.0.5",
+  "port": 6379,
+  "passwordEnv": "REDIS_PASSWORD",
+  "tunnel": {
+    "host": "bastion1"
+  },
+  "description": "cache through bastion1, read only",
+  "allow": [
+    "GET *",
+    "TTL *"
+  ]
+}
+```
+
+No loopback port is opened for `redis`: the connection goes through the ssh stream. With `"tls": true` the certificate is still checked against `10.0.0.5`. See [TUNNELS.md](TUNNELS.md).
+
 ## postgres
 
-One SQL statement per call, run with `psql`. In a rule, `*` is one value (a number or a quoted string, never a name), and `\*` is the SQL star, written `\\*` in the file. The connection uses TLS and checks the server's certificate, unless the host is this machine; `caFile` names the CA that signed it (see "TLS" under postgres in [SERVICES.md](SERVICES.md#postgres)).
+One SQL statement per call, run with `psql`. In a rule, `*` is one value (a number or a quoted string, never a name), and `\*` is the SQL star, written `\\*` in the file. Left out, `tls` is `prefer` (TLS when the server offers it, no check of the certificate), and it is `verify` when the entry names a `caFile`, as in these examples: the connection uses TLS and checks the server's certificate against that CA. Write `"tls": "verify"` to check against the CAs of this system (see "TLS" under postgres in [SERVICES.md](SERVICES.md#postgres)).
 
 **Read-only:** read orders.
 
@@ -460,6 +539,29 @@ One SQL statement per call, run with `psql`. In a rule, `*` is one value (a numb
 - **Allowed:** `ksproxy check pg shop-db-rw "update orders set status = 'shipped' where id = 42"`
 - **Refused:** `ksproxy check pg shop-db-rw "update orders set status = 'shipped'"`: without `where id = ...` no rule matches, so a change of every row is refused.
 - **Safety:** `"readOnly": false` turns off the read-only transaction for every statement of this target. Give `agent_rw` only `SELECT` on `orders` and `UPDATE` of its `status` column.
+
+**Behind a server:** the read-only target of this kind, for a database that only `bastion1` can reach.
+
+```json
+{
+  "name": "shop-db-via",
+  "host": "10.0.0.5",
+  "database": "shop",
+  "user": "agent_ro",
+  "passwordEnv": "SHOP_DB_PASSWORD",
+  "tls": "verify",
+  "caFile": "~/certs/db-ca.pem",
+  "tunnel": {
+    "host": "bastion1"
+  },
+  "description": "shop database through bastion1, read only",
+  "allow": [
+    "select \\* from orders where id = *"
+  ]
+}
+```
+
+`psql` connects to a loopback port of `start`, and the certificate is still checked against `10.0.0.5`, the name the target writes. See [TUNNELS.md](TUNNELS.md).
 
 ## mysql
 
@@ -511,6 +613,30 @@ MySQL and MariaDB, through the `mysql` or `mariadb` client. Rules, TLS and `caFi
 - **Refused:** `ksproxy check mysql crm-db-rw "delete from tickets where id = 7"`: no rule allows `delete`.
 - **Safety:** give `agent_rw` only `SELECT` and `UPDATE` of the `assignee` and `status` columns of `tickets`. `"client": "mariadb"` runs the `mariadb` program instead of `mysql`.
 
+**Behind a server:** the read-only target of this kind, for a server that only `bastion1` can reach.
+
+```json
+{
+  "name": "crm-db-via",
+  "host": "10.0.0.5",
+  "database": "crm",
+  "user": "agent_ro",
+  "passwordEnv": "CRM_DB_PASSWORD",
+  "tls": "prefer",
+  "tunnel": {
+    "host": "bastion1"
+  },
+  "description": "crm database through bastion1, read only",
+  "allow": [
+    "show tables",
+    "describe customers",
+    "select \\* from customers where id = *"
+  ]
+}
+```
+
+The client connects to a loopback port of `start`. `"tls": "verify"`, and a `caFile`, are refused with a tunnel, because the client checks the certificate against `127.0.0.1`. See [TUNNELS.md](TUNNELS.md).
+
 ## mongodb
 
 One command document per call, run by `mongosh` with a fixed script. A rule sees only the command name and the collection, such as `find orders`, never the filter.
@@ -549,6 +675,29 @@ One command document per call, run by `mongosh` with a fixed script. A rule sees
 - **Allowed:** `ksproxy check mongo orders-rw '{"insert": "order_notes", "documents": [{"order": 42, "note": "refund sent"}]}'`
 - **Refused:** `ksproxy check mongo orders-rw '{"delete": "orders", "deletes": [{"q": {"status": "test"}, "limit": 0}]}'`: no rule allows `delete`.
 - **Safety:** a rule does not see the filter or the change, so `update orders` also allows an update of every document of `orders`. Give the user write rights on these two collections only.
+
+**Behind a server:** the read-only target of this kind, through `bastion1` and one jump.
+
+```json
+{
+  "name": "orders-db-via",
+  "uriEnv": "ORDERS_MONGO_URI",
+  "database": "shop",
+  "tunnel": {
+    "host": "bastion1",
+    "jumps": [
+      "ssh -i .ssh/app_key opsuser@192.0.2.10"
+    ]
+  },
+  "description": "orders through bastion1 and one jump, read only",
+  "allow": [
+    "find orders",
+    "count orders"
+  ]
+}
+```
+
+The connection string in `ORDERS_MONGO_URI` is written as if this machine could reach the server, for example with the host `10.0.0.5`. It must name one host and no TLS option. See [TUNNELS.md](TUNNELS.md).
 
 ## kafka
 

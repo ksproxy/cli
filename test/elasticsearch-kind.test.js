@@ -23,6 +23,9 @@ const SECRETS = [USER, PASSWORD, KEY, b64(USER), b64(PASSWORD), b64(KEY), b64(`$
 const EXAMPLE = ['GET /_cluster/health', 'GET /_cat/...', 'GET /logs-*/_search', 'POST /*/_search +body', 'GET /*/_mapping'];
 const WIDE = ['* /...', '* /... +body', 'regex(.*)'];
 const TOOL = 'elasticsearch_request';
+const SLOW = 'this pattern can be very slow on some inputs';
+const PLAIN = (host) => `url: plain http: any credential, every request and every answer travel without TLS, and anyone on the way to ${host} can read them; use https when the server has it`;
+const escaped = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 let service;
 let provider;
@@ -152,7 +155,10 @@ test('an elasticsearch entry is validated into a target, and every mistake is an
   fails({ baseUrl: 'https://x.example.com' }, 'elasticsearch "e": unknown key "baseUrl"');
   fails({ auth: {} }, 'elasticsearch "e": unknown key "auth"');
   fails({ url: undefined }, 'elasticsearch "e": url: must be a URL');
-  fails({ url: 'http://es.example.com:9200' }, 'elasticsearch "e": url: must use https (http is accepted for localhost only)');
+  // TLS is the owner's choice: plain http to another host is accepted (start and check warn of it).
+  assert.equal(one({ url: 'http://es.example.com:9200' }).baseUrl, 'http://es.example.com:9200/');
+  assert.equal(one({ url: 'http://192.0.2.10:9200/logs' }).baseUrl, 'http://192.0.2.10:9200/logs/');
+  fails({ url: 'ftp://es.example.com' }, 'elasticsearch "e": url: must use http or https');
   fails({ url: 'https://u:p@es.example.com' }, 'elasticsearch "e": url: must not contain a user name, a password, a query or a fragment');
   fails({ userEnv: 'U' }, 'elasticsearch "e": userEnv and passwordEnv must be given together');
   fails({ passwordEnv: 'P' }, 'elasticsearch "e": userEnv and passwordEnv must be given together');
@@ -306,6 +312,15 @@ test('the session pieces: hint, opening line, secrets, open, record, messages an
   assert.equal(elasticsearch.downMessage(), 'the call service is not answering');
   assert.equal(elasticsearch.backMessage, 'the call service is back');
   assert.deepEqual(elasticsearch.checkInput(['GET', '/x']), { method: 'GET', path: '/x' });
+  // The warnings of start and check: those of the rules, then plain http to a host that is not this machine.
+  const slow = ['GET /_cat/...', 'regex(GET /(a+)+)'];
+  assert.deepEqual(elasticsearch.ruleWarnings(make(null, { baseUrl: 'http://es.example.com:9200/', allow: slow })), [`allow[1]: ${SLOW}`, PLAIN('es.example.com')]);
+  assert.deepEqual(elasticsearch.ruleWarnings(make(null, { baseUrl: 'http://192.0.2.10:9200/' })), [PLAIN('192.0.2.10')]);
+  assert.deepEqual(elasticsearch.ruleWarnings(make(null, { allow: slow })), [`allow[1]: ${SLOW}`]);
+  for (const baseUrl of ['https://es.example.com:9200/', 'http://localhost:9200/', 'http://127.0.0.1:9200/', 'http://[::1]:9200/']) {
+    assert.deepEqual(elasticsearch.ruleWarnings(make(null, { baseUrl })), [], baseUrl);
+  }
+  assert.deepEqual(elasticsearch.ruleWarnings(make(null, { allow: 'any' })), []);
 });
 
 test('the agent notes say how a rule is written, that the query is not matched and what is refused', () => {
@@ -357,9 +372,15 @@ test('tools/list names the tool only when the inventory holds an elasticsearch t
 
 test('ksproxy check elasticsearch runs the fixed refusals before the rules', async () => {
   const world = await serviceWorld('elasticsearch', {
-    targets: [{ name: 'es1', url: service.url, allow: ['* /...', 'GET /_cat/...'] }],
+    targets: [
+      { name: 'es1', url: service.url, allow: ['* /...', 'GET /_cat/...'] },
+      { name: 'far', url: 'http://es.example.com:9200', allow: ['GET /_cat/...', 'regex(GET /(a+)+)'] },
+    ],
   });
   const check = (...words) => cli(['check', 'es', 'es1', ...words], world.env);
+  assert.deepEqual(await cli(['check', 'es', 'far', 'GET', '/_cat/indices'], world.env), {
+    code: 0, stdout: 'ALLOWED by rule: GET /_cat/...\n', stderr: `WARNING: elasticsearch "far": allow[1]: ${SLOW}\nWARNING: elasticsearch "far": ${PLAIN('es.example.com')}\n`,
+  });
   assert.deepEqual(await check('GET', '/_cat/indices'), { code: 0, stdout: 'ALLOWED by rule: * /...\n', stderr: '' });
   const bulk = await check('POST', '/_bulk');
   assert.equal(bulk.code, 1);
@@ -475,10 +496,18 @@ test('a session: every fixed refusal stays away from the service, every audit on
 test('a key that could split a header skips the target at open', async () => {
   const world = await serviceWorld('elasticsearch', {
     extraEnv: { ES_TEST_BAD: 'line one\r\nX-Injected: 1' },
-    targets: [{ name: 'bad', url: service.url, apiKeyEnv: 'ES_TEST_BAD', allow: ['GET /_cat/...'] }],
+    targets: [
+      { name: 'bad', url: service.url, apiKeyEnv: 'ES_TEST_BAD', allow: ['GET /_cat/...'] },
+      { name: 'far', url: 'http://es.example.com:9200', allow: ['GET /_cat/...'] },
+    ],
   });
-  const run = launch(world, { ssh: ['web1'], es: ['bad'] });
+  const run = launch(world, { ssh: ['web1'], es: ['bad', 'far'] });
   await ready(run);
   assert.match(run.proc.stderr.text, /es +bad +SKIPPED +ES_TEST_BAD holds a character that is not allowed\n/);
+  // Plain http to another host opens, after a WARN line; plain http to this machine has no warning. Nothing is sent
+  // to es.example.com: open does not call the service.
+  assert.match(run.proc.stderr.text, new RegExp(`es +far +WARN +${escaped(PLAIN('es.example.com'))}\n[^\n]*es +far +OPENING +http://es\\.example\\.com:9200/, no auth\n`));
+  assert.match(run.proc.stderr.text, /es +far +UP\n/);
+  assert.equal(run.proc.stderr.text.match(/plain http/g).length, 1, 'only far has the warning');
   assert.equal(await stopWith(run), 0);
 });

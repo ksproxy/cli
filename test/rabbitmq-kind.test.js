@@ -22,6 +22,9 @@ const SECRETS = [USER, PASSWORD, b64(USER), b64(PASSWORD), b64(`${USER}:${PASSWO
 const EXAMPLE = ['GET /api/overview', 'GET /api/queues/...', 'GET /api/exchanges/...', 'GET /api/nodes'];
 const WIDE = ['* /...', '* /... +body', 'regex(.*)'];
 const TOOL = 'rabbitmq_request';
+const SLOW = 'this pattern can be very slow on some inputs';
+const PLAIN = (host) => `url: plain http: any credential, every request and every answer travel without TLS, and anyone on the way to ${host} can read them; use https when the server has it`;
+const escaped = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 let service;
 let provider;
@@ -93,7 +96,10 @@ test('a rabbitmq entry is validated into a target, and every mistake is an inven
   fails({ apiKeyEnv: 'K' }, 'rabbitmq "m": unknown key "apiKeyEnv"');
   fails({ baseUrl: 'https://x.example.com' }, 'rabbitmq "m": unknown key "baseUrl"');
   fails({ url: undefined }, 'rabbitmq "m": url: must be a URL');
-  fails({ url: 'http://mq.example.com:15672' }, 'rabbitmq "m": url: must use https (http is accepted for localhost only)');
+  // TLS is the owner's choice: plain http to another host is accepted (start and check warn of it).
+  assert.equal(one({ url: 'http://mq.example.com:15672' }).baseUrl, 'http://mq.example.com:15672/');
+  assert.equal(one({ url: 'http://192.0.2.10:15672/mq' }).baseUrl, 'http://192.0.2.10:15672/mq/');
+  fails({ url: 'ftp://mq.example.com' }, 'rabbitmq "m": url: must use http or https');
   fails({ url: 'https://mq.example.com/#x' }, 'rabbitmq "m": url: must not contain a user name, a password, a query or a fragment');
   fails({ userEnv: 'U' }, 'rabbitmq "m": userEnv and passwordEnv must be given together');
   fails({ passwordEnv: 'P' }, 'rabbitmq "m": userEnv and passwordEnv must be given together');
@@ -202,13 +208,28 @@ test('the session pieces and the agent notes', () => {
   const names = (tools) => tools.map((t) => t.name);
   assert.ok(!names(toolDefinitions({ rabbitmq: [] })).includes(TOOL));
   assert.ok(names(toolDefinitions({ rabbitmq: [{}] })).includes(TOOL));
+  // The warnings of start and check: those of the rules, then plain http to a host that is not this machine.
+  const slow = ['GET /api/overview', 'regex(GET /api /(a+)+)'];
+  assert.deepEqual(rabbitmq.ruleWarnings(make({ baseUrl: 'http://mq.example.com:15672/', allow: slow })), [`allow[1]: ${SLOW}`, PLAIN('mq.example.com')]);
+  assert.deepEqual(rabbitmq.ruleWarnings(make({ baseUrl: 'http://192.0.2.10:15672/' })), [PLAIN('192.0.2.10')]);
+  assert.deepEqual(rabbitmq.ruleWarnings(make({ allow: slow })), [`allow[1]: ${SLOW}`]);
+  for (const baseUrl of ['https://mq.example.com:15671/', 'http://localhost:15672/', 'http://127.0.0.1:15672/', 'http://[::1]:15672/']) {
+    assert.deepEqual(rabbitmq.ruleWarnings(make({ baseUrl })), [], baseUrl);
+  }
+  assert.deepEqual(rabbitmq.ruleWarnings(make({ allow: 'any' })), []);
 });
 
 test('ksproxy check rabbitmq runs the fixed refusals before the rules', async () => {
   const world = await serviceWorld('rabbitmq', {
-    targets: [{ name: 'mq1', url: service.url, allow: ['* /...', 'GET /api/nodes'] }],
+    targets: [
+      { name: 'mq1', url: service.url, allow: ['* /...', 'GET /api/nodes'] },
+      { name: 'far', url: 'http://mq.example.com:15672', allow: ['GET /api/nodes', 'regex(GET /api /(a+)+)'] },
+    ],
   });
   const check = (...words) => cli(['check', 'mq', 'mq1', ...words], world.env);
+  assert.deepEqual(await cli(['check', 'mq', 'far', 'GET', '/api/nodes'], world.env), {
+    code: 0, stdout: 'ALLOWED by rule: GET /api/nodes\n', stderr: `WARNING: rabbitmq "far": allow[1]: ${SLOW}\nWARNING: rabbitmq "far": ${PLAIN('mq.example.com')}\n`,
+  });
   assert.deepEqual(await check('GET', '/api/nodes'), { code: 0, stdout: 'ALLOWED by rule: * /...\n', stderr: '' });
   const publish = await check('POST', '/api/exchanges/v/e/publish', '+body');
   assert.equal(publish.code, 1);
@@ -312,10 +333,18 @@ test('a session: every fixed refusal stays away from the service, basic auth and
 test('a user name with a colon skips the target at open', async () => {
   const world = await serviceWorld('rabbitmq', {
     extraEnv: { MQ_TEST_USER: 'a:b', MQ_TEST_PASSWORD: 'x' },
-    targets: [{ name: 'bad', url: service.url, userEnv: 'MQ_TEST_USER', passwordEnv: 'MQ_TEST_PASSWORD', allow: ['GET /api/nodes'] }],
+    targets: [
+      { name: 'bad', url: service.url, userEnv: 'MQ_TEST_USER', passwordEnv: 'MQ_TEST_PASSWORD', allow: ['GET /api/nodes'] },
+      { name: 'far', url: 'http://mq.example.com:15672', allow: ['GET /api/nodes'] },
+    ],
   });
-  const run = launch(world, { ssh: ['web1'], mq: ['bad'] });
+  const run = launch(world, { ssh: ['web1'], mq: ['bad', 'far'] });
   await ready(run);
   assert.match(run.proc.stderr.text, /mq +bad +SKIPPED +MQ_TEST_USER holds a character that is not allowed\n/);
+  // Plain http to another host opens, after a WARN line; plain http to this machine has no warning. Nothing is sent
+  // to mq.example.com: open does not call the service.
+  assert.match(run.proc.stderr.text, new RegExp(`mq +far +WARN +${escaped(PLAIN('mq.example.com'))}\n[^\n]*mq +far +OPENING +http://mq\\.example\\.com:15672/, no auth\n`));
+  assert.match(run.proc.stderr.text, /mq +far +UP\n/);
+  assert.equal(run.proc.stderr.text.match(/plain http/g).length, 1, 'only far has the warning');
   assert.equal(await stopWith(run), 0);
 });

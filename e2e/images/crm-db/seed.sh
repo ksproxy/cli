@@ -1,14 +1,17 @@
 # The seed of the crm database, which the mariadb image sources once, as the user mysql, when the data folder is new
 # (docker_process_sql runs the client as root on the server of the setup). The passwords of the two logins are made
-# per run by the service make-secrets. Customers 1 to 20: customer N is "Customer N" in the city N mod 4 of the list.
-# Tickets 1 to 30: ticket N belongs to customer (N - 1) mod 20 + 1; it is closed and assigned to support when N is a
-# multiple of 3, else open and not assigned. The driver computes the same values.
+# per run by the service make-secrets, and so is the one of tunnel_ro, the login of the tunnelled target my-tunnel
+# only (e2e/driver/tunnels.js), so that the general log tells its connections apart. Customers 1 to 20: customer N
+# is "Customer N" in the city N mod 4 of the list. Tickets 1 to 30: ticket N belongs to customer (N - 1) mod 20 + 1;
+# it is closed and assigned to support when N is a multiple of 3, else open and not assigned. The driver computes the
+# same values.
 #
 # The general log is switched on here, in a setting file, so that only the server of the run writes it: the server
 # of this setup runs statements that hold the passwords of root and of the health check, and the log would keep them.
 
 ro=$(cat /secrets/agent_ro_password)
 rw=$(cat /secrets/agent_rw_password)
+tn=$(cat /secrets/tunnel_ro_password)
 
 docker_process_sql --database=crm <<SQL
 create table customers (
@@ -47,7 +50,9 @@ delimiter ;
 
 create user agent_ro@'%' identified by '$ro';
 create user agent_rw@'%' identified by '$rw';
+create user tunnel_ro@'%' identified by '$tn';
 grant select on crm.* to agent_ro@'%';
+grant select on crm.* to tunnel_ro@'%';
 grant select, update (assignee, status) on crm.tickets to agent_rw@'%';
 grant execute on function crm.close_ticket to agent_rw@'%';
 SQL

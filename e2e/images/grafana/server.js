@@ -1,14 +1,18 @@
 // A stand-in for the HTTP API of Grafana, for the http examples of docs/EXAMPLES.md: the paths they name, over https
 // on port 443 with the certificate of the run. A request needs one of the two bearer tokens of the run: viewer may
 // read, editor may also add and delete annotations and delete dashboards. Every request is written to
-// /httplog/requests.log as one JSON line (method, path, query, which token, status, body), never with the token, so
-// that the driver can show which calls reached the API. Files in /secrets: server.crt, server.key, viewer_token,
-// editor_token. Plain Node, no dependency.
+// /httplog/requests.log as one JSON line (method, path, query, which token, status, body, then the request target as
+// sent, the Host header, the client's address and the port it came in on), never with the token, so that the driver
+// can show which calls reached the API, from where, and for which host. The same API also listens in plain http on
+// port 80, for the tunnelled plain-http target of the service tunnels (e2e/driver/tunnels.js). Files in /secrets:
+// server.crt, server.key, viewer_token, editor_token. Plain Node, no dependency.
 import { timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
+import http from 'node:http';
 import https from 'node:https';
 
 const PORT = 443;
+const PLAIN_PORT = 80;
 const LOG = '/httplog/requests.log';
 const MAX_BODY = 64 * 1024;
 const read = (name) => fs.readFileSync(`/secrets/${name}`, 'utf8').trim();
@@ -95,7 +99,7 @@ function answer(method, segments, query, role, body) {
   return { status: 404, body: { message: 'Not found' } };
 }
 
-const server = https.createServer({ cert: read('server.crt'), key: read('server.key') }, (req, res) => {
+function handle(req, res) {
   const chunks = [];
   let size = 0;
   req.on('data', (chunk) => {
@@ -119,12 +123,25 @@ const server = https.createServer({ cert: read('server.crt'), key: read('server.
       result = answer(req.method, url.pathname.split('/').filter(Boolean), url.searchParams, role, body);
     }
     fs.appendFileSync(LOG, `${JSON.stringify({
-      method: req.method, path: url.pathname, query: Object.fromEntries(url.searchParams), auth: role, status: result.status, body,
+      method: req.method,
+      path: url.pathname,
+      query: Object.fromEntries(url.searchParams),
+      auth: role,
+      status: result.status,
+      body,
+      target: req.url,
+      host: req.headers.host ?? null,
+      from: req.socket.remoteAddress?.replace(/^::ffff:/, '') ?? null,
+      port: req.socket.localPort,
     })}\n`);
     res.writeHead(result.status, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result.body));
   });
-});
+}
+
+const server = https.createServer({ cert: read('server.crt'), key: read('server.key') }, handle);
+const plain = http.createServer(handle);
 
 for (const name of ['SIGTERM', 'SIGINT']) process.on(name, () => process.exit(0));
 server.listen(PORT, '0.0.0.0', () => console.log(`grafana stand-in on port ${PORT}`));
+plain.listen(PLAIN_PORT, '0.0.0.0', () => console.log(`grafana stand-in in plain http on port ${PLAIN_PORT}`));

@@ -1,15 +1,15 @@
 import {
-  decide, describeAllow, isRegexRule,
+  allowWarnings, decide, describeAllow, isRegexRule,
 } from '../../allowlist.js';
 import {
-  InventoryError, checkAllow, checkKeys, checkReview, checkSecretVariable, isObject,
+  InventoryError, checkAllow, checkKeys, checkReview, checkSecretVariable, isObject, plainHttpWarnings,
 } from '../../checks.js';
 import { hostAnswers } from './reach.js';
 import { clip } from '../../text.js';
 import { REVIEWED } from '../shared.js';
 import {
-  BODY_WORD, METHODS, PAGING_HINT, authHeader, authProblem, authSecrets, encodedForms, headerNameProblem,
-  matchRequestRule, readRequest, requestWords, reviewWords, send, splitRule, validateBaseUrl,
+  BODY_WORD, METHODS, PAGING_HINT, authHeader, authProblem, authSecrets, connectOf, encodedForms, headerNameProblem,
+  matchRequestRule, readRequest, requestWords, reviewWords, send, splitRule, urlAddress, validateBaseUrl,
 } from '../engines/http.js';
 
 const HTTP_KEYS = ['name', 'baseUrl', 'auth', 'description', 'allow', 'review'];
@@ -105,16 +105,29 @@ export default {
   secrets(target) {
     return authSecrets(target.auth);
   },
+  // The warnings of start and check: those of the rules, and one for plain http to a host that is not this machine.
+  ruleWarnings(target) {
+    return [...allowWarnings(target.allow), ...plainHttpWarnings(target.baseUrl, 'baseUrl')];
+  },
   openingMessage(target) {
     return `${target.baseUrl}, ${authText(target.auth)}`;
+  },
+  // The service address for a tunnel: the host and port of baseUrl, which holds no secret.
+  tunnelTo(target) {
+    return urlAddress(target.baseUrl);
+  },
+  // An https target always checks the certificate, against the real host, as without a tunnel.
+  tunnelChecksCertificate(target) {
+    return new URL(target.baseUrl).protocol === 'https:';
   },
   open(target, { secrets }) {
     const problem = authProblem(target.auth, secrets);
     return problem === null ? { ok: true, extras: {} } : { ok: false, error: problem };
   },
-  // The check of ksproxy doctor: the host answers on its port. No HTTP request is sent.
+  // The check of ksproxy doctor: the host answers on its port, through the tunnel when the target has one. No request
+  // of the service and no credential is sent.
   doctor(opened, { timeoutMs, signal }) {
-    return hostAnswers(new URL(opened.target.baseUrl), { timeoutMs, signal });
+    return hostAnswers(new URL(opened.target.baseUrl), { timeoutMs, signal, tunnel: opened.tunnel });
   },
   record(opened, { reviewed }) {
     const { target } = opened;
@@ -146,11 +159,11 @@ export default {
     return { ...decision, argv, notReviewed: NOT_FOR_REVIEW };
   },
   async perform(target, decision, {
-    secrets, timeoutMs, maxBytes, signal, input,
+    secrets, timeoutMs, maxBytes, signal, input, opened,
   }) {
     const request = readRequest(input);
     return send({
-      baseUrl: target.baseUrl, headers: authHeader(target.auth, secrets), ...request, timeoutMs, maxBytes, signal,
+      baseUrl: target.baseUrl, headers: authHeader(target.auth, secrets), ...request, timeoutMs, maxBytes, signal, ...connectOf(opened),
     });
   },
   // The base64 credential of basic auth and the secrets as a JSON body shows them, which the core hides with the values.

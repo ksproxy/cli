@@ -1,7 +1,13 @@
+import http from 'node:http';
+import https from 'node:https';
+import net from 'node:net';
+import { Transform, pipeline } from 'node:stream';
+import zlib from 'node:zlib';
 import { AllowError, isRegexRule, matchRule } from '../../allowlist.js';
 import { checkServiceUrl } from '../../checks.js';
 import { clip } from '../../text.js';
 import { jsonBodyForms } from '../shared.js';
+import { streamConnector } from './resp.js';
 
 // The http engine: the strict reader of a request, its words for the rules, and the one request it sends.
 // Host, port and scheme come from the target's baseUrl only; the agent gives a method, a path, a query and a body.
@@ -39,6 +45,27 @@ const REACH_FAILED = 'the service could not be reached\n';
 const CUT_OFF = 'the reply was cut off\n';
 const REDIRECT = 'the service answered with a redirect, which is not followed\n';
 const HIDDEN = '[hidden]';
+const TIMED_OUT = {
+  exitCode: null, stdout: '', stderr: '', timedOut: true,
+};
+// What the request carried when it was sent with fetch, kept so that a server sees the same request: the headers fetch
+// added, the encodings it asked for (brotli only over https), the ports it refused, at most 5 content encodings, and
+// the statuses whose reply has no body (a 101 is refused before).
+const FETCH_HEADERS = [['accept-language', '*'], ['sec-fetch-mode', 'cors'], ['user-agent', 'node']];
+const ACCEPT_ENCODING = { 'http:': 'gzip, deflate', 'https:': 'br, gzip, deflate' };
+const BAD_PORTS = new Set([
+  1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77, 79, 87, 95, 101, 102, 103, 104, 109, 110, 111,
+  113, 115, 117, 119, 123, 135, 137, 139, 143, 161, 179, 389, 427, 465, 512, 513, 514, 515, 526, 530, 531, 532, 540, 548,
+  554, 556, 563, 587, 601, 636, 989, 990, 993, 995, 1719, 1720, 1723, 2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566,
+  6665, 6666, 6667, 6668, 6669, 6679, 6697, 10080,
+].map(String));
+const MAX_CODINGS = 5;
+const NO_BODY = [204, 205, 304];
+const BODY_METHODS = ['POST', 'PUT', 'PATCH'];
+const EDGE_SPACE = /^[\t\n\r ]+|[\t\n\r ]+$/g;
+const ZLIB_SYNC = { flush: zlib.constants.Z_SYNC_FLUSH, finishFlush: zlib.constants.Z_SYNC_FLUSH };
+const BROTLI_SYNC = { flush: zlib.constants.BROTLI_OPERATION_FLUSH, finishFlush: zlib.constants.BROTLI_OPERATION_FLUSH };
+const ZSTD_SYNC = { flush: zlib.constants.ZSTD_e_continue, finishFlush: zlib.constants.ZSTD_e_end };
 
 const refuse = (reason, short) => {
   throw new AllowError(reason, short);
@@ -268,11 +295,24 @@ export function authHeader(auth, secrets) {
   return { [auth.headerName.toLowerCase()]: secrets[auth.headerEnv] };
 }
 
-// The forms of the secrets that are not a secret value as it is: the base64 credential that basic auth sends, and each
-// value and that credential as a JSON body shows it (jsonBodyForms). The core hides them with the values.
+// A header value as it goes on the wire: without the spaces, tabs and line ends at its ends, as fetch sent it.
+// requestHeaders sends every value this way, and encodedForms hides a secret in this form.
+const sentValue = (value) => value.replace(EDGE_SPACE, '');
+
+// The forms of the secrets that are not a secret value as it is: the base64 credential that basic auth sends with the
+// user name and the password each without the spaces at its ends (a server that decodes the header and trims them
+// shows them so), or the bearer token or header value as it is sent, and each value and that form as a JSON body shows
+// it (jsonBodyForms). A form without the spaces at the ends (sentValue) counts where it differs from the value and is
+// not empty. The core hides them with the values. A space at the start of a token stays inside its header, so the form
+// without it is a piece of what is sent: hiding it hides that.
 export function encodedForms(auth, secrets) {
-  const basic = auth === null || auth.basicUserEnv === undefined ? [] : [authHeader(auth, secrets).authorization.slice('Basic '.length)];
-  return [...basic, ...jsonBodyForms([...Object.values(secrets), ...basic])];
+  const trimmed = (value) => [sentValue(value)].filter((form) => form !== '' && form !== value);
+  let own = [];
+  if (auth !== null && auth.basicUserEnv !== undefined) {
+    own = [authHeader(auth, secrets).authorization.slice('Basic '.length),
+      ...trimmed(secrets[auth.basicUserEnv]), ...trimmed(secrets[auth.basicPasswordEnv])];
+  } else if (auth !== null) own = trimmed(secrets[authVariables(auth)[0]]);
+  return [...own, ...jsonBodyForms([...Object.values(secrets), ...own])];
 }
 
 // The URL to fetch: the origin and path of the base, then the segments, then the query. The result must keep the
@@ -287,11 +327,161 @@ export function buildUrl(baseUrl, segments, query) {
   return url.href;
 }
 
+// Every value of one reply header, in any letter case, joined by ", " as fetch joined them, or null when there is none.
+function headerOf(response, name) {
+  const values = [];
+  for (let i = 0; i < response.rawHeaders.length; i += 2) {
+    if (response.rawHeaders[i].toLowerCase() === name) values.push(response.rawHeaders[i + 1]);
+  }
+  return values.length === 0 ? null : values.join(', ');
+}
+
 // The content type as the server sent it, without control characters. It is not shortened: the core hides the secrets
 // after this, and a clip before that would show the start of one that a server put in the header.
 function contentTypeOf(response) {
-  const type = response.headers.get('content-type');
+  const type = headerOf(response, 'content-type');
   return type === null ? '(none)' : type.replace(CONTROLS, '');
+}
+
+// The deflate decoder of fetch: a zlib stream when its first byte says so, else raw deflate. Destroying it destroys
+// the inner decoder, so a reply cut at the read limit is not decoded further.
+function inflater() {
+  let inner = null;
+  return new Transform({
+    transform(chunk, encoding, done) {
+      if (inner === null) {
+        inner = (chunk[0] & 15) === 8 ? zlib.createInflate(ZLIB_SYNC) : zlib.createInflateRaw(ZLIB_SYNC);
+        inner.on('data', (data) => this.push(data));
+        inner.on('error', (err) => this.destroy(err));
+      }
+      inner.write(chunk, () => done());
+    },
+    flush(done) {
+      if (inner === null) {
+        done();
+        return;
+      }
+      inner.once('end', () => done());
+      inner.end();
+    },
+    destroy(err, done) {
+      inner?.destroy();
+      done(err);
+    },
+  });
+}
+
+const DECODERS = {
+  gzip: () => zlib.createGunzip(ZLIB_SYNC),
+  'x-gzip': () => zlib.createGunzip(ZLIB_SYNC),
+  deflate: inflater,
+  br: () => zlib.createBrotliDecompress(BROTLI_SYNC),
+  zstd: () => zlib.createZstdDecompress(ZSTD_SYNC),
+};
+
+// The decoders of the content codings, in the order they run, the last coding first, as fetch chose them: none at
+// all when one coding is not known, and the body is then given as it came.
+function decodersOf(codings) {
+  const names = codings.map((coding) => coding.trim()).reverse();
+  return names.every((name) => Object.hasOwn(DECODERS, name)) ? names.map((name) => DECODERS[name]()) : [];
+}
+
+// The request headers as one list of names and values, in the order fetch sent them: host, connection close (one
+// connection per request), the given headers with accept and the content type, the headers fetch added, the encodings
+// it asked for, and the length of the body, 0 for a POST, PUT or PATCH without one. Each value is sent as sentValue
+// gives it, which is the form encodedForms hides.
+function requestHeaders(url, method, headers, body) {
+  const given = {
+    ...headers, accept: ACCEPT, ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+  };
+  let length = [];
+  if (body !== undefined) length = [['content-length', String(Buffer.byteLength(body))]];
+  else if (BODY_METHODS.includes(method)) length = [['content-length', '0']];
+  return [
+    ['host', url.host],
+    ['connection', 'close'],
+    ...Object.entries(given).map(([name, value]) => [name, sentValue(value)]),
+    ...FETCH_HEADERS,
+    ['accept-encoding', ACCEPT_ENCODING[url.protocol]],
+    ...length,
+  ].flat();
+}
+
+// Sends the request with node:http or node:https and waits for the head of the reply: the reply, or a rejection when
+// there is none (a port fetch refused, a header that cannot be sent, no connection, no answer, a 100 Continue that was
+// not asked for, a 101 switch of protocol, a status below 100, the stop signal). connect, when given, gives the socket to send on (for
+// https a TLS socket). Without it, an agent of this one request connects: it keeps no socket after the reply, and it
+// uses a proxy of the environment only when Node's own global agent does (NODE_USE_ENV_PROXY). Over TLS, ALPN offers
+// http/1.1 only, as fetch did.
+function exchange(url, {
+  method, headers, body, signal, connect,
+}) {
+  return new Promise((resolve, reject) => {
+    if (BAD_PORTS.has(url.port)) throw new Error('a port fetch refuses');
+    const transport = url.protocol === 'https:' ? https : http;
+    const way = connect === undefined
+      ? { agent: new transport.Agent({ proxyEnv: transport.globalAgent.options.proxyEnv }) }
+      : { createConnection: connect };
+    const request = transport.request(url, {
+      method, headers, signal, ALPNProtocols: ['http/1.1'], ...way,
+    });
+    // The stop ends the wait whatever the request does: a connect that gives no socket leaves Node waiting for one, and
+    // then the signal of the request alone does not end it. A socket that comes later is destroyed with the request.
+    const onStop = () => {
+      reject(new Error('stopped'));
+      request.destroy();
+    };
+    signal.addEventListener('abort', onStop, { once: true });
+    request.on('close', () => signal.removeEventListener('abort', onStop));
+    request.on('error', reject);
+    request.on('continue', () => {
+      reject(new Error('a 100 Continue that was not asked for'));
+      request.destroy();
+    });
+    request.on('upgrade', (response, socket) => {
+      reject(new Error('a switch of protocol that was not asked for'));
+      socket.destroy();
+    });
+    request.on('response', (response) => {
+      if (response.statusCode >= 100 && response.statusCode !== 101) {
+        resolve(response);
+        return;
+      }
+      // A 101, or a status below 100 such as 000 or 099, which fetch failed on: no usable answer.
+      reject(new Error('no usable answer'));
+      response.destroy();
+    });
+    request.end(body);
+  });
+}
+
+// The address of a target's URL for a service tunnel: its host and port, the default port of its scheme (80 or 443)
+// when it names none; an IPv6 host keeps its brackets.
+export function urlAddress(baseUrl) {
+  const url = new URL(baseUrl);
+  return `${url.hostname}:${url.port === '' ? (url.protocol === 'https:' ? 443 : 80) : url.port}`;
+}
+
+// The connect of send for a target behind a tunnel (opened.tunnel). Node calls it inside request() with the options of
+// the request, which come from the target's URL. The socket is one new stream of the tunnel: tunnel.connect() makes
+// one ssh child, and when it throws the request fails as one that found no connection. For https the handshake runs
+// over that stream with what a direct request of this engine uses: the default authorities of Node (and
+// NODE_EXTRA_CA_CERTS), ALPN http/1.1, the real host as the server name unless it is an IP address, and the
+// certificate checked against that host. Ending or destroying the socket ends the stream, and with it the child.
+export function tunnelConnect(tunnel) {
+  const open = streamConnector(tunnel);
+  return (options) => {
+    const host = options.hostname;
+    return open({
+      host, servername: net.isIP(host) === 0 ? host : undefined, ALPNProtocols: options.ALPNProtocols,
+    }, options.protocol === 'https:');
+  };
+}
+
+// What send gets for the opened entry of a call or a check: the connect of its tunnel, or nothing, so that a target
+// without one connects as it always did. opened may be undefined.
+export function connectOf(opened) {
+  return opened?.tunnel === undefined ? {} : { connect: tunnelConnect(opened.tunnel) };
 }
 
 // The body as text, at most maxBytes bytes of it: { text, truncated, failed }; failed when the stream broke.
@@ -301,7 +491,7 @@ async function readLimited(stream, maxBytes) {
   let truncated = false;
   let failed = false;
   try {
-    for await (const chunk of stream ?? []) {
+    for await (const chunk of stream) {
       if (size + chunk.byteLength > maxBytes) {
         chunks.push(chunk.subarray(0, maxBytes - size));
         truncated = true;
@@ -347,35 +537,40 @@ export function hideSecrets(text, values) {
 
 // Sends one request and reads the reply. Never follows a redirect. exitCode 0 for a 2xx status, 1 otherwise;
 // stdout is HTTP STATUS, the content type, an empty line and the body as text, cut at maxBytes. cutOff is true when
-// the body stopped before its end, as truncated is when it reached maxBytes.
+// the body stopped before its end, as truncated is when it reached maxBytes. The body is decoded as fetch decoded it,
+// and maxBytes counts the decoded bytes. connect: see exchange. The reply is destroyed at the end, so no socket stays.
 export async function send({
-  baseUrl, headers, method, segments, query, body, timeoutMs, maxBytes, signal, fetchImpl = fetch,
+  baseUrl, headers, method, segments, query, body, timeoutMs, maxBytes, signal, connect,
 }) {
-  const url = buildUrl(baseUrl, segments, query);
+  const url = new URL(buildUrl(baseUrl, segments, query));
   const stop = AbortSignal.any(signal === undefined ? [AbortSignal.timeout(timeoutMs)] : [signal, AbortSignal.timeout(timeoutMs)]);
-  const sent = {
-    ...headers, accept: ACCEPT, ...(body === undefined ? {} : { 'content-type': 'application/json' }),
-  };
+  // A stop that came before the start makes no connection, so no ssh child of a tunnel is started for nothing.
+  if (stop.aborted) return { ...TIMED_OUT };
   let response;
   try {
-    response = await fetchImpl(url, {
-      method, headers: sent, body, redirect: 'manual', signal: stop,
+    response = await exchange(url, {
+      method, headers: requestHeaders(url, method, headers, body), body, signal: stop, connect,
     });
   } catch {
-    if (stop.aborted) {
-      return {
-        exitCode: null, stdout: '', stderr: '', timedOut: true,
-      };
-    }
+    if (stop.aborted) return { ...TIMED_OUT };
     return { exitCode: 1, stdout: '', stderr: REACH_FAILED };
   }
-  const head = `HTTP ${response.status}\ncontent-type: ${contentTypeOf(response)}\n\n`;
-  if (response.status >= 300 && response.status < 400) {
-    await response.body?.cancel();
+  const status = response.statusCode;
+  const encoding = method === 'HEAD' || NO_BODY.includes(status) ? null : headerOf(response, 'content-encoding');
+  const codings = encoding ? encoding.toLowerCase().split(',') : [];
+  if (codings.length > MAX_CODINGS) {
+    response.destroy();
+    return { exitCode: 1, stdout: '', stderr: REACH_FAILED };
+  }
+  const head = `HTTP ${status}\ncontent-type: ${contentTypeOf(response)}\n\n`;
+  if (status >= 300 && status < 400) {
+    response.destroy();
     return { exitCode: 1, stdout: head, stderr: REDIRECT };
   }
-  const read = await readLimited(response.body, maxBytes);
-  const ok = response.status >= 200 && response.status < 300;
+  const decoders = decodersOf(codings);
+  const read = await readLimited(decoders.length === 0 ? response : pipeline(response, ...decoders, () => {}), maxBytes);
+  response.destroy();
+  const ok = status >= 200 && status < 300;
   if (read.failed && stop.aborted) {
     return {
       exitCode: null, stdout: head + read.text, stderr: '', timedOut: true,

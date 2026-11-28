@@ -53,6 +53,13 @@ export function parseJump(words) {
   return { options, server };
 }
 
+// The words of one jump without its server: ssh, ksproxy's fixed options, the owner's options from parseJump, and the
+// connect timeout after them, so that a value of the owner wins. Throws the error of the tokenizer or of parseJump.
+export function jumpWords(jump) {
+  const { options, server } = parseJump(tokenizeSshCommand(jump));
+  return { words: ['ssh', '-T', '-e', 'none', '-o', 'BatchMode=yes', ...options, '-o', 'ConnectTimeout=10'], server };
+}
+
 // The text that goes before the agent's command: '' without jumps, null when the jumps cannot be used.
 export function jumpPrefix(jumps) {
   if (jumps === undefined) return '';
@@ -60,8 +67,8 @@ export function jumpPrefix(jumps) {
   const parts = [];
   try {
     for (const jump of jumps) {
-      const { options, server } = parseJump(tokenizeSshCommand(jump));
-      parts.push(['ssh', '-T', '-o', 'BatchMode=yes', ...options, '-o', 'ConnectTimeout=10', server, '--'].join(' '));
+      const { words, server } = jumpWords(jump);
+      parts.push([...words, server, '--'].join(' '));
     }
   } catch {
     return null;

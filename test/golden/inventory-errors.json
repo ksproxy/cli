@@ -612,6 +612,18 @@
     "message": "local \"infra\": protect[1]: a/b is listed twice"
   },
   {
+    "label": "kafka tunnel",
+    "message": "kafka \"kafka-prod\": this kind cannot use a tunnel"
+  },
+  {
+    "label": "command tunnel",
+    "message": "command \"disk-report\": this kind cannot use a tunnel"
+  },
+  {
+    "label": "mcp tunnel",
+    "message": "mcp \"jira\": this kind cannot use a tunnel"
+  },
+  {
     "label": "reviewer name uppercase",
     "message": "reviewer \"Rv\": name: must match /^[a-z0-9][a-z0-9-]{0,30}$/"
   },
@@ -636,12 +648,12 @@
     "message": "reviewer \"rv\": baseUrl: must be a URL"
   },
   {
-    "label": "reviewer baseUrl http to a remote host",
-    "message": "reviewer \"rv\": baseUrl: must use https (http is accepted for localhost only)"
+    "label": "reviewer baseUrl ws to a remote host",
+    "message": "reviewer \"rv\": baseUrl: must use http or https"
   },
   {
     "label": "reviewer baseUrl ftp",
-    "message": "reviewer \"rv\": baseUrl: must use https (http is accepted for localhost only)"
+    "message": "reviewer \"rv\": baseUrl: must use http or https"
   },
   {
     "label": "reviewer baseUrl with a user name",

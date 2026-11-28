@@ -3,9 +3,10 @@
 # containers, networks and volumes again. Each has a memory limit.
 #
 # The groups are compose profiles, run one after the other, because all the servers at once need more memory than a
-# small Docker machine has: a (ssh, postgres, mysql, redis, mongodb, rabbitmq, http, mcp and the network listener),
-# b (elasticsearch, kafka and command) and c (kubernetes, with k3s). make-secrets and the runner have no profile and run
-# in every group.
+# small Docker machine has: a (ssh, postgres, mysql, redis, mongodb, rabbitmq, http, mcp, the network listener and the
+# service tunnels),
+# b (elasticsearch, kafka and command, and the elasticsearch target of the service tunnels, which needs web1 and app1
+# too) and c (kubernetes, with k3s). make-secrets and the runner have no profile and run in every group.
 #
 # No port is published to the host and both networks are internal, so nothing reaches the internet while the tests run;
 # downloads happen only when the images are built. Every key, password, certificate and token is made for each run by
@@ -32,12 +33,16 @@ services:
     volumes:
       - secrets:/secrets
 
+  # Also in group b, for the tunnelled elasticsearch target es-tunnel. E2E_FORWARD_USER adds the login fwd, the only one
+  # that may forward TCP on web1, with the key limited as docs/TUNNELS.md says (see e2e/images/server/start.sh).
   web1:
-    profiles: [a]
+    profiles: [a, b]
     build: images/server
     image: ksproxy-e2e-server:local
     hostname: web1
     command: ["ops"]
+    environment:
+      E2E_FORWARD_USER: fwd
     networks: [front, back]
     volumes:
       - { <<: *secrets, volume: { subpath: web1 } }
@@ -50,11 +55,16 @@ services:
       retries: 30
     mem_limit: 128m
 
+  # The inner server: only web1 reaches it, on the network back, which the runner is not on. It is the only server that
+  # allows TCP forwarding (E2E_FORWARDING, see e2e/images/server/start.sh): it is the last server of every service
+  # tunnel of the run. web1 keeps "AllowTcpForwarding no", so a tunnel without jumps through web1 is refused.
   app1:
-    profiles: [a]
+    profiles: [a, b]
     image: ksproxy-e2e-server:local
     hostname: app1
     command: ["opsuser"]
+    environment:
+      E2E_FORWARDING: "yes"
     networks: [back]
     volumes:
       - { <<: *secrets, volume: { subpath: app1 } }
@@ -77,7 +87,7 @@ services:
     environment:
       POSTGRES_DB: shop
       POSTGRES_PASSWORD_FILE: /secrets/postgres_password
-    command:
+    command: &postgres-command
       - postgres
       - -c
       - ssl=on
@@ -103,11 +113,30 @@ services:
       - pglog:/pglog
     depends_on:
       make-secrets: { condition: service_completed_successfully }
-    healthcheck:
+    healthcheck: &postgres-health
       test: ["CMD", "pg_isready", "--host", "127.0.0.1", "--username", "postgres", "--dbname", "shop"]
       interval: 2s
       timeout: 2s
       retries: 60
+    mem_limit: 256m
+
+  # The same PostgreSQL and seed as db, on the network back only: the runner cannot reach it, app1 can. The targets of
+  # the service tunnels reach it through web1 and app1, with the certificate of the run for the name inner-db. Its log
+  # goes to the volume inner-pglog.
+  inner-db:
+    profiles: [a]
+    image: ksproxy-e2e-db:local
+    environment:
+      POSTGRES_DB: shop
+      POSTGRES_PASSWORD_FILE: /secrets/postgres_password
+    command: *postgres-command
+    networks: [back]
+    volumes:
+      - { <<: *secrets, volume: { subpath: inner-db } }
+      - inner-pglog:/pglog
+    depends_on:
+      make-secrets: { condition: service_completed_successfully }
+    healthcheck: *postgres-health
     mem_limit: 256m
 
   mcp-remote:
@@ -128,7 +157,8 @@ services:
     mem_limit: 256m
 
   # MariaDB with the crm database, over TLS with the certificate of the run for the name crm-db. Root may log in from
-  # inside this container only.
+  # inside this container only. It is also on the network back, so that app1 reaches it for the tunnelled target
+  # my-tunnel; the runner is not on back, so this opens no new way from the runner.
   crm-db:
     profiles: [a]
     build: images/crm-db
@@ -139,7 +169,7 @@ services:
       MARIADB_ROOT_PASSWORD_FILE: /secrets/root_password
       MARIADB_ROOT_HOST: localhost
       MARIADB_INITDB_SKIP_TZINFO: "1"
-    networks: [front]
+    networks: [front, back]
     volumes:
       - { <<: *secrets, volume: { subpath: crm-db } }
       - mylog:/mylog
@@ -152,12 +182,13 @@ services:
       retries: 90
     mem_limit: 384m
 
-  # Redis over TLS with the ACL users of the run.
+  # Redis over TLS with the ACL users of the run. Also on the network back, for the tunnelled target rds-tunnel, which
+  # checks the certificate against the name cache through the tunnel.
   cache:
     profiles: [a]
     build: images/cache
     image: ksproxy-e2e-cache:local
-    networks: [front]
+    networks: [front, back]
     volumes:
       - { <<: *secrets, volume: { subpath: cache } }
     depends_on:
@@ -179,14 +210,14 @@ services:
       MONGO_INITDB_ROOT_USERNAME: root
       MONGO_INITDB_ROOT_PASSWORD_FILE: /secrets/root_password
       MONGO_INITDB_DATABASE: shop
-    command: ["mongod", "--slowms", "-1", "--logpath", "/mongolog/mongod.log", "--logappend", "--wiredTigerCacheSizeGB", "0.25"]
+    command: &mongo-command ["mongod", "--slowms", "-1", "--logpath", "/mongolog/mongod.log", "--logappend", "--wiredTigerCacheSizeGB", "0.25"]
     networks: [front]
     volumes:
       - { <<: *secrets, volume: { subpath: mongo } }
       - mongolog:/mongolog
     depends_on:
       make-secrets: { condition: service_completed_successfully }
-    healthcheck:
+    healthcheck: &mongo-health
       # The server of the setup listens on 127.0.0.1 only; the server of the run also on the container's address.
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/$$(hostname -i)/27017"]
       interval: 2s
@@ -194,13 +225,33 @@ services:
       retries: 90
     mem_limit: 512m
 
-  # RabbitMQ with the management API over https.
+  # The same MongoDB and seed as mongo, on the network back only, for the tunnelled target mgo-tunnel. Its log goes to
+  # the volume inner-mongolog.
+  inner-mongo:
+    profiles: [a]
+    image: ksproxy-e2e-mongo:local
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD_FILE: /secrets/root_password
+      MONGO_INITDB_DATABASE: shop
+    command: *mongo-command
+    networks: [back]
+    volumes:
+      - { <<: *secrets, volume: { subpath: inner-mongo } }
+      - inner-mongolog:/mongolog
+    depends_on:
+      make-secrets: { condition: service_completed_successfully }
+    healthcheck: *mongo-health
+    mem_limit: 512m
+
+  # RabbitMQ with the management API over https. Also on the network back, so that app1 reaches it for the tunnelled
+  # target mq-tunnel; the runner is not on back, so this opens no new way from the runner.
   mq:
     profiles: [a]
     build: images/mq
     image: ksproxy-e2e-mq:local
     hostname: mq
-    networks: [front]
+    networks: [front, back]
     volumes:
       - { <<: *secrets, volume: { subpath: mq } }
       - mqlog:/mqlog
@@ -213,7 +264,9 @@ services:
       retries: 120
     mem_limit: 384m
 
-  # The stand-in Grafana API over https on port 443.
+  # The stand-in Grafana API over https on port 443, and in plain http on port 80. Also on the network back, for the
+  # tunnelled targets gf-tunnel and gf-plain, where it has one more name, dashboards, which its certificate does not
+  # hold: the target gf-alias names it so, and its check of the certificate through the tunnel fails.
   grafana:
     profiles: [a]
     build: images/grafana
@@ -221,21 +274,25 @@ services:
     init: true
     sysctls:
       net.ipv4.ip_unprivileged_port_start: 0
-    networks: [front]
+    networks:
+      front: {}
+      back:
+        aliases: [dashboards]
     volumes:
       - { <<: *secrets, volume: { subpath: grafana } }
       - httplog:/httplog
     depends_on:
       make-secrets: { condition: service_completed_successfully }
     healthcheck:
-      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/443"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/443 && exec 4<>/dev/tcp/127.0.0.1/80"]
       interval: 2s
       timeout: 2s
       retries: 30
     mem_limit: 128m
 
   # Elasticsearch, one node with security on and https on port 9200; every HTTP request that reaches it is logged to
-  # the volume eslog. The seed writes the API key that Elasticsearch makes for es-logs to the volume esout.
+  # the volume eslog. The seed writes the API key that Elasticsearch makes for es-logs to the volume esout. Also on the
+  # network back, so that app1 reaches it for the tunnelled target es-tunnel.
   es:
     profiles: [b]
     build: images/es
@@ -244,7 +301,7 @@ services:
     environment:
       ELASTIC_PASSWORD_FILE: /usr/share/elasticsearch/config/certs/elastic_password
       ES_JAVA_OPTS: -Xms512m -Xmx512m
-    networks: [front]
+    networks: [front, back]
     volumes:
       - { <<: *secrets, target: /usr/share/elasticsearch/config/certs, volume: { subpath: es } }
       - eslog:/eslog
@@ -317,6 +374,8 @@ services:
       - { type: volume, source: pglog, target: /pglog, read_only: true }
       - { type: volume, source: mylog, target: /mylog, read_only: true }
       - { type: volume, source: mongolog, target: /mongolog, read_only: true }
+      - { type: volume, source: inner-pglog, target: /inner-pglog, read_only: true }
+      - { type: volume, source: inner-mongolog, target: /inner-mongolog, read_only: true }
       - { type: volume, source: mqlog, target: /mqlog, read_only: true }
       - { type: volume, source: httplog, target: /httplog, read_only: true }
       - { type: volume, source: eslog, target: /eslog, read_only: true }
@@ -332,10 +391,12 @@ services:
       web1: { condition: service_healthy, required: false }
       app1: { condition: service_healthy, required: false }
       db: { condition: service_healthy, required: false }
+      inner-db: { condition: service_healthy, required: false }
       mcp-remote: { condition: service_healthy, required: false }
       crm-db: { condition: service_healthy, required: false }
       cache: { condition: service_healthy, required: false }
       mongo: { condition: service_healthy, required: false }
+      inner-mongo: { condition: service_healthy, required: false }
       mq: { condition: service_healthy, required: false }
       grafana: { condition: service_healthy, required: false }
       es: { condition: service_healthy, required: false }
@@ -366,6 +427,8 @@ volumes:
   pglog:
   mylog:
   mongolog:
+  inner-pglog:
+  inner-mongolog:
   mqlog:
   httplog:
   eslog:

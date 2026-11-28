@@ -9,7 +9,7 @@ umask 077
 
 out=/secrets
 work=$(mktemp -d)
-for dir in runner web1 app1 db mcp-remote crm-db cache mongo mq grafana es kafka; do
+for dir in runner web1 app1 db inner-db mcp-remote crm-db cache mongo inner-mongo mq grafana es kafka; do
   mkdir -p "$out/$dir"
 done
 
@@ -18,6 +18,9 @@ key() {
 }
 key runner_key e2e-runner
 key app_key e2e-app
+key wrong_key e2e-wrong
+key fwd_key e2e-fwd
+key jmp_key e2e-jmp
 key web1_host web1
 key app1_host app1
 
@@ -26,9 +29,24 @@ echo "web1 $(cut -d' ' -f1,2 "$work/web1_host.pub")" > "$out/runner/known_hosts"
 cp "$work/web1_host" "$out/web1/host_key"
 cp "$work/runner_key.pub" "$out/web1/authorized_keys"
 cp "$work/app_key" "$out/web1/app_key"
+# A key on web1 that app1 does not accept: the jump of the tunnel pg-badkey (e2e/driver/tunnels.js) names it.
+cp "$work/wrong_key" "$out/web1/wrong_key"
 echo "app1 $(cut -d' ' -f1,2 "$work/app1_host.pub")" > "$out/web1/known_hosts"
 cp "$work/app1_host" "$out/app1/host_key"
 cp "$work/app_key.pub" "$out/app1/authorized_keys"
+
+# The two lines of docs/TUNNELS.md, "Keys limited on the servers", on web1 (e2e/driver/tunnels.js). Without jumps: the
+# key of the login fwd, the only one that may forward on web1 (start.sh), may open a stream to grafana:443 only and
+# run no command. With jumps: a second key of ops runs one forced command, the exact jump text that ksproxy sends for
+# the route of gf-forced (the jump of the tunnels to app1, then -W grafana:443).
+cp "$work/fwd_key" "$out/runner/fwd_key"
+echo "restrict,port-forwarding,permitopen=\"grafana:443\",command=\"/bin/false\" $(cut -d' ' -f1,2 "$work/fwd_key.pub") ksproxy" \
+  > "$out/web1/fwd_authorized_keys"
+cp "$work/jmp_key" "$out/runner/jmp_key"
+forced='ssh -T -e none -o BatchMode=yes -i /home/ops/.ssh/app_key -o LogLevel=ERROR -o ConnectTimeout=10 -W grafana:443 opsuser@app1'
+echo "restrict,command=\"$forced\" $(cut -d' ' -f1,2 "$work/jmp_key.pub") ksproxy" >> "$out/web1/authorized_keys"
+# The driver checks that it is the text that ksproxy sends.
+printf '%s' "$forced" > "$out/runner/jmp_forced_command"
 
 # secret gives a new secret value; put writes a value to each of the files named after it.
 secret() {
@@ -48,6 +66,10 @@ ro=$(secret)
 rw=$(secret)
 put "$ro" db/agent_ro_password runner/shop_db_password
 put "$rw" db/agent_rw_password runner/shop_db_rw_password
+# inner-db, the PostgreSQL that only app1 reaches (the service tunnels): the same two logins as db, its own superuser.
+put "$(secret)" inner-db/postgres_password
+put "$ro" inner-db/agent_ro_password
+put "$rw" inner-db/agent_rw_password
 
 # MariaDB: root only from inside its container, and the two logins of the mysql examples.
 put "$(secret)" crm-db/root_password
@@ -55,6 +77,9 @@ put "$(secret)" crm-db/agent_ro_password
 cp "$out/crm-db/agent_ro_password" "$out/runner/crm_db_password"
 put "$(secret)" crm-db/agent_rw_password
 cp "$out/crm-db/agent_rw_password" "$out/runner/crm_db_rw_password"
+# tunnel_ro, the login of the tunnelled target my-tunnel only, so that its connections are told apart in the log.
+put "$(secret)" crm-db/tunnel_ro_password
+cp "$out/crm-db/tunnel_ro_password" "$out/runner/crm_db_tunnel_password"
 
 # MongoDB: root for the image's setup, and the two users of the mongodb examples, given to the runner as
 # connection strings.
@@ -65,6 +90,11 @@ put "$mongo_ro" mongo/agent_ro_password
 put "$mongo_rw" mongo/agent_rw_password
 put "mongodb://agent_ro:$mongo_ro@mongo:27017/shop" runner/orders_mongo_uri
 put "mongodb://agent_rw:$mongo_rw@mongo:27017/shop" runner/orders_mongo_rw_uri
+# inner-mongo, the MongoDB that only app1 reaches (the service tunnels): the same two users as mongo, its own root.
+put "$(secret)" inner-mongo/root_password
+put "$mongo_ro" inner-mongo/agent_ro_password
+put "$mongo_rw" inner-mongo/agent_rw_password
+put "mongodb://agent_ro:$mongo_ro@inner-mongo:27017/shop" runner/orders_mongo_tunnel_uri
 
 # Redis: the two ACL users of the redis examples, with the commands of their rules and PING, which ksproxy
 # doctor sends (docs/DOCTOR.md). The server gets only the SHA-256 of each password.
@@ -124,7 +154,8 @@ put "$(secret)" runner/gh_read_token
 put "$(secret)" runner/gh_triage_token
 
 # A CA of this run, which only the runner and the servers that check it trust, and a certificate for each server name
-# that is reached over https or TLS: also PostgreSQL (db) and MariaDB (crm-db), whose targets check it with caFile.
+# that is reached over https or TLS: also PostgreSQL (db and inner-db) and MariaDB (crm-db), whose targets check it
+# with caFile.
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 2 -subj '/CN=ksproxy e2e CA' \
   -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign \
   -keyout "$work/ca.key" -out "$work/ca.crt" 2>/dev/null
@@ -138,7 +169,7 @@ cert() {
   cp "$work/$1.crt" "$out/$1/server.crt"
   cp "$work/$1.key" "$out/$1/server.key"
 }
-for name in mcp-remote cache mq grafana es kafka db crm-db; do
+for name in mcp-remote cache mq grafana es kafka db inner-db crm-db; do
   cert "$name"
 done
 cp "$work/ca.crt" "$out/runner/ca.crt"
@@ -153,7 +184,9 @@ node /opt/ksproxy/e2e/setup/list-secrets.js "$out/runner/secrets.json" \
   "postgres password=$out/db/postgres_password" "agent_ro password=$out/db/agent_ro_password" \
   "agent_rw password=$out/db/agent_rw_password" "mcp token=$out/runner/mcp_token" \
   "mariadb root password=$out/crm-db/root_password" "mariadb agent_ro password=$out/crm-db/agent_ro_password" \
-  "mariadb agent_rw password=$out/crm-db/agent_rw_password" "mongo root password=$out/mongo/root_password" \
+  "mariadb agent_rw password=$out/crm-db/agent_rw_password" "mariadb tunnel_ro password=$out/crm-db/tunnel_ro_password" \
+  "mongo root password=$out/mongo/root_password" "inner-db postgres password=$out/inner-db/postgres_password" \
+  "inner-mongo root password=$out/inner-mongo/root_password" "wrong key=$work/wrong_key" "inner-db key=$work/inner-db.key" \
   "mongo agent_ro password=$out/mongo/agent_ro_password" "mongo agent_rw password=$out/mongo/agent_rw_password" \
   "redis reader password=$out/runner/redis_password" "redis ops password=$out/runner/redis_ops_password" \
   "rabbitmq reader password=$out/runner/mq_password" "rabbitmq ops password=$out/runner/mq_ops_password" \
@@ -162,16 +195,17 @@ node /opt/ksproxy/e2e/setup/list-secrets.js "$out/runner/secrets.json" \
   "es search password=$out/es/search_password" "kafka admin password=$out/kafka/admin_password" \
   "kafka reader password=$out/kafka/reader_password" "kafka ops password=$out/kafka/ops_password" \
   "gh read token=$out/runner/gh_read_token" "gh triage token=$out/runner/gh_triage_token" \
-  "runner key=$work/runner_key" "app key=$work/app_key" "web1 host key=$work/web1_host" \
+  "runner key=$work/runner_key" "app key=$work/app_key" "fwd key=$work/fwd_key" "jmp key=$work/jmp_key" "web1 host key=$work/web1_host" \
   "app1 host key=$work/app1_host" "CA key=$work/ca.key" "mcp-remote key=$work/mcp-remote.key" \
   "cache key=$work/cache.key" "mq key=$work/mq.key" "grafana key=$work/grafana.key" "es key=$work/es.key" \
   "kafka key=$work/kafka.key" "db key=$work/db.key" "crm-db key=$work/crm-db.key"
 
 # Each folder belongs to the user that reads it: node (1000) in the runner, mcp-remote and grafana, elasticsearch (1000)
-# in es, and appuser (1000) in kafka; postgres, mysql, mongodb and rabbitmq (999) in db, crm-db, mongo and mq; redis
+# in es, and appuser (1000) in kafka; postgres, mysql, mongodb and rabbitmq (999) in db, inner-db, crm-db, mongo,
+# inner-mongo and mq; redis
 # (999, group 1000) in cache; root on the ssh servers, which copy their files into place.
 chown -R 1000:1000 "$out/runner" "$out/mcp-remote" "$out/grafana" "$out/es" "$out/kafka"
-chown -R 999:999 "$out/db" "$out/crm-db" "$out/mongo" "$out/mq"
+chown -R 999:999 "$out/db" "$out/inner-db" "$out/crm-db" "$out/mongo" "$out/inner-mongo" "$out/mq"
 chown -R 999:1000 "$out/cache"
 chmod 0700 "$out"/*
 echo "secrets made"

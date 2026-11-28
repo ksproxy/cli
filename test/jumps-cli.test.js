@@ -39,7 +39,7 @@ test('check allows a command that matches a rule and shows what would be sent', 
   assert.equal(code, 0);
   assert.equal(stdout, [
     'ALLOWED by rule: systemctl status *',
-    'sent to bastion1: ssh -T -o BatchMode=yes -i .ssh/app_key -o ConnectTimeout=10 opsuser@192.0.2.10 -- systemctl status nginx',
+    'sent to bastion1: ssh -T -e none -o BatchMode=yes -i .ssh/app_key -o ConnectTimeout=10 opsuser@192.0.2.10 -- systemctl status nginx',
   ].join('\n'));
 });
 

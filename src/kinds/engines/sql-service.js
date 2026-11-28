@@ -18,8 +18,6 @@ const HOST = /^[A-Za-z0-9][A-Za-z0-9.-]*$/;
 const MAX_HOST = 253;
 const DB_NAME = /^[A-Za-z0-9_.][A-Za-z0-9_.-]{0,62}$/;
 const TLS_MODES = ['verify', 'require', 'prefer'];
-// A host on this machine: localhost, or an IPv4 address 127.x.x.x. The host field holds no IPv6 address and no socket.
-const LOOPBACK = /^(localhost|127(\.\d{1,3}){3})$/i;
 // The time limit of the TLS check when a target opens; a check that ends at it opens the target, as before.
 const TLS_CHECK_MS = 5000;
 // What the clients print when TLS fails: libpq older than 16 reads PGSSLROOTCERT=system as a file name; psql, the
@@ -58,12 +56,10 @@ function checkReadOnly(value, where) {
   return value;
 }
 
-// Whether the host is this machine, where no one between ksproxy and the server can read the connection.
-export const isLoopback = (host) => LOOPBACK.test(host);
-
-// verify when left out, unless the host is this machine: then prefer, so that a local database keeps working.
-function checkTls(entry, host, where) {
-  if (entry.tls === undefined) return isLoopback(host) ? 'prefer' : 'verify';
+// TLS is the owner's choice, never required: left out, it is prefer (TLS when the server offers it, no check), and
+// verify when the entry names a caFile, which only verify uses.
+function checkTls(entry, where) {
+  if (entry.tls === undefined) return entry.caFile === undefined ? 'prefer' : 'verify';
   if (!TLS_MODES.includes(entry.tls)) throw new InventoryError(`${where}: tls: must be "verify", "require" or "prefer"`);
   return entry.tls;
 }
@@ -73,10 +69,7 @@ function checkTls(entry, host, where) {
 function checkCaFile(entry, tls, where) {
   if (entry.caFile === undefined) return null;
   const file = path.resolve(absolutePath(entry.caFile, `${where}: caFile`));
-  if (tls !== 'verify') {
-    const why = entry.tls === undefined ? ', the default for a host on this machine' : '';
-    throw new InventoryError(`${where}: caFile: is used only with "tls": "verify"; this target has "tls": "${tls}"${why}`);
-  }
+  if (tls !== 'verify') throw new InventoryError(`${where}: caFile: is used only with "tls": "verify"; this target has "tls": "${tls}"`);
   return file;
 }
 
@@ -109,10 +102,12 @@ export function tlsFailure(text, target) {
 
 // The TLS check when a target opens: select 1 through the client and the settings of a call. Gives what tlsFailure
 // gives for a failure; any answer, any other failure, the time limit and a stop give null.
-async function tlsCheck(spec, target, program, { env, secrets, signal }) {
+async function tlsCheck(spec, target, program, {
+  env, secrets, signal, tunnel,
+}) {
   const {
     fixedArgs, words, childEnv, folderPaths,
-  } = spec.invocation(target, 'select 1', { password: secrets[target.passwordEnv], timeoutMs: TLS_CHECK_MS });
+  } = spec.invocation(target, 'select 1', { password: secrets[target.passwordEnv], timeoutMs: TLS_CHECK_MS, tunnel });
   const result = await runClient({
     program, fixedArgs, words, env, childEnv, folderPaths, timeoutMs: TLS_CHECK_MS, maxBytes: DOCTOR_MAX_BYTES, signal,
   });
@@ -121,6 +116,24 @@ async function tlsCheck(spec, target, program, { env, secrets, signal }) {
 
 // What open learned about the client and every call needs: the mysql family, when there is one.
 const learnedOf = (opened) => (opened.family === undefined ? {} : { family: opened.family });
+
+// What the doctor check needs and the opened entry may lack: the trial of a tunnelled target runs before open, so the
+// entry has no program and no family. Finds them as open does: { program, learned } (learned holds the family, or
+// nothing), or { error } when the program cannot be found or its family cannot be learned. An entry that open made
+// has both, and nothing runs again.
+async function clientOf(spec, opened, ctx) {
+  let { program } = opened;
+  if (program === undefined) {
+    const resolved = resolveProgram(spec.program(opened.target, ctx.env), ctx.env);
+    if (resolved.error !== undefined) return { error: resolved.error };
+    ({ program } = resolved);
+  }
+  if (opened.family !== undefined || opened.target.tls === 'prefer' || spec.clientFamily === undefined) {
+    return { program, learned: learnedOf(opened) };
+  }
+  const learned = await spec.clientFamily(opened.target, program, ctx);
+  return learned.error === undefined ? { program, learned } : { error: learned.error };
+}
 
 const tlsText = (target) => `TLS ${target.tls}${target.caFile === null ? '' : ' with caFile'}`;
 
@@ -154,8 +167,11 @@ function address(target) {
 }
 
 // spec: key, flag, label, word, noun, countNoun, title, dialect, defaultPort, sample, extraKeys, extra(entry, where),
-// fixedRefusal(words), program(target, env), invocation(target, statement, { password, timeoutMs }), notes, tool, and
-// optionally clientFamily(target, program, ctx), which gives { family } or { error, wayOut } before the TLS check.
+// fixedRefusal(words), program(target, env), invocation(target, statement, { password, timeoutMs, tunnel }), notes, tool,
+// and optionally clientFamily(target, program, ctx), which gives { family } or { error, wayOut } before the TLS check,
+// tunnelProblem(target), and checksCertificate: true when the client checks the certificate against the real host name
+// even through a tunnel. The invocation puts the loopback address and port of the tunnel (when it is given) where the
+// client connects, and without one it is what it was before.
 export function sqlServiceKind(spec) {
   const { key, dialect } = spec;
   const match = (words, rule) => matchStatementRule(words, rule, dialect);
@@ -167,6 +183,16 @@ export function sqlServiceKind(spec) {
     noun: spec.noun,
     countNoun: spec.countNoun,
     brokered: true,
+    // The client is a program, so a tunnel is a loopback listener; the service is the target's own host and port.
+    tunnelListener: true,
+    tunnelTo(target) {
+      const port = target.port ?? spec.defaultPort;
+      return target.host.includes(':') ? `[${target.host}]:${port}` : `${target.host}:${port}`;
+    },
+    tunnelChecksCertificate(target) {
+      return spec.checksCertificate === true && target.tls === 'verify';
+    },
+    ...(spec.tunnelProblem === undefined ? {} : { tunnelProblem: spec.tunnelProblem }),
     sample: spec.sample,
     hint(target) {
       return target.description ? `${address(target)} - ${target.description}` : address(target);
@@ -179,7 +205,7 @@ export function sqlServiceKind(spec) {
       const user = checkDbName(entry.user, `${where}: user`);
       const passwordEnv = checkSecretVariable(entry.passwordEnv, `${where}: passwordEnv`, 'the password');
       const readOnly = checkReadOnly(entry.readOnly, where);
-      const tls = checkTls(entry, host, where);
+      const tls = checkTls(entry, where);
       const caFile = checkCaFile(entry, tls, where);
       const allow = checkSqlAllow(entry, where, spec.noun, dialect);
       return {
@@ -261,26 +287,27 @@ export function sqlServiceKind(spec) {
     },
     // The statement the agent sent, as one argument; the password only in the child's environment.
     perform(target, decision, {
-      env, secrets, timeoutMs, maxBytes, signal, input,
+      env, secrets, timeoutMs, maxBytes, signal, input, opened,
     }) {
       const {
         fixedArgs, words, childEnv, folderPaths,
-      } = spec.invocation(target, input, { password: secrets[target.passwordEnv], timeoutMs });
+      } = spec.invocation(target, input, { password: secrets[target.passwordEnv], timeoutMs, tunnel: opened?.tunnel });
       return runClient({
         program: target.program, fixedArgs, words, env, childEnv, folderPaths, timeoutMs, maxBytes, signal,
       });
     },
-    // The doctor check: select 1 through the same client and invocation as a call, on the program open resolved, with
-    // what open learned about the client.
-    async doctor(opened, {
-      env, secrets, timeoutMs, signal,
-    }) {
-      const target = { ...opened.target, ...learnedOf(opened) };
+    // The doctor check: select 1 through the same client and invocation as a call, through the tunnel when the entry has
+    // one. The program and the family come from open, or are found here for the entry of the trial, which has none.
+    async doctor(opened, ctx) {
+      const { secrets, timeoutMs, signal } = ctx;
+      const client = await clientOf(spec, opened, ctx);
+      if (client.error !== undefined) return { ok: false, detail: client.error };
+      const target = { ...opened.target, ...client.learned };
       const {
         fixedArgs, words, childEnv, folderPaths,
-      } = spec.invocation(target, 'select 1', { password: secrets[target.passwordEnv], timeoutMs });
+      } = spec.invocation(target, 'select 1', { password: secrets[target.passwordEnv], timeoutMs, tunnel: opened.tunnel });
       const result = await runClient({
-        program: opened.program, fixedArgs, words, env, childEnv, folderPaths, timeoutMs, maxBytes: DOCTOR_MAX_BYTES, signal,
+        program: client.program, fixedArgs, words, env: ctx.env, childEnv, folderPaths, timeoutMs, maxBytes: DOCTOR_MAX_BYTES, signal,
       });
       return clientVerdict(result, {
         name: spec.word, describe: () => 'select 1 answered', hidden: hiddenOf(secrets, spec.printedForms(secrets[target.passwordEnv])), signal,

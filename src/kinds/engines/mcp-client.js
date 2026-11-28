@@ -22,7 +22,6 @@ const START_LIMIT_MS = 120000;
 const CONNECT_LIMIT_MS = 30000;
 const NOTE_LIMIT_MS = 2000;
 const MAX_ANSWERS = 8;
-const HIDDEN = '[hidden]';
 const HIDDEN_MIN = 8;
 const ACCEPT = 'application/json, text/event-stream';
 const STDERR_BYTES = 64 * 1024;
@@ -630,14 +629,17 @@ function createHttpSession({
   let answering = 0;
   let nextId = 1;
 
-  // Each value the caller's headers hold, and each of its words of at least HIDDEN_MIN characters (the token after
-  // Bearer), is hidden in the error texts of the server.
+  // Each value the caller's headers hold, what follows its first space (the token after Bearer) as it is and without
+  // the spaces at its ends, and each of its words, each of at least HIDDEN_MIN characters, is hidden in the error texts
+  // of the server. hideSecrets hides them with the hidden texts in one pass: replaced one after the other, a long word
+  // of a token broke the token up, and its short words stayed in clear.
   const remember = (value) => {
-    for (const part of [value, ...value.split(' ')]) {
+    const rest = value.slice(value.indexOf(' ') + 1);
+    for (const part of [value, rest, rest.trim(), ...value.split(' ')]) {
       if (part.length >= HIDDEN_MIN) shown.add(part);
     }
   };
-  const hide = (text) => [...shown].sort((a, b) => b.length - a.length).reduce((out, value) => out.split(value).join(HIDDEN), text);
+  const hide = (text) => hideSecrets(text, [...hidden, ...shown]);
 
   // The caller's headers, asked for each request, then ksproxy's own, which win.
   const headersFor = (own) => {

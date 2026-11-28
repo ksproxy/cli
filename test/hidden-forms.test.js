@@ -71,6 +71,7 @@ function auditText() {
 }
 
 describeHttp();
+describeEdgeSpaces();
 describeRedis();
 describeMongo();
 
@@ -138,6 +139,72 @@ function describeHttp() {
       assert.equal(answer.text.includes(AT_LIMIT), into < 9, `${into} bytes in`);
       assert.equal(answer.text.includes('[stdout cut'), into < 9, `${into} bytes in`);
     }
+  });
+}
+
+// A credential with a space at its start and its end goes on the wire without the spaces at the ends of its header,
+// and a server shows it without them: the form that is sent is hidden too, in each credential form of the http
+// kinds. Basic auth sends the spaces inside the base64, so there the password is hidden as it was given.
+function describeEdgeSpaces() {
+  const CORE = 'edge-"T0K"-UNMISTAKABLE';
+  const GIVEN = `  ${CORE} `;
+  const PASSWORD = ` pw-${CORE} `;
+  let base;
+
+  before(async () => {
+    // GET /api/echo: each request header as the server read it, one per line, then all of them as a JSON text, then the
+    // decoded basic credential.
+    const server = http.createServer((req, res) => {
+      const lines = Object.entries(req.headers).map(([name, value]) => `${name}: ${value}\n`).join('');
+      const basic = req.headers.authorization?.startsWith('Basic ') ? Buffer.from(req.headers.authorization.slice(6), 'base64').toString() : '';
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      if (req.url === '/api/trimmed') {
+        // The decoded basic credential, its user name and its password each without the spaces at their ends, as
+        // text and as JSON.
+        const at = basic.indexOf(':');
+        const parts = { user: basic.slice(0, at).trim(), password: basic.slice(at + 1).trim() };
+        res.end(`${parts.user}\n${parts.password}\n${JSON.stringify(parts)}\n`);
+        return;
+      }
+      res.end(`${lines}${JSON.stringify(req.headers)}\n${basic}\n`);
+    });
+    await new Promise((resolve) => { server.listen(0, '127.0.0.1', resolve); });
+    servers.push({ close: () => new Promise((resolve) => { server.closeAllConnections(); server.close(resolve); }) });
+    base = `http://127.0.0.1:${server.address().port}/`;
+  });
+
+  const target = (kind, auth) => ({
+    kind, name: 'echo', description: '', allow: ['GET /api/echo', 'GET /api/trimmed'], baseUrl: base, auth, state: 'up',
+  });
+  const cases = () => [
+    ['http bearer', target('http', { bearerEnv: 'EDGE_T' }), { EDGE_T: GIVEN }],
+    ['http header', target('http', { headerName: 'X-Shop-Key', headerEnv: 'EDGE_H' }), { EDGE_H: GIVEN }],
+    ['http basic', target('http', { basicUserEnv: 'EDGE_U', basicPasswordEnv: 'EDGE_P' }), { EDGE_U: 'ops', EDGE_P: PASSWORD }],
+    ['elasticsearch API key', target('elasticsearch', { apiKeyEnv: 'EDGE_K' }), { EDGE_K: GIVEN }],
+    ['elasticsearch basic', target('elasticsearch', { basicUserEnv: 'EDGE_U', basicPasswordEnv: 'EDGE_P' }), { EDGE_U: 'ops', EDGE_P: PASSWORD }],
+    ['rabbitmq basic', target('rabbitmq', { basicUserEnv: 'EDGE_U', basicPasswordEnv: 'EDGE_P' }), { EDGE_U: 'ops', EDGE_P: PASSWORD }],
+  ];
+
+  test('http kinds: a credential with spaces at its ends is hidden in the form the server shows back', async () => {
+    for (const [what, entry, secrets] of cases()) {
+      const answer = await call(entry.kind, entry, secrets, { method: 'GET', path: '/api/echo' });
+      assert.match(answer.text, /^exit code: 0\n--- stdout ---\nHTTP 200\n/, what);
+      assert.ok(answer.text.includes('[hidden]'), `${what}: ${answer.text}`);
+      assert.ok(!answer.text.includes('UNMISTAKABLE'), `${what}: ${answer.text}`);
+    }
+    assert.ok(!auditText().includes('UNMISTAKABLE'));
+  });
+
+  test('http kinds: a basic user name and password with spaces at their ends are hidden when a server trims them', async () => {
+    const USER = ` u-${CORE}  `;
+    for (const kind of ['http', 'elasticsearch', 'rabbitmq']) {
+      const entry = target(kind, { basicUserEnv: 'EDGE_U', basicPasswordEnv: 'EDGE_P' });
+      const answer = await call(kind, entry, { EDGE_U: USER, EDGE_P: PASSWORD }, { method: 'GET', path: '/api/trimmed' });
+      assert.match(answer.text, /^exit code: 0\n--- stdout ---\nHTTP 200\n/, kind);
+      assert.ok(answer.text.includes('[hidden]\n[hidden]\n{"user":"[hidden]","password":"[hidden]"}'), `${kind}: ${answer.text}`);
+      assert.ok(!answer.text.includes('UNMISTAKABLE'), `${kind}: ${answer.text}`);
+    }
+    assert.ok(!auditText().includes('UNMISTAKABLE'));
   });
 }
 

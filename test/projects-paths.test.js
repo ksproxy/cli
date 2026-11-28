@@ -115,8 +115,8 @@ test('a socket path that is too long names the project as a way out', () => {
 // A state folder of n bytes, so that the socket of kind and name is exactly bytes long.
 const stateFor = (bytes, kind, name) => ({ ...base, [STATE_KEY]: `/${'r'.repeat(bytes - `/s/${kind}-${name}`.length - 1)}` });
 
-test('an ssh master socket leaves 17 bytes for the temporary name ssh binds first: at most 83 bytes, the other sockets 100', () => {
-  for (const kind of ['ssh', 'tun']) {
+test('an ssh master socket (ssh, tun, tnl) leaves 17 bytes for the temporary name ssh binds first: at most 83 bytes, the other sockets 100', () => {
+  for (const kind of ['ssh', 'tun', 'tnl']) {
     assert.equal(Buffer.byteLength(socketPath(kind, 'web1', stateFor(83, kind, 'web1'))), 83, kind);
     assert.throws(
       () => socketPath(kind, 'web1', stateFor(84, kind, 'web1')),

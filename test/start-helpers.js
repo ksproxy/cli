@@ -26,16 +26,26 @@ export async function waitFor(predicate, timeoutMs, what) {
   }
 }
 
-export async function freePorts(count) {
-  const servers = [];
-  const ports = [];
-  for (let i = 0; i < count; i += 1) {
+// Ports that are free now, for a test that must name a port before something binds it. They are taken below the
+// range from which the system gives a port to a listener that asks for any (port 0): the other test files run at the
+// same time and bind many such ports, and one of them could take a port between this check and its use.
+const PORT_FLOOR = 15000;
+const PORT_SPAN = 15000;
+
+function isFree(port) {
+  return new Promise((resolve) => {
     const server = net.createServer();
-    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-    ports.push(server.address().port);
-    servers.push(server);
+    server.once('error', () => resolve(false));
+    server.listen(port, '127.0.0.1', () => server.close(() => resolve(true)));
+  });
+}
+
+export async function freePorts(count) {
+  const ports = [];
+  while (ports.length < count) {
+    const port = PORT_FLOOR + Math.floor(Math.random() * PORT_SPAN);
+    if (!ports.includes(port) && await isFree(port)) ports.push(port);
   }
-  await Promise.all(servers.map((s) => new Promise((resolve) => s.close(resolve))));
   return ports;
 }
 

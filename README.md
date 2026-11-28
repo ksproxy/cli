@@ -75,7 +75,7 @@ Every command but `token` takes `--project NAME`.
 | `ssh` | `--ssh` | commands on a server, also one behind another server (`jumps`) | [RULES](docs/RULES.md), [JUMPS](docs/JUMPS.md) |
 | `kubernetes` | `--kube` | kubectl through a fixed gate: no `exec`, no port forwarding, no secrets | [RULES](docs/RULES.md#the-kubernetes-command-gate) |
 | `local` | `--local` | a short list of commands in one folder, as you | [LOCAL-TARGETS](docs/LOCAL-TARGETS.md) |
-| `http`, `command`, `elasticsearch`, `rabbitmq`, `redis`, `postgres`, `mysql`, `mongodb`, `kafka` | `--http`, `--command`, `--es`, `--mq`, `--redis`, `--pg`, `--mysql`, `--mongo`, `--kafka` | requests, statements or client commands, run by `start` with the credential it holds | [SERVICES](docs/SERVICES.md) |
+| `http`, `command`, `elasticsearch`, `rabbitmq`, `redis`, `postgres`, `mysql`, `mongodb`, `kafka` | `--http`, `--command`, `--es`, `--mq`, `--redis`, `--pg`, `--mysql`, `--mongo`, `--kafka` | requests, statements or client commands, run by `start` with the credential it holds. An `http`, `elasticsearch`, `rabbitmq`, `postgres`, `mysql`, `redis` or `mongodb` target can sit behind a server (`tunnel`) | [SERVICES](docs/SERVICES.md), [TUNNELS](docs/TUNNELS.md) |
 | `mcp` | none: the picker or `--all` | the tools of an MCP server, as `TARGET__TOOL` | [MCP-SERVERS](docs/MCP-SERVERS.md) |
 
 A rule is a list of words matched against the call:

@@ -7,9 +7,11 @@ import { clip } from '../../text.js';
 import { REVIEWED, jsonForms } from '../shared.js';
 import { resolveProgram } from '../command/index.js';
 import { runClient } from '../engines/command.js';
-import { DOCTOR_MAX_BYTES, clientVerdict, hiddenOf } from '../engines/doctor.js';
+import { DOCTOR_MAX_BYTES, clientVerdict, hiddenOf, shown } from '../engines/doctor.js';
+import { hideSecrets } from '../engines/http.js';
 import {
   FORBIDDEN_KEYS, FORBIDDEN_STAGES, PROTOCOL_KEYS, RESULT_LIMIT, WRITE_COMMANDS, boundCommand, judgeCommand, passwordParts, readCommand,
+  serviceAddress, throughTunnel,
 } from './document.js';
 import { CLIENT_ARGS } from './script.js';
 
@@ -71,24 +73,50 @@ function decideMongo(target, input) {
   return decision.allowed || why === null ? decision : { ...decision, notReviewed: why };
 }
 
+// tunnelTo: the one host of the connection string, for the tunnel's last server, or { error } with a refusal that
+// holds no part of the string.
+function tunnelToMongo(target, secrets) {
+  const problem = uriProblem(target, secrets);
+  return problem === null ? serviceAddress(secrets[target.uriEnv]) : { error: problem };
+}
+
+// The connection string mongosh gets: the secret as it is without a tunnel, else throughTunnel with the loopback
+// address of the tunnel.
+function clientUri(tunnel, uri) {
+  return tunnel === undefined ? uri : throughTunnel(uri, `${tunnel.host}:${tunnel.port}`);
+}
+
+// What a call through a tunnel hides itself, with the core's texts: the core does not know the rewritten string or the
+// loopback address, which mongosh can print in an error. The secret values and forms are hidden in the same step, so
+// that taking out the address can never split one of them.
+function tunnelHidden(target, secrets, uri, tunnel) {
+  return [...hiddenOf(secrets, hiddenForms(target, secrets)), uri, ...jsonForms([uri]), `${tunnel.host}:${tunnel.port}`];
+}
+
 // Runs one allowed call. The input is read and judged again (a decision after review keeps only the words), and that
-// judged copy is bounded and sent as data in the client's environment, with the fixed arguments.
+// judged copy is bounded and sent as data in the client's environment, with the fixed arguments. Without a tunnel the
+// result is the client's as it is; with one, tunnelHidden is hidden in both streams.
 async function performMongo(target, decision, {
-  env, secrets, timeoutMs, maxBytes, signal, input,
+  env, secrets, timeoutMs, maxBytes, signal, input, opened,
 }) {
   const document = readCommand(input);
   judgeCommand(document, target);
   boundCommand(document, timeoutMs);
-  return runClient({
+  const tunnel = opened?.tunnel;
+  const uri = clientUri(tunnel, secrets[target.uriEnv]);
+  const result = await runClient({
     program: target.program,
     fixedArgs: CLIENT_ARGS,
     env,
-    childEnv: { MGO_URI: secrets[target.uriEnv], MGO_DB: target.database, MGO_DOC: JSON.stringify(document) },
+    childEnv: { MGO_URI: uri, MGO_DB: target.database, MGO_DOC: JSON.stringify(document) },
     homeInWorkFolder: true,
     timeoutMs,
     maxBytes,
     signal,
   });
+  if (tunnel === undefined) return result;
+  const hidden = tunnelHidden(target, secrets, uri, tunnel);
+  return { ...result, stdout: hideSecrets(result.stdout, hidden), stderr: hideSecrets(result.stderr, hidden) };
 }
 
 // The passwords inside the connection string, as written and decoded, and each of them and the whole string as the
@@ -99,16 +127,26 @@ function hiddenForms(target, secrets) {
   return [...parts, ...jsonForms([secrets[target.uriEnv], ...parts])];
 }
 
-// The doctor check: the ping command through the same client and fixed script as a call, never a command of the agent.
+// The program of the check: the one open resolved, or, in the trial of a tunnel, which runs before open, the one open
+// would resolve.
+function programOf(opened, env) {
+  return opened.program === undefined ? resolveProgram(mongoshBin(env), env) : { program: opened.program };
+}
+
+// The doctor check: the ping command through the same client and fixed script as a call, never a command of the agent,
+// through the tunnel when the entry has one. Its detail is always a fixed text of clientVerdict.
 async function doctorMongo(opened, {
   env, secrets, timeoutMs, signal,
 }) {
   const { target } = opened;
+  const hidden = hiddenOf(secrets, hiddenForms(target, secrets));
+  const resolved = programOf(opened, env);
+  if (resolved.error !== undefined) return { ok: false, detail: shown(resolved.error, hidden) };
   const result = await runClient({
-    program: opened.program,
+    program: resolved.program,
     fixedArgs: CLIENT_ARGS,
     env,
-    childEnv: { MGO_URI: secrets[target.uriEnv], MGO_DB: target.database, MGO_DOC: JSON.stringify({ ping: 1 }) },
+    childEnv: { MGO_URI: clientUri(opened.tunnel, secrets[target.uriEnv]), MGO_DB: target.database, MGO_DOC: JSON.stringify({ ping: 1 }) },
     homeInWorkFolder: true,
     timeoutMs,
     maxBytes: DOCTOR_MAX_BYTES,
@@ -117,7 +155,7 @@ async function doctorMongo(opened, {
   return clientVerdict(result, {
     name: 'mongosh',
     describe: (text) => (JSON.parse(text).ok === 1 ? 'ping answered' : null),
-    hidden: hiddenOf(secrets, hiddenForms(target, secrets)),
+    hidden,
     signal,
   });
 }
@@ -215,6 +253,9 @@ export default {
   perform: performMongo,
   doctor: doctorMongo,
   hiddenForms,
+  // Through a tunnel mongosh gets a loopback port of start, and the connection string with its host list replaced.
+  tunnelListener: true,
+  tunnelTo: tunnelToMongo,
   // ksproxy check mongo NAME DOCUMENT: the words joined into one JSON document; text that is not JSON is passed on
   // as a string, which the reader refuses.
   checkInput(words) {

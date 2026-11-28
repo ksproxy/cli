@@ -1,9 +1,11 @@
 // The TLS of the postgres and mysql targets (see "TLS" under postgres and mysql in docs/SERVICES.md). The servers db and
 // crm-db have certificates of the CA of the run, which is no CA of the system: the targets of the examples name it in
-// caFile (see main.js), and the project tls holds targets without it. A verify target without caFile is SKIPPED at start
-// and FAIL in doctor, with a fixed reason and a line that gives the way out; a require target works without caFile with
-// psql; the MariaDB client cannot require TLS without a check, so such a target is skipped too. At the end the logs of
-// both servers show that every connection of the run used TLS.
+// caFile (see main.js), and the project tls holds targets without it. A target that writes "tls": "verify" without
+// caFile is SKIPPED at start and FAIL in doctor, with a fixed reason and a line that gives the way out; a require target
+// works without caFile with psql; the MariaDB client cannot require TLS without a check, so such a target is skipped
+// too. A target without tls and without caFile is prefer: it is OK in doctor and opens at start, with no check of the
+// certificate. At the end the logs of both servers show that every connection of the run used TLS, but the one of the
+// mysql target with prefer, as the MariaDB client 10.11 gets no TLS option for prefer and so uses no TLS.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -20,26 +22,38 @@ const SYSTEM_WAY = (host) => `the certificate was checked against the system's C
 const MARIADB_REQUIRE = 'the MariaDB client cannot require TLS without a check';
 const MARIADB_WAY = 'set "tls" to "verify" (with "caFile" when this system does not trust the CA), or to "prefer"';
 
-// The targets of the project: what an owner who upgrades without caFile has, and the two kinds of require.
+// The targets of the project: verify without caFile, the two kinds of require, and what an owner who writes neither tls
+// nor caFile has.
 const PROJECT_INVENTORY = {
   postgres: [
     {
-      name: 'pg-system', host: 'db', database: 'shop', user: 'agent_ro', passwordEnv: 'SHOP_DB_PASSWORD', allow: ['select 1'],
+      name: 'pg-system', host: 'db', database: 'shop', user: 'agent_ro', passwordEnv: 'SHOP_DB_PASSWORD', tls: 'verify', allow: ['select 1'],
     },
     {
       name: 'pg-require', host: 'db', database: 'shop', user: 'agent_ro', passwordEnv: 'SHOP_DB_PASSWORD', tls: 'require', allow: ['select 1'],
+    },
+    {
+      name: 'pg-prefer', host: 'db', database: 'shop', user: 'agent_ro', passwordEnv: 'SHOP_DB_PASSWORD', allow: ['select 1'],
     },
   ],
   mysql: [
     {
       // The default client, the program mysql, which is the MariaDB client here: its version says so.
-      name: 'my-system', host: 'crm-db', database: 'crm', user: 'agent_ro', passwordEnv: 'CRM_DB_PASSWORD', allow: ['select 1'],
+      name: 'my-system', host: 'crm-db', database: 'crm', user: 'agent_ro', passwordEnv: 'CRM_DB_PASSWORD', tls: 'verify', allow: ['select 1'],
     },
     {
       name: 'my-require', host: 'crm-db', database: 'crm', user: 'agent_ro', passwordEnv: 'CRM_DB_PASSWORD', client: 'mariadb', tls: 'require', allow: ['select 1'],
     },
+    {
+      name: 'my-prefer', host: 'crm-db', database: 'crm', user: 'agent_ro', passwordEnv: 'CRM_DB_PASSWORD', allow: ['select 1'],
+    },
   ],
 };
+// Each target without tls and without caFile: its label, its name and the text of its OPENING line.
+const PREFER = [
+  ['pg', 'pg-prefer', 'agent_ro@db:5432/shop, read-only, TLS prefer'],
+  ['my', 'my-prefer', 'agent_ro@crm-db:3306/crm, read-only, TLS prefer'],
+];
 // Each failing target: its label, its name, the short reason and the way out.
 const FAILING = [
   ['pg', 'pg-system', CERT, SYSTEM_WAY('db')],
@@ -65,8 +79,11 @@ export async function sqlTlsScenario({ checks, env }) {
 
   checks.begin('sql tls: doctor, targets without caFile');
   const ran = await doctor(['--project', PROJECT], env);
-  checks.check('doctor fails, and only the require target of psql is OK', ran.code === 1 && ran.text.includes('1 of 4 targets OK')
+  checks.check('doctor fails, and only the require target of psql and the two prefer targets are OK', ran.code === 1 && ran.text.includes('3 of 6 targets OK')
     && lineOf('pg', 'pg-require', 'OK', 'select 1 answered').test(ran.text), ran.text);
+  for (const [label, name] of PREFER) {
+    checks.check(`${name}: OK without tls and without caFile`, lineOf(label, name, 'OK', 'select 1 answered').test(ran.text), ran.text);
+  }
   for (const [label, name, reason, wayOut] of FAILING) {
     checks.check(`${name}: FAIL, ${reason}`, lineOf(label, name, 'FAIL', reason).test(ran.text), ran.text);
     checks.check(`${name}: the way out names "tls" and "caFile"`, lineOf(label, name, null, wayOut).test(ran.text), ran.text);
@@ -76,6 +93,10 @@ export async function sqlTlsScenario({ checks, env }) {
   const started = await startPlain(env, ['--project', PROJECT]);
   const text = started.output();
   checks.check('pg-require opens without caFile', /pg +pg-require +UP\n/.test(text), text);
+  for (const [label, name, opening] of PREFER) {
+    checks.check(`${name}: opens with TLS prefer`, lineOf(label, name, 'OPENING', opening).test(text)
+      && new RegExp(`${label} +${escaped(name)} +UP\n`).test(text), text);
+  }
   for (const [label, name, reason, wayOut] of FAILING) {
     checks.check(`${name}: SKIPPED, ${reason}`, lineOf(label, name, 'SKIPPED', reason).test(text), text);
     checks.check(`${name}: the way out is said before it`, lineOf(label, name, null, wayOut).test(text), text);
@@ -91,11 +112,14 @@ export async function sqlTlsScenario({ checks, env }) {
     authorized.length > 0 && authorized.every((line) => line.includes(' SSL enabled (protocol=TLSv1.')),
     authorized.filter((line) => !line.includes(' SSL enabled')).join('\n'),
   );
+  // my-prefer connects once, for the select 1 of doctor (open runs nothing for prefer). Prefer gives the client no TLS
+  // option, and the MariaDB client 10.11 then uses no TLS, so that one connection of agent_ro may be without it.
   const connects = fs.readFileSync(MY_LOG, 'utf8').split('\n').filter((line) => line.includes('Connect\tagent_'));
+  const plain = connects.filter((line) => !line.endsWith(' using SSL/TLS'));
   checks.check(
-    `every connection of agent_ro and agent_rw to MariaDB used TLS (${connects.length})`,
-    connects.length > 0 && connects.every((line) => line.endsWith(' using SSL/TLS')),
-    connects.filter((line) => !line.endsWith(' using SSL/TLS')).join('\n'),
+    `every connection of agent_ro and agent_rw to MariaDB used TLS (${connects.length}), but at most the one of my-prefer`,
+    connects.length > plain.length && plain.length <= 1 && plain.every((line) => line.includes('Connect\tagent_ro@')),
+    plain.join('\n'),
   );
   return [ran.text, text];
 }

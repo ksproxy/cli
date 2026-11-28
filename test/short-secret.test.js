@@ -38,6 +38,14 @@ test('a hidden form shorter than 8 characters names the variable it came from, o
   const basic = { auth: { basicUserEnv: 'H_USER', basicPasswordEnv: 'H_PASS' } };
   const both = readSecrets(http, basic, held({ H_USER: 'a', H_PASS: 'b' }));
   assert.deepEqual([both.short, both.shortForms], [['H_PASS'], []], 'the base64 of a:b is short, and the password is named once');
+  // A token of 8 characters with a space at its end is sent, and hidden, as 7.
+  const edge = readSecrets(http, { auth: { bearerEnv: 'H_TOK' } }, held({ H_TOK: 'abcdefg ' }));
+  assert.deepEqual([edge.short, edge.shortForms], [[], ['H_TOK']], 'the form that is sent is short');
+  // A basic password of 10 characters with spaces at its ends is hidden, trimmed, as 4; a user name is never named.
+  const trimmed = readSecrets(http, basic, held({ H_USER: '  ann-the-user ', H_PASS: '   ab12   ' }));
+  assert.deepEqual([trimmed.short, trimmed.shortForms], [[], ['H_PASS']], 'the trimmed password is short');
+  const userEdge = readSecrets(http, basic, held({ H_USER: '  ann  ', H_PASS: LONG }));
+  assert.deepEqual([userEdge.short, userEdge.shortForms], [[], []], 'the trimmed user name is short, and not named');
 
   const redis = kindByKey('redis');
   const userOnly = readSecrets(redis, { userEnv: 'R_USER', passwordEnv: 'R_PASS' }, held({ R_USER: 'bob', R_PASS: LONG }));

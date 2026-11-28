@@ -111,22 +111,28 @@ async function cli(args, env) {
 }
 
 test('a session with postgres and mysql targets: the exact call, every fixed refusal before any start, limits, notes, no secret anywhere', async () => {
+  // shop has no tls, so it is prefer; the others write verify.
   const world = await sqlWorld({
-    postgres: [pgTarget(), pgTarget({ name: 'rw', database: 'shop2', readOnly: false, allow: ['regex(.*)'] })],
-    mysql: [myTarget(), myTarget({ name: 'maria', client: 'mariadb', readOnly: false, allow: ['select ...'] })],
+    postgres: [pgTarget(), pgTarget({
+      name: 'rw', database: 'shop2', readOnly: false, tls: 'verify', allow: ['regex(.*)'],
+    })],
+    mysql: [myTarget({ tls: 'verify' }), myTarget({
+      name: 'maria', client: 'mariadb', readOnly: false, tls: 'verify', allow: ['select ...'],
+    })],
   });
   const run = launch(world, { pg: ['shop', 'rw'], mysql: ['crm', 'maria'] });
   await ready(run);
   const err = run.proc.stderr.text;
   assert.match(err, /pg +shop +WARN +allow\[1\]: "\*" matches one value here \(a number or a quoted string\); write \\\* for the SQL star\n/);
   assert.equal(err.match(/matches one value here/g).length, 1);
-  assert.match(err, /pg +shop +OPENING +agent_ro@db\.internal:5433\/shop, read-only, TLS verify\n/);
+  assert.match(err, /pg +shop +OPENING +agent_ro@db\.internal:5433\/shop, read-only, TLS prefer\n/);
   assert.match(err, /pg +rw +OPENING +agent_ro@db\.internal:5433\/shop2, read-write, TLS verify\n/);
   assert.match(err, /my +crm +OPENING +agent_ro@db\.internal:3306\/crm, read-only, TLS verify\n/);
   assert.match(err, /my +maria +UP\n/);
-  // Opening checked TLS: select 1 for each target, after --version for each mysql target.
+  // Opening checked TLS: select 1 for each target with verify, after --version for each mysql target; none for shop,
+  // which is prefer.
   const atOpen = world.starts().length;
-  assert.equal(atOpen, 6);
+  assert.equal(atOpen, 5);
   const replies = [];
   const ask = async (tool, args) => {
     const reply = await callTool(tool, args, world.agentEnv);
@@ -147,11 +153,12 @@ test('a session with postgres and mysql targets: the exact call, every fixed ref
   assert.ok(childKeys(pgReport.env).every((key) => pgKeys.includes(key)), Object.keys(pgReport.env).join(' '));
   assert.deepEqual([pgReport.env.PGPASSWORD, pgReport.env.PGCONNECT_TIMEOUT, pgReport.env.PGAPPNAME, pgReport.env.PGOPTIONS],
     ['[hidden]', '10', 'ksproxy', '-c default_transaction_read_only=on -c statement_timeout=60000 -c standard_conforming_strings=on']);
-  assert.deepEqual([pgReport.env.PGSSLMODE, pgReport.env.PGSSLROOTCERT], ['verify-full', 'system']);
+  assert.deepEqual([pgReport.env.PGSSLMODE, pgReport.env.PGSSLROOTCERT], ['prefer', undefined]);
   assert.ok(Object.keys(pgReport.env).every((key) => !key.startsWith('KSPROXY_') && key !== PG_VAR && key !== MY_VAR));
 
   const rw = reportOf(await ask('postgres_query', { target: 'rw', query: 'delete from t', timeout_seconds: 7 }));
   assert.equal(rw.env.PGOPTIONS, '-c statement_timeout=7000 -c standard_conforming_strings=on');
+  assert.deepEqual([rw.env.PGSSLMODE, rw.env.PGSSLROOTCERT], ['verify-full', 'system']);
   assert.deepEqual(rw.argv, [...PSQL_FIXED(5433, 'shop2', 7000, false), 'delete from t']);
 
   const crm = reportOf(await ask('mysql_query', { target: 'crm', query: "select `Name` from people where note = 'a -- b'" }));
@@ -219,7 +226,7 @@ test('a session with postgres and mysql targets: the exact call, every fixed ref
   const recorded = JSON.parse(fs.readFileSync(path.join(world.sessionDir, 'session.json'), 'utf8')).targets;
   assert.deepEqual(recorded.find((t) => t.name === 'shop'), {
     kind: 'postgres', name: 'shop', host: 'db.internal', port: 5433, database: 'shop', user: 'agent_ro', passwordEnv: PG_VAR, readOnly: true,
-    tls: 'verify', caFile: null, description: 'shop stand-in', allow: pgTarget().allow, program: fakePsql, state: 'up',
+    tls: 'prefer', caFile: null, description: 'shop stand-in', allow: pgTarget().allow, program: fakePsql, state: 'up',
   });
   assert.equal(recorded.find((t) => t.name === 'maria').family, 'mariadb');
   await waitFor(() => /my +crm +DENIED/.test(run.proc.stdout.text), 10000, 'the live lines');
@@ -241,7 +248,7 @@ test('an unlisted statement goes to the reviewer; a fixed refusal never does; a 
   const world = await sqlWorld({
     reviewer,
     postgres: [
-      pgTarget({ allow: ['select 1'], review: { reviewer: 'r1', policy: 'reads only' } }),
+      pgTarget({ allow: ['select 1'], tls: 'verify', review: { reviewer: 'r1', policy: 'reads only' } }),
       pgTarget({ name: 'unset', passwordEnv: 'SQL_TEST_NOT_SET' }),
     ],
     mysql: [myTarget({ name: 'gone', client: 'mariadb' })],
@@ -301,15 +308,17 @@ test('a TLS check that fails skips the target at start and fails it in doctor, w
   const world = await sqlWorld({
     postgres: [
       pgTarget({ name: 'good', caFile: ca }),
-      pgTarget({ name: 'badcert', host: bad }),
+      pgTarget({ name: 'badcert', host: bad, tls: 'verify' }),
       pgTarget({ name: 'notls', host: 'no-tls.example.com', tls: 'require' }),
-      pgTarget({ name: 'oldpq', host: 'old-libpq.example.com' }),
+      pgTarget({ name: 'oldpq', host: 'old-libpq.example.com', tls: 'verify' }),
       pgTarget({ name: 'noca', caFile: gone }),
+      pgTarget({ name: 'loose', host: bad }),
     ],
     mysql: [
       myTarget({ name: 'mariareq', client: 'mariadb', tls: 'require' }),
       myTarget({ name: 'mybad', host: bad, caFile: ca }),
       myTarget({ name: 'here', host: 'localhost' }),
+      myTarget({ name: 'myloose', host: bad }),
     ],
   });
   const failures = [
@@ -328,28 +337,40 @@ test('a TLS check that fails skips the target at start and fails it in doctor, w
     }
   };
 
-  const run = launch(world, { pg: ['good', 'badcert', 'notls', 'oldpq', 'noca'], mysql: ['mariareq', 'mybad', 'here'] });
+  const run = launch(world, { pg: ['good', 'badcert', 'notls', 'oldpq', 'noca', 'loose'], mysql: ['mariareq', 'mybad', 'here', 'myloose'] });
   await ready(run);
   const err = run.proc.stderr.text;
   assert.match(err, /pg +good +OPENING +agent_ro@db\.internal:5433\/shop, read-only, TLS verify with caFile\n/);
   assert.match(err, /pg +good +UP\n/);
   assert.match(err, /my +here +OPENING +agent_ro@localhost:3306\/crm, read-only, TLS prefer\n/);
   assert.match(err, /my +here +UP\n/);
+  // A remote host without tls and without caFile is prefer: no TLS check at open, so the certificate that verify
+  // refuses on badcert does not stop it.
+  assert.match(err, new RegExp(`pg +loose +OPENING +agent_ro@${escaped(bad)}:5433/shop, read-only, TLS prefer\\n`));
+  assert.match(err, /pg +loose +UP\n/);
+  assert.match(err, new RegExp(`my +myloose +OPENING +agent_ro@${escaped(bad)}:3306/crm, read-only, TLS prefer\\n`));
+  assert.match(err, /my +myloose +UP\n/);
   shows(err, 'SKIPPED');
   const good = reportOf(await callTool('postgres_query', { target: 'good', query: 'select 1' }, world.agentEnv));
   assert.deepEqual([good.env.PGSSLMODE, good.env.PGSSLROOTCERT], ['verify-full', ca]);
   const here = reportOf(await callTool('mysql_query', { target: 'here', query: 'select 1' }, world.agentEnv));
   assert.ok(!here.argv.some((arg) => arg.startsWith('--ssl')), 'prefer gives no TLS option, as before');
+  const loose = reportOf(await callTool('postgres_query', { target: 'loose', query: 'select 1' }, world.agentEnv));
+  assert.deepEqual([loose.env.PGSSLMODE, loose.env.PGSSLROOTCERT], ['prefer', undefined]);
+  const myloose = reportOf(await callTool('mysql_query', { target: 'myloose', query: 'select 1' }, world.agentEnv));
+  assert.ok(!myloose.argv.some((arg) => arg.startsWith('--ssl')), 'prefer gives no TLS option on a remote host too');
   const skipped = await callTool('postgres_query', { target: 'badcert', query: 'select 1' }, world.agentEnv);
   assert.equal(skipped.isError, true);
   assert.equal(await stopWith(run), 0);
 
-  const doctor = await cli(['doctor', '--pg', 'good,badcert,notls,oldpq,noca', '--mysql', 'mariareq,mybad,here'], world.env);
+  const doctor = await cli(['doctor', '--pg', 'good,badcert,notls,oldpq,noca,loose', '--mysql', 'mariareq,mybad,here,myloose'], world.env);
   assert.equal(doctor.code, 1, doctor.stdout);
   shows(doctor.stdout, 'FAIL');
   assert.match(doctor.stdout, /pg +good +OK +select 1 answered\n/);
   assert.match(doctor.stdout, /my +here +OK +select 1 answered\n/);
-  assert.match(doctor.stdout, /\n2 of 8 targets OK\n$/);
+  assert.match(doctor.stdout, /pg +loose +OK +select 1 answered\n/);
+  assert.match(doctor.stdout, /my +myloose +OK +select 1 answered\n/);
+  assert.match(doctor.stdout, /\n4 of 10 targets OK\n$/);
   for (const text of [err, doctor.stdout]) {
     for (const secret of [PG_SECRET, MY_SECRET]) assert.ok(!text.includes(secret));
   }

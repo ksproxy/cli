@@ -12,11 +12,13 @@ const FUNCTIONS = ['decide', 'agentSection', 'validate', 'hint', 'openingMessage
 const OPTIONAL_FUNCTIONS = [
   'wordsNotForReview', 'notForReview', 'reviewServerCheck', 'scrubDirs', 'scrubText', 'forCheck', 'checkExtra', 'secretFiles',
   'reapStale', 'prepare', 'close', 'onCloseTimeout', 'sessionFiles', 'secrets', 'checkInput', 'ruleWarnings', 'hiddenForms',
-  'ports', 'freeSample', 'doctor', 'listFields',
+  'ports', 'freeSample', 'doctor', 'listFields', 'tunnelTo', 'tunnelProblem', 'tunnelChecksCertificate',
 ];
 const DETAIL_SHAPES = ['object'];
 // A brokered kind is carried out inside ksproxy start by perform; every other kind names the one process to start with command.
-const BROKERED_ONLY = ['perform', 'probe', 'hiddenForms'];
+// tunnelTo says a kind can be tunnelled; tunnelProblem, tunnelListener and tunnelChecksCertificate only refine it.
+const BROKERED_ONLY = ['perform', 'probe', 'hiddenForms', 'tunnelTo', 'tunnelProblem', 'tunnelListener', 'tunnelChecksCertificate'];
+const TUNNEL_EXTRAS = ['tunnelProblem', 'tunnelListener', 'tunnelChecksCertificate'];
 const UNBROKERED_ONLY = ['command', 'state'];
 
 const identifiers = (kind) => [kind.key, kind.label, kind.tool.name];
@@ -54,6 +56,12 @@ export function checkKind(kind, list) {
     assert.equal(typeof kind.perform, 'function', at('perform'));
     if (kind.probe !== undefined) assert.equal(typeof kind.probe, 'function', at('probe'));
     for (const name of UNBROKERED_ONLY) assert.equal(kind[name], undefined, at(`a brokered kind has no ${name}`));
+    if (kind.tunnelTo === undefined) {
+      for (const name of TUNNEL_EXTRAS) assert.equal(kind[name], undefined, at(`${name} is only for a kind with tunnelTo`));
+    }
+    assert.ok(kind.tunnelListener === undefined || kind.tunnelListener === true, at('tunnelListener is true or left out'));
+    // The route is the owner's: ksproxy init never writes one (the kubernetes kind, not brokered, has its own tunnel).
+    assert.ok(kind.sample.every((entry) => entry.tunnel === undefined), at('a sample has no tunnel'));
   } else {
     for (const name of UNBROKERED_ONLY) assert.equal(typeof kind[name], 'function', at(name));
     for (const name of BROKERED_ONLY) assert.equal(kind[name], undefined, at(`${name} is only for a brokered kind`));

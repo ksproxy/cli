@@ -13,7 +13,7 @@ const decideSsh = sshKind.decide;
 const fakeSsh = fileURLToPath(new URL('./fixtures/fake-ssh.js', import.meta.url));
 
 const JUMP = 'ssh -i .ssh/app_key opsuser@192.0.2.10';
-const PREFIX = 'ssh -T -o BatchMode=yes -i .ssh/app_key -o ConnectTimeout=10 opsuser@192.0.2.10 --';
+const PREFIX = 'ssh -T -e none -o BatchMode=yes -i .ssh/app_key -o ConnectTimeout=10 opsuser@192.0.2.10 --';
 const SECRETS = ['app_key', '192.0.2', 'opsuser', '.ssh', 'BatchMode'];
 
 let base;
@@ -83,7 +83,7 @@ test('two jumps nest in order', async () => {
   assert.equal(r.isError, false, r.text);
   assert.match(
     r.text,
-    /ran two ssh -T -o BatchMode=yes -i a -o ConnectTimeout=10 u@b -- ssh -T -o BatchMode=yes -p 2222 -o ConnectTimeout=10 v@c -- uptime$/,
+    /ran two ssh -T -e none -o BatchMode=yes -i a -o ConnectTimeout=10 u@b -- ssh -T -e none -o BatchMode=yes -p 2222 -o ConnectTimeout=10 v@c -- uptime$/,
   );
 });
 

@@ -10,6 +10,7 @@ import {
 import sshKind from '../src/kinds/ssh/index.js';
 import kubernetesKind from '../src/kinds/kubernetes/index.js';
 import localKind from '../src/kinds/local/index.js';
+import { kindByKey } from '../src/kinds/index.js';
 import { handleMessage } from '../src/mcp.js';
 import { InventoryError, validateInventory } from '../src/inventory.js';
 import { agentMdText } from '../src/agent-md.js';
@@ -329,13 +330,18 @@ function brokenInventories() {
   local('protect item a dot', { protect: ['.'] });
   local('protect item repeated', { protect: ['a/b', './a//b'] });
 
+  // A brokered kind without the tunnel hooks refuses a tunnel, whatever the route.
+  for (const key of ['kafka', 'command', 'mcp']) {
+    add(`${key} tunnel`, { [key]: [{ ...kindByKey(key).sample[0], tunnel: { host: 'bastion1', jumps: ['ssh ops@192.0.2.10'] } }] });
+  }
+
   add('reviewer name uppercase', { reviewers: { Rv: GOOD.reviewers.rv } });
   add('reviewer entry a string', { reviewers: { rv: 'x' } });
   reviewer('unknown key', { nope: 1 });
   reviewer('baseUrl missing', { baseUrl: undefined });
   reviewer('baseUrl not a url', { baseUrl: 'not a url' });
   reviewer('baseUrl a number', { baseUrl: 5 });
-  reviewer('baseUrl http to a remote host', { baseUrl: 'http://review.example.com/v1' });
+  reviewer('baseUrl ws to a remote host', { baseUrl: 'ws://review.example.com/v1' });
   reviewer('baseUrl ftp', { baseUrl: 'ftp://localhost/v1' });
   reviewer('baseUrl with a user name', { baseUrl: 'https://u:p@review.example.com/v1' });
   reviewer('baseUrl with a query', { baseUrl: 'https://review.example.com/v1?k=1' });

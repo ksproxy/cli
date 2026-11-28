@@ -1,13 +1,15 @@
-import { decide, describeAllow, isRegexRule } from '../../allowlist.js';
 import {
-  InventoryError, checkAllow, checkKeys, checkReview, checkSecretVariable,
+  allowWarnings, decide, describeAllow, isRegexRule,
+} from '../../allowlist.js';
+import {
+  InventoryError, checkAllow, checkKeys, checkReview, checkSecretVariable, plainHttpWarnings,
 } from '../../checks.js';
 import { REVIEWED } from '../shared.js';
 import { DOCTOR_MAX_BYTES, hiddenOf, httpVerdict } from './doctor.js';
 import httpKind, { QUERY_NOTE } from '../http/index.js';
 import {
-  PAGING_HINT, authHeader, authProblem, authSecrets, encodedForms, matchRequestRule, readRequest, requestWords,
-  reviewWords, send, splitRule, validateBaseUrl,
+  PAGING_HINT, authHeader, authProblem, authSecrets, connectOf, encodedForms, matchRequestRule, readRequest, requestWords,
+  reviewWords, send, splitRule, urlAddress, validateBaseUrl,
 } from './http.js';
 
 // The shape that two brokered kinds on the http engine share: elasticsearch and rabbitmq. A kind gives its names, its
@@ -106,8 +108,20 @@ export function httpServiceKind(spec) {
     secrets(target) {
       return authSecrets(engineAuth(target.auth));
     },
+    // The warnings of start and check: those of the rules, and one for plain http to a host that is not this machine.
+    ruleWarnings(target) {
+      return [...allowWarnings(target.allow), ...plainHttpWarnings(target.baseUrl, 'url')];
+    },
     openingMessage(target) {
       return `${target.baseUrl}, ${authText(target.auth)}`;
+    },
+    // The service address for a tunnel: the host and port of url, which holds no secret.
+    tunnelTo(target) {
+      return urlAddress(target.baseUrl);
+    },
+    // An https target always checks the certificate, against the real host, as without a tunnel.
+    tunnelChecksCertificate(target) {
+      return new URL(target.baseUrl).protocol === 'https:';
     },
     open(target, { secrets }) {
       const problem = authProblem(engineAuth(target.auth), secrets);
@@ -145,23 +159,30 @@ export function httpServiceKind(spec) {
       return { ...decision, argv, notReviewed: NOT_FOR_REVIEW };
     },
     async perform(target, decision, {
-      secrets, timeoutMs, maxBytes, signal, input,
+      secrets, timeoutMs, maxBytes, signal, input, opened,
     }) {
       const request = readRequest(input, pathOptions);
       return send({
-        baseUrl: target.baseUrl, headers: headersOf(target.auth, secrets), ...request, timeoutMs, maxBytes, signal,
+        baseUrl: target.baseUrl, headers: headersOf(target.auth, secrets), ...request, timeoutMs, maxBytes, signal, ...connectOf(opened),
       });
     },
     // The base64 credential of basic auth and the secrets as a JSON body shows them, which the core hides with the values.
     hiddenForms(target, secrets) {
       return encodedForms(engineAuth(target.auth), secrets);
     },
-    // The doctor check: the one fixed GET of the spec through the same send, never a rule of the agent.
+    // The doctor check: the one fixed GET of the spec through the same send, never a rule of the agent; through the
+    // tunnel when the entry has one, the entry of the trial at start ({ kind, target } and the tunnel) included.
     async doctor(opened, { secrets, timeoutMs, signal }) {
       const { target } = opened;
       const request = readRequest({ method: 'GET', path: spec.doctorPath }, pathOptions);
       const result = await send({
-        baseUrl: target.baseUrl, headers: headersOf(target.auth, secrets), ...request, timeoutMs, maxBytes: DOCTOR_MAX_BYTES, signal,
+        baseUrl: target.baseUrl,
+        headers: headersOf(target.auth, secrets),
+        ...request,
+        timeoutMs,
+        maxBytes: DOCTOR_MAX_BYTES,
+        signal,
+        ...connectOf(opened),
       });
       return httpVerdict(result, {
         request: `GET ${spec.doctorPath}`,

@@ -757,6 +757,32 @@ function capBytes(text, maxBytes) {
   return { text: bytes.subarray(0, maxBytes).toString('utf8'), cut: true };
 }
 
+// The core's own state of the tunnel of each opened entry, by the entry's tunnel object: { host, down, hold, check,
+// close }. It is never on the entry, so no kind, no record and no file can reach it. start and doctor keep it here
+// when a tunnel opens (keepTunnel).
+const TUNNELS = new WeakMap();
+
+export function keepTunnel(tunnel, control) {
+  TUNNELS.set(tunnel, control);
+}
+
+// The state of the tunnel of an opened entry, or undefined when it has none (or when there is no entry, as in a
+// call built by a test).
+export function tunnelControl(opened) {
+  const tunnel = opened?.tunnel;
+  return tunnel === undefined ? undefined : TUNNELS.get(tunnel);
+}
+
+// Holds the gate of the listener of an opened entry while a call, a probe or a doctor check runs: gives the release
+// function, which does nothing for an entry without a tunnel, for a tunnel without a listener and while it is down.
+export function holdTunnel(opened) {
+  const control = tunnelControl(opened);
+  return control === undefined ? () => {} : control.hold();
+}
+
+// The refusal of a call on a target whose shared connection is gone: it stays down until start is run again.
+const TUNNEL_DOWN = 'the connection to this target is down until ksproxy start is run again';
+
 // One brokered call inside ksproxy start, as the call server hands it over: the target comes from start's own
 // list of opened targets, never from session.json. Every refusal is audited here; an error is a refusal with a fixed text.
 export async function answerCall(request, {
@@ -802,6 +828,7 @@ export async function answerCall(request, {
   const { decision, reviewed } = step;
   // The session can stop while the reviewer thinks: an approval that comes after the stop does not run the call.
   if (signal.aborted) return refuse(callRefusal(CALL_FAILED.noAnswer, word, name).text, 'session stopped', 'the session stopped before the call ran');
+  if (tunnelControl(open.opened)?.down === true) return refuse(callRefusal(TUNNEL_DOWN, word, name).text, 'target down', TUNNEL_DOWN);
 
   // A program can print its own environment: every secret value of the target, and every form of one that the kind
   // gives, is hidden before the cut, and the end of a stream that did not end on its own, where one can be cut, is
@@ -811,6 +838,8 @@ export async function answerCall(request, {
   const started = Date.now();
   let values;
   let result;
+  // The listener of a tunnel accepts connections only while the call runs.
+  const release = holdTunnel(open.opened);
   try {
     values = hiddenTexts(kindObject, open);
     result = await performWithin(kindObject, open, decision, {
@@ -818,6 +847,8 @@ export async function answerCall(request, {
     });
   } catch {
     return failed();
+  } finally {
+    release();
   }
   if (result === STOPPED) return refuse(callRefusal(CALL_FAILED.noAnswer, word, name).text, 'session stopped', 'the session stopped during the call');
   if (!validResult(result)) return failed();

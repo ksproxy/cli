@@ -47,8 +47,8 @@ test('reviewer fields are validated', () => {
   fails(r({ baseUrl: 'https://x/v1', model: 'm', extra: 1 }), /unknown key "extra"/);
   fails(r({ model: 'm' }), /baseUrl: must be a URL/);
   fails(r({ baseUrl: 'not a url', model: 'm' }), /baseUrl: must be a URL/);
-  fails(r({ baseUrl: 'http://example.com/v1', model: 'm' }), /baseUrl: must use https/);
-  fails(r({ baseUrl: 'ftp://localhost/v1', model: 'm' }), /baseUrl: must use https/);
+  fails(r({ baseUrl: 'ftp://localhost/v1', model: 'm' }), /baseUrl: must use http or https$/);
+  fails(r({ baseUrl: 'ws://review.example.com/v1', model: 'm' }), /baseUrl: must use http or https$/);
   fails(r({ baseUrl: 'https://user:pw@x/v1', model: 'm' }), /baseUrl: must not contain/);
   fails(r({ baseUrl: 'https://x/v1?k=1', model: 'm' }), /baseUrl: must not contain/);
   fails(r({ baseUrl: 'https://x/v1' }), /model: must be/);
@@ -73,9 +73,10 @@ test('keyEnv may not name a variable the session needs', () => {
   }
 });
 
-test('http is accepted for the three local hosts', () => {
-  for (const host of ['localhost', '127.0.0.1', '[::1]']) {
-    validateInventory({ reviewers: { a: { baseUrl: `http://${host}:1234/v1/`, model: 'm' } } });
+test('http is accepted for any host: for the three local hosts and for another host', () => {
+  for (const host of ['localhost', '127.0.0.1', '[::1]', 'review.example.com', '192.0.2.10']) {
+    const inv = validateInventory({ reviewers: { a: { baseUrl: `http://${host}:1234/v1`, model: 'm' } } });
+    assert.equal(inv.reviewers.a.baseUrl, `http://${host}:1234/v1/`);
   }
 });
 

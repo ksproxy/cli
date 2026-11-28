@@ -159,7 +159,9 @@ test('validate: every inventory error', () => {
   refused({ command: ['x'], env: { A: { fromEnv: 'lower' } } }, 'env["A"].fromEnv: must be the name of an environment variable (capitals, digits and "_") that does not start with KSPROXY_');
   refused({ url: 'https://example.com', env: {} }, 'env: is only for a local MCP server (command)');
   for (const bad of ['not a url', 42, '']) refused({ url: bad }, 'url: must be a URL');
-  for (const bad of ['http://example.com/mcp', 'ftp://example.com', 'http://192.0.2.1/mcp']) refused({ url: bad }, 'url: must use https (http is accepted for localhost only)');
+  // TLS is the owner's choice: plain http to another host is accepted (start and check warn of it).
+  for (const good of ['http://example.com/mcp', 'http://192.0.2.1/mcp', 'http://web1.example.com:8080/mcp?tools=all']) assert.equal(validated({ url: good }).url, good);
+  for (const bad of ['ftp://example.com', 'ws://example.com/mcp', 'file:///tmp/mcp']) refused({ url: bad }, 'url: must use http or https');
   for (const bad of ['https://u:p@example.com/mcp', 'https://u@example.com/mcp', 'https://example.com/mcp#x']) refused({ url: bad }, 'url: must not contain a user name, a password or a fragment');
   const url = 'https://api.example.com/mcp';
   refused({ url, login: 'oauth' }, 'login: must be "none", "token" or "basic"');
@@ -485,6 +487,17 @@ test('ruleWarnings: a url query name or a command word that seems to hold a secr
   const remote = validated({ url: 'https://api.example.com/mcp?tools=all&api_KEY=v1&x=1&Token=v2&sig=v3&author=v4&passwd=v5&my_Secret=v6&password=v7' });
   assert.deepEqual(mcp.ruleWarnings(remote), [1, 3, 4, 5, 6, 7, 8].map(query));
   assert.deepEqual(mcp.ruleWarnings(validated({ url: 'https://api.example.com/mcp?tools=all' })), []);
+  // Plain http to a host that is not this machine: one warning, after those of the rules and of the query.
+  const plain = (host) => `url: plain http: any credential, every request and every answer travel without TLS, and anyone on the way to ${host} can read them; use https when the server has it`;
+  assert.deepEqual(mcp.ruleWarnings(validated({ url: 'http://api.example.com/mcp' })), [plain('api.example.com')]);
+  assert.deepEqual(mcp.ruleWarnings(validated({ url: 'http://192.0.2.1:8080/mcp?api_key=v1', allow: [{ tool: 'add', arguments: { k: 'regex((a+)+)' } }] })), [
+    'allow[0].arguments.k: this pattern can be very slow on some inputs', query(0), plain('192.0.2.1'),
+  ]);
+  for (const quiet of ['https://192.0.2.1/mcp', 'http://localhost:8080/mcp', 'http://127.0.0.1:8080/mcp', 'http://[::1]:8080/mcp']) {
+    assert.deepEqual(mcp.ruleWarnings(validated({ url: quiet })), [], quiet);
+  }
+  // A local server has no url, so no such warning.
+  assert.ok(!mcp.ruleWarnings(validated({ command: ['server', 'http://web1.example.com/x'] })).some((w) => w.includes('plain http')));
   const userinfo = (i) => `command[${i}]: holds a URL with a user name and a password; the command is written whole to session.json and shown on the OPENING line, so put the secret in env with {"fromEnv": NAME}`;
   const option = (i) => `command[${i}]: looks like an option that gives a secret; the command is written whole to session.json and shown on the OPENING line, so put the secret in env with {"fromEnv": NAME}`;
   const command = [

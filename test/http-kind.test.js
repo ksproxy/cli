@@ -23,6 +23,9 @@ const USER = 'svc-S3CR3T-user';
 const PASSWORD = 'pw-S3CR3T-0d9a-unmistakable';
 const KEY = 'key-S3CR3T-55aa-unmistakable';
 const SECRETS = [TOKEN, USER, PASSWORD, KEY, Buffer.from(`${USER}:${PASSWORD}`).toString('base64')];
+const SLOW = 'this pattern can be very slow on some inputs';
+const PLAIN = (field, host) => `${field}: plain http: any credential, every request and every answer travel without TLS, and anyone on the way to ${host} can read them; use https when the server has it`;
+const escaped = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const ALLOW = [
   'GET /api/search', 'GET /api/dashboards/uid/*', 'GET /api/folders/...', 'POST /api/ds/query +body', 'GET /\\*/_search',
   'regex(GET /api /v[12] /users)', 'GET /echo-headers', 'GET /missing', 'GET /redirect',
@@ -157,7 +160,10 @@ test('an http entry is validated into a target, and every mistake is an inventor
   });
   fails({ headers: {} }, 'http "g": unknown key "headers"');
   fails({ baseUrl: undefined }, 'http "g": baseUrl: must be a URL');
-  fails({ baseUrl: 'http://grafana.example.com' }, 'http "g": baseUrl: must use https (http is accepted for localhost only)');
+  // TLS is the owner's choice: plain http to another host is accepted (start and check warn of it).
+  assert.equal(one({ baseUrl: 'http://grafana.example.com' }).baseUrl, 'http://grafana.example.com/');
+  assert.equal(one({ baseUrl: 'http://192.0.2.10:3000/base' }).baseUrl, 'http://192.0.2.10:3000/base/');
+  fails({ baseUrl: 'ftp://grafana.example.com' }, 'http "g": baseUrl: must use http or https');
   fails({ baseUrl: 'https://h.example.com/?x=1' }, 'http "g": baseUrl: must not contain a user name, a password, a query or a fragment');
   const forms = 'http "g": auth: must be {"bearerEnv": NAME}, {"basicUserEnv": NAME, "basicPasswordEnv": NAME} or {"headerName": HEADER, "headerEnv": NAME}';
   for (const auth of [null, 'TOKEN', [], {}, { tokenEnv: 'T' }, { bearerEnv: 'T', headerEnv: 'K' }, { basicUserEnv: 'U' }, { headerName: 'X' }]) {
@@ -256,6 +262,15 @@ test('the target in the menu, the opening line, the session record, the secrets 
   assert.ok(!any.includes('reviewed before'));
   assert.ok(any.includes('The query names `_method`'));
   assert.ok(!notes.includes('grafana.example.com'), 'the host is not in the notes');
+  // The warnings of start and check: those of the rules, then plain http to a host that is not this machine.
+  const slow = ['GET /x', 'regex(GET /(a+)+)'];
+  assert.deepEqual(httpKind.ruleWarnings(target(null, { baseUrl: 'http://grafana.example.com/', allow: slow })), [`allow[1]: ${SLOW}`, PLAIN('baseUrl', 'grafana.example.com')]);
+  assert.deepEqual(httpKind.ruleWarnings(target(null, { baseUrl: 'http://192.0.2.10:3000/' })), [PLAIN('baseUrl', '192.0.2.10')]);
+  assert.deepEqual(httpKind.ruleWarnings(target(null, { allow: slow })), [`allow[1]: ${SLOW}`]);
+  for (const baseUrl of ['https://grafana.example.com/', 'http://localhost:3000/', 'http://127.0.0.1:3000/', 'http://[::1]:3000/']) {
+    assert.deepEqual(httpKind.ruleWarnings(target(null, { baseUrl })), [], baseUrl);
+  }
+  assert.deepEqual(httpKind.ruleWarnings(target(null, { allow: 'any' })), []);
 });
 
 test('the audit keeps the method, the path and whether a body was sent, and the log line shows them', () => {
@@ -300,6 +315,15 @@ test('ksproxy check http takes the method, the path and +body as words', async (
   assert.equal((await check('GET', '//evil')).stdout, 'REFUSED: path may not contain an empty segment: no "//" and no "/" at the end\n');
   assert.equal((await check('GET')).stdout, 'REFUSED: path must be a string\n');
   assert.deepEqual(httpKind.checkInput(['GET', '/x']), { method: 'GET', path: '/x' });
+});
+
+test('ksproxy check http says the warning for plain http to another host, after the warnings of the rules', async () => {
+  const world = await httpWorld({ targets: [{ name: 'far', baseUrl: 'http://grafana.example.com/base', allow: ['GET /x', 'regex(GET /(a+)+)'] }] });
+  assert.deepEqual(await cli(['check', 'http', 'far', 'GET', '/x'], world.env), {
+    code: 0,
+    stdout: 'ALLOWED by rule: GET /x\n',
+    stderr: `WARNING: http "far": allow[1]: ${SLOW}\nWARNING: http "far": ${PLAIN('baseUrl', 'grafana.example.com')}\n`,
+  });
 });
 
 test('tools/list: the three original tools always, http_request only when the inventory holds an http target or cannot be read', async () => {
@@ -497,10 +521,16 @@ test('a secret that could split a header skips the target at open, and an unlist
       {
         name: 'rev', baseUrl: serviceUrl, allow: ['GET /api/search'], review: { reviewer: 'r1', policy: 'read only' },
       },
+      { name: 'far', baseUrl: 'http://grafana.example.com/base', allow: ['GET /x'] },
     ],
   });
-  const run = launch(world, { http: ['bad', 'rev'] });
+  const run = launch(world, { http: ['bad', 'rev', 'far'] });
   await ready(run);
+  // Plain http to another host opens, after a WARN line; plain http to this machine has no warning. Nothing is sent
+  // to grafana.example.com: open does not call the service.
+  assert.match(run.proc.stderr.text, new RegExp(`http +far +WARN +${escaped(PLAIN('baseUrl', 'grafana.example.com'))}\n[^\n]*http +far +OPENING +http://grafana\\.example\\.com/base/, no auth\n`));
+  assert.match(run.proc.stderr.text, /http +far +UP\n/);
+  assert.equal(run.proc.stderr.text.match(/plain http/g).length, 1, 'only far has the warning');
   assert.match(run.proc.stderr.text, /http +bad +SKIPPED +HTTP_TEST_BAD holds a character that is not allowed\n/);
   assert.match(run.proc.stderr.text, /http +rev +REVIEW +reviewer r1, accepts sure/);
   const before = seen.length;

@@ -196,6 +196,46 @@ test('a remote server through start in each era: the token sent in a header only
   }
 });
 
+// The stand-in listens on 127.0.0.1; [::ffff:127.0.0.1] reaches it through a name that is not one of the loopback names,
+// as a server on another host would be named, so that nothing leaves this machine.
+test('a remote server over plain http to another host: start says a WARN line before it opens, and check says it too', async () => {
+  const server = await startHttpStandIn({ tools: TOOLS });
+  try {
+    const url = server.url.replace('//127.0.0.1:', '//[::ffff:127.0.0.1]:');
+    const world = await mcpWorld([
+      { name: 'far', url, allow: ['get_issue', { tool: 'add_comment', arguments: { body: 'regex((a+)+)' } }] },
+      { name: 'near', url: server.url, allow: ['get_issue'] },
+    ]);
+    const plain = 'url: plain http: any credential, every request and every answer travel without TLS, and anyone on the way to [::ffff:7f00:1] can read them; use https when the server has it';
+    const slow = 'allow[1].arguments.body: this pattern can be very slow on some inputs';
+    const run = start(world);
+    await ready(run);
+    const lines = run.proc.stderr.text.split('\n');
+    const at = (pattern) => lines.findIndex((line) => pattern.test(line));
+    const warned = lines.findIndex((line) => / far +WARN +/.test(line) && line.endsWith(plain));
+    assert.ok(warned >= 0, run.proc.stderr.text);
+    const ruled = at(new RegExp(`mcp +far +WARN +${slow.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`));
+    assert.ok(ruled >= 0 && ruled < warned, 'the warnings of the rules come first');
+    assert.equal(at(/mcp +far +OPENING +http:\/\/\[::ffff:7f00:1\]:\d+\/mcp, no login$/), warned + 1, 'the warning comes just before the target opens');
+    assert.ok(at(/mcp +far +UP$/) > warned, 'far opens');
+    assert.ok(at(/mcp +near +UP$/) >= 0);
+    assert.equal(run.proc.stderr.text.match(/plain http/g).length, 1, 'plain http to this machine has no warning');
+    assert.deepEqual(await call(world, 'far', 'get_issue', { issue_key: 'SHOP-1' }), {
+      text: 'exit code: 0\n--- stdout ---\ncalled get_issue with {"issue_key":"SHOP-1"}', isError: false,
+    });
+    run.proc.emit('SIGINT');
+    assert.equal(await run.done, 0);
+
+    const proc = fakeProcess();
+    const code = await main(['check', 'mcp', 'far', 'get_issue'], world.env, { process: proc });
+    assert.deepEqual({ code, out: proc.stdout.text, err: proc.stderr.text }, {
+      code: 0, out: 'ALLOWED by rule: get_issue\n', err: `WARNING: mcp "far": ${slow}\nWARNING: mcp "far": ${plain}\n`,
+    });
+  } finally {
+    await server.close();
+  }
+});
+
 test('a secret, its JSON form and the base64 of basic auth that cross a clip edge reach no answer and no description', async () => {
   // A quote and a backslash, so that JSON writes the secret otherwise.
   const quoted = 'Qu0t3d"mcp\\start-value-0123';

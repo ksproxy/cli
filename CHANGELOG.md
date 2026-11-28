@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-28
+
+### Added
+
+- **A service behind a server: `tunnel`.** A `postgres`, `mysql`, `redis`, `mongodb`, `http`, `elasticsearch` or `rabbitmq` target may have `"tunnel": { "host": "bastion1", "jumps": [...] }`, with `jumps` as for an ssh target. `ksproxy start` reaches the service through that server (and the jumps), with no ssh forwarding that you start by hand. You write the target as if this machine could reach the service. No local port is written anywhere: `postgres`, `mysql` and `mongodb` get a loopback port that the system chooses and that accepts only while a call, the open or a check of that target runs, and `redis`, `http`, `elasticsearch` and `rabbitmq` need no port: the ssh stream is the socket of each request. Their `Host` header is the real host, an `https` target still checks the certificate against the real host, a plain `http` target is allowed and gets the warning, and a proxy of the environment is never used for a tunnelled request. One shared connection is opened per first server in a `start`, and `start` asks for a password once per server. Each target is tried once when it opens, and a failed route is `SKIPPED` with a reason. `start` warns for a target that does not check the certificate of the service, since every server on the route can then read the traffic; TLS stays optional. When the shared connection drops, the target stays down until `ksproxy start` is run again, and a call to it is refused with `the connection to this target is down until ksproxy start is run again`. `ksproxy doctor` opens the first servers too and names one that fails. A `mysql` target with `"tls": "verify"` or a `caFile`, and a `mongodb` target with TLS options, are refused with a tunnel. `kafka`, `command` and `mcp` cannot use a tunnel: `this kind cannot use a tunnel`. The `tunnel` of a `kubernetes` target is unchanged. No new command and no new flag. See `docs/TUNNELS.md` and the limits in `SECURITY.md`.
+
+### Changed
+
+- **Every `http`, `elasticsearch` and `rabbitmq` call is sent with Node's `http` and `https` request, not with `fetch`.** The service sees the same request as before, and `fetch` could not send the real `Host` header that a `tunnel` needs. Three differences can be seen, with a tunnel or without one. Each call has its own connection, and it is closed after the reply, so no idle connection is kept for reuse. With `NODE_USE_ENV_PROXY=1`, the proxy of a plain `http` target now gets a request that starts with `GET http://...` where it got `CONNECT` before: the proxy gets the target's credential as a request header (inside the `CONNECT` it could read it too, as the traffic is plain), and an answer that the proxy makes itself, such as an error page with status 502 or a reply from its cache, now reaches the agent as if the service had sent it, where before a refusal of the proxy gave `the service could not be reached`. An `https` target still goes through the proxy with `CONNECT` and does not change. Spaces at the end of the content type of a reply are dropped.
+- **An ssh target's jump gets `-e none`.** Every ssh command that ksproxy builds for a jump now carries `-e none` (no escape character), the same words as the jumps of a service tunnel.
+- **TLS is optional everywhere.** `postgres` and `mysql` targets without `tls` are `prefer` again, as before 0.8.0 (TLS when the server offers it, with no check of the certificate; with a MariaDB client before 11.4, which does not try TLS without an option, plain text), or `verify` when a `caFile` is named. **A target that relied on the 0.8.0 default must now write `"tls": "verify"`** to keep TLS with the certificate checked. `http`, `elasticsearch`, `rabbitmq`, remote `mcp` targets and reviewers accept a plain `http` URL to any host, and `ksproxy start`, `ksproxy doctor` and `ksproxy check` warn about it for the targets (not for a reviewer): any credential, every request and every answer can be read by anyone on the way. Only another scheme is refused, with `must use http or https`.
+
+### Fixed
+
+- **A credential written with a space at its start or end is hidden in the form that is sent.** The token, header value or API key of an `http`, `elasticsearch`, `rabbitmq` or remote `mcp` target is sent without the spaces at the ends of its header, and a service that shows the request headers back (an echo endpoint, an error page) showed it in that form, which was not hidden: the agent saw the whole credential but the spaces. That form is hidden now, as well as the value as written. Such a credential still works as before. A user name and password of basic auth send their spaces inside the base64, but a service that decodes the header and trims them showed them without the spaces: those forms are hidden now too, and the request does not change. When the form without the spaces is shorter than 8 characters, `ksproxy start` warns as for any short secret. It was also in 0.8.0 and earlier.
+- **An error of a remote MCP server no longer shows a short word of a token that holds a space.** For a token such as `ab12 SECRETWORDLONG`, an error text that quoted the token showed `ab12 [hidden]`: the long word was hidden first, and the token was then no longer found whole. The whole token is hidden now, at the start, in a call and after a renewed session, and a long word of it that stands alone is still hidden. It was also in 0.8.0 and earlier.
+
 ## [0.8.0] - 2026-11-27
 
 ### Changed
@@ -133,6 +150,7 @@ First release.
 - `ksproxy init`, `ksproxy status` and `ksproxy check <ssh|kube|local> <name> <command...>` to create an inventory, inspect the session, and test a rule without opening anything.
 - No npm dependencies. Requires Node.js 24 or later, on macOS or Linux.
 
+[0.9.0]: https://github.com/ksproxy/cli/releases/tag/v0.9.0
 [0.8.0]: https://github.com/ksproxy/cli/releases/tag/v0.8.0
 [0.7.1]: https://github.com/ksproxy/cli/releases/tag/v0.7.1
 [0.7.0]: https://github.com/ksproxy/cli/releases/tag/v0.7.0

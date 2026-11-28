@@ -313,6 +313,23 @@ function defaultConnect(options, useTls) {
   return useTls ? tls.connect(options) : net.connect(options);
 }
 
+// The connect hook of a target behind a tunnel: the socket is the tunnel's stream (tunnel.connect() makes one ssh
+// child; it may throw, which exchange turns into a failed call). With TLS, the handshake runs over that stream with
+// the very options exchange gives for a direct connection, so the server name and the certificate check are those of
+// the real host. Whatever ends the secure socket ends the stream, and with it the ssh child.
+export function streamConnector(tunnel) {
+  return (options, useTls) => {
+    const stream = tunnel.connect();
+    if (!useTls) return stream;
+    try {
+      return tls.connect({ ...options, socket: stream });
+    } catch (err) {
+      stream.destroy();
+      throw err;
+    }
+  };
+}
+
 const failure = (stderr) => ({ exitCode: 1, stdout: '', stderr });
 const TIMED_OUT = {
   exitCode: null, stdout: '', stderr: '', timedOut: true,
@@ -395,6 +412,7 @@ export function exchange({
       }
     });
     socket.on('error', () => finish(failure(connected ? CONNECTION_FAILED : reachFailed)));
+    socket.on('end', lost);
     socket.on('close', lost);
   });
 }

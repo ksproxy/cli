@@ -74,6 +74,8 @@ export async function httpScenario({ checks, agent }) {
     file: REQUEST_LOG, reached, kept, noun: 'request',
   });
   checks.check('no DELETE reached the API', !text.includes('"method":"DELETE"'), 'a DELETE is in the log');
-  checks.check('every request carried the token of its target', !text.includes('"auth":"none"') && !text.includes('"auth":"wrong"'),
-    clip(text.split('\n').filter((line) => /"auth":"(none|wrong)"/.test(line)).join('\n'), 2000));
+  // OPTIONS * is the check of the tunnelled plain-http target gf-plain (e2e/driver/tunnels.js), which sends no
+  // credential by design.
+  const withoutToken = text.split('\n').filter((line) => /"auth":"(none|wrong)"/.test(line) && !line.startsWith('{"method":"OPTIONS",'));
+  checks.check('every request carried the token of its target', withoutToken.length === 0, clip(withoutToken.join('\n'), 2000));
 }

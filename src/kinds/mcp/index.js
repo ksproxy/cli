@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  InventoryError, checkInteger, checkKeys, checkSecretVariable, isObject,
+  InventoryError, checkInteger, checkKeys, checkSecretVariable, isObject, plainHttpWarnings,
 } from '../../checks.js';
 import { minimalEnv } from '../../exec.js';
 import { processStartTime } from '../../session.js';
@@ -33,7 +33,6 @@ import {
 const MCP_KEYS = ['name', 'description', 'allow', 'review', 'command', 'env', 'url', 'login', 'tokenEnv', 'userEnv', 'arguments', 'timeoutSeconds'];
 const REMOTE_KEYS = ['login', 'tokenEnv', 'userEnv'];
 const LOGINS = ['none', 'token', 'basic'];
-const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
 const VARIABLE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const SECRET_LIKE = /TOKEN|PASSWORD|PASSWD|SECRET|KEY/i;
 // A query name of a url that looks like a secret; a command word that holds a URL with a user and a password; an option
@@ -109,7 +108,8 @@ function checkServerEnv(value, where) {
   }));
 }
 
-// The URL of a remote server: https, or http on a loopback name; no user, password or fragment; a query is allowed.
+// The URL of a remote server: http or https (TLS is the owner's choice); no user, password or fragment; a query is
+// allowed.
 function checkUrl(value, where) {
   let url = null;
   try {
@@ -118,9 +118,7 @@ function checkUrl(value, where) {
     // not a URL
   }
   if (url === null) throw new InventoryError(`${where}: url: must be a URL`);
-  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && LOCAL_HOSTS.includes(url.hostname))) {
-    throw new InventoryError(`${where}: url: must use https (http is accepted for localhost only)`);
-  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new InventoryError(`${where}: url: must use http or https`);
   if (url.username !== '' || url.password !== '' || url.hash !== '') {
     throw new InventoryError(`${where}: url: must not contain a user name, a password or a fragment`);
   }
@@ -413,10 +411,10 @@ export default {
     return { env: [...new Set(Object.values(target.env).filter(isObject).map((value) => value.fromEnv))], files: [] };
   },
   hiddenForms,
-  // The warnings of start and check: a slow regex value; a plain env value whose name looks like a secret; and a url
-  // query or a command word that seems to hold one, as neither field is hidden.
+  // The warnings of start and check: a slow regex value; a plain env value whose name looks like a secret; a url
+  // query or a command word that seems to hold one, as neither field is hidden; and a url in plain http to another host.
   ruleWarnings(target) {
-    if (target.url !== undefined) return [...regexWarnings(target.allow), ...urlWarnings(target.url)];
+    if (target.url !== undefined) return [...regexWarnings(target.allow), ...urlWarnings(target.url), ...plainHttpWarnings(target.url, 'url')];
     const plain = Object.entries(target.env).filter(([name, value]) => typeof value === 'string' && SECRET_LIKE.test(name));
     return [
       ...regexWarnings(target.allow),

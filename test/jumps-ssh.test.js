@@ -1,31 +1,43 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  JUMP_SETTINGS, MAX_JUMPS, jumpPrefix, parseJump, zshEqualsWord,
+  JUMP_SETTINGS, MAX_JUMPS, jumpPrefix, jumpWords, parseJump, zshEqualsWord,
 } from '../src/kinds/ssh/master.js';
 
+test('jumpWords gives the fixed words around the options of the owner, and the server apart', () => {
+  assert.deepEqual(jumpWords('ssh -i .ssh/app_key -o Port=2222 opsuser@192.0.2.10'), {
+    words: ['ssh', '-T', '-e', 'none', '-o', 'BatchMode=yes', '-i', '.ssh/app_key', '-o', 'Port=2222', '-o', 'ConnectTimeout=10'],
+    server: 'opsuser@192.0.2.10',
+  });
+  assert.deepEqual(jumpWords('ssh   h'), { words: ['ssh', '-T', '-e', 'none', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10'], server: 'h' });
+  assert.throws(() => jumpWords('ssh -A h'), /option -A is not supported/);
+  assert.throws(() => jumpWords('ssh h;ls'), /character ";" is not allowed/);
+});
+
+// jumpPrefix is built on jumpWords: the text is the one it always gave, but for the added "-e none" (no escape
+// character), which the tunnels need for a stream of bytes and which changes nothing for a command.
 test('one jump gives the exact prefix', () => {
   assert.equal(
     jumpPrefix(['ssh -i .ssh/app_key opsuser@192.0.2.10']),
-    'ssh -T -o BatchMode=yes -i .ssh/app_key -o ConnectTimeout=10 opsuser@192.0.2.10 --',
+    'ssh -T -e none -o BatchMode=yes -i .ssh/app_key -o ConnectTimeout=10 opsuser@192.0.2.10 --',
   );
 });
 
 test('two jumps give the exact prefix, innermost last', () => {
   assert.equal(
     jumpPrefix(['ssh -i a u@b', 'ssh -p 2222 v@c']),
-    'ssh -T -o BatchMode=yes -i a -o ConnectTimeout=10 u@b -- ssh -T -o BatchMode=yes -p 2222 -o ConnectTimeout=10 v@c --',
+    'ssh -T -e none -o BatchMode=yes -i a -o ConnectTimeout=10 u@b -- ssh -T -e none -o BatchMode=yes -p 2222 -o ConnectTimeout=10 v@c --',
   );
 });
 
 test('a jump without options has no double space', () => {
-  assert.equal(jumpPrefix(['ssh h']), 'ssh -T -o BatchMode=yes -o ConnectTimeout=10 h --');
+  assert.equal(jumpPrefix(['ssh h']), 'ssh -T -e none -o BatchMode=yes -o ConnectTimeout=10 h --');
 });
 
 test('the connect timeout comes after the options of the user, so the first value wins', () => {
   assert.equal(
     jumpPrefix(['ssh -o ConnectTimeout=30 h']),
-    'ssh -T -o BatchMode=yes -o ConnectTimeout=30 -o ConnectTimeout=10 h --',
+    'ssh -T -e none -o BatchMode=yes -o ConnectTimeout=30 -o ConnectTimeout=10 h --',
   );
 });
 

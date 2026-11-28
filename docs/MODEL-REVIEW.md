@@ -54,7 +54,7 @@ Any provider with an OpenAI-compatible chat API works. Review is off by default 
 
 | Field | Meaning |
 |---|---|
-| `reviewers.<name>.baseUrl` | `https://`, or `http://` for localhost only. |
+| `reviewers.<name>.baseUrl` | `https://` or `http://`, for any host. TLS is your choice, and a reviewer gets no warning for plain `http`: with it, the request and the answer can be read by anyone on the way. |
 | `reviewers.<name>.model` | The model id. |
 | `reviewers.<name>.keyEnv` | Optional. The environment variable that holds the API key when you run `ksproxy start`. It may not be a variable the session needs (`PATH`, `HOME`, `SSH_*` and similar; the full list is under "The key and the policy" below). It is removed from the environment of every program the session starts. |
 | `reviewers.<name>.timeoutSeconds`, `maxCalls` | Optional. Defaults 10 and 200 calls per session. Failed calls count. |

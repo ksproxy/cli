@@ -53,7 +53,7 @@ The check is fixed by ksproxy. It is never taken from your `allow` rules, and it
 | `ssh` | The connection opens. Nothing is run on the server. |
 | `kubernetes` | `GET /version` through the opened proxy. |
 | `local` | The folder checks. |
-| `http` | The host answers on its port (TLS for https). No request is sent. |
+| `http` | The host answers on its port (TLS for https). No request is sent. Through a `tunnel` the check is `OPTIONS *` on plain http, and the TLS handshake on https. |
 | `command` | The program is found. Nothing is run. |
 | `elasticsearch` | `GET /_cluster/health` |
 | `rabbitmq` | `GET /api/whoami` |

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { inspect } from 'node:util';
 import { AllowError } from '../src/allowlist.js';
-import { InventoryError } from '../src/checks.js';
+import { InventoryError, plainHttpWarnings } from '../src/checks.js';
 import {
   BODY_WORD, MAX_BODY_BYTES, METHODS, authHeader, authProblem, authVariables, buildUrl, encodedForms, headerNameProblem, hideSecrets,
   matchRequestRule, readRequest, requestWords, reviewWords, send, splitRule, validateBaseUrl,
@@ -21,6 +21,10 @@ function route(req, res, body) {
     case '/p/redirect':
       res.writeHead(Number(url.searchParams.get('status')), { location: 'http://127.0.0.2:1/steal', 'content-type': 'text/html' });
       res.end('<a>moved</a>');
+      return;
+    case '/p/bare-redirect':
+      res.writeHead(302, { location: 'https://elsewhere.example.com/' });
+      res.end();
       return;
     case '/p/headers':
       res.writeHead(200, {
@@ -309,22 +313,36 @@ test('the rules: *, ..., \\*, a literal star inside a segment, +body and regex(.
   }
 });
 
-test('validateBaseUrl is the reviewer URL check, and the base always ends in a slash', () => {
+test('validateBaseUrl is the reviewer URL check, and the base always ends in a slash; http and https for any host', () => {
   assert.equal(validateBaseUrl('https://grafana.example.com', 'http "g": baseUrl'), 'https://grafana.example.com/');
   assert.equal(validateBaseUrl('https://h.example.com:8443/prefix', 'x'), 'https://h.example.com:8443/prefix/');
   assert.equal(validateBaseUrl('https://h.example.com/prefix/', 'x'), 'https://h.example.com/prefix/');
   for (const local of ['http://localhost:9200', 'http://127.0.0.1:9200/', 'http://[::1]:9200']) assert.ok(validateBaseUrl(local, 'x').endsWith('/'));
+  // TLS is the owner's choice: plain http to another host is accepted.
+  assert.equal(validateBaseUrl('http://grafana.example.com', 'x'), 'http://grafana.example.com/');
+  assert.equal(validateBaseUrl('http://127.0.0.2', 'x'), 'http://127.0.0.2/');
+  assert.equal(validateBaseUrl('http://192.0.2.10:9200/prefix', 'x'), 'http://192.0.2.10:9200/prefix/');
   const fails = (value, message) => assert.throws(() => validateBaseUrl(value, 'http "g": baseUrl'), (err) => {
     assert.ok(err instanceof InventoryError);
     assert.equal(err.message, `http "g": baseUrl: ${message}`);
     return true;
   });
   for (const value of [undefined, 5, 'not a url', '']) fails(value, 'must be a URL');
-  for (const value of ['http://grafana.example.com', 'http://127.0.0.2', 'ftp://h.example.com', 'file:///etc/passwd']) {
-    fails(value, 'must use https (http is accepted for localhost only)');
+  for (const value of ['ftp://h.example.com', 'file:///etc/passwd', 'ws://h.example.com', 'mailto:a@h.example.com']) {
+    fails(value, 'must use http or https');
   }
   for (const value of ['https://u@h.example.com', 'https://u:p@h.example.com', 'https://h.example.com/?a=1', 'https://h.example.com/#f']) {
     fails(value, 'must not contain a user name, a password, a query or a fragment');
+  }
+});
+
+test('plainHttpWarnings: one warning for plain http to another host, none for https and for the loopback names', () => {
+  const warning = (field, host) => `${field}: plain http: any credential, every request and every answer travel without TLS, and anyone on the way to ${host} can read them; use https when the server has it`;
+  assert.deepEqual(plainHttpWarnings('http://grafana.example.com/', 'baseUrl'), [warning('baseUrl', 'grafana.example.com')]);
+  assert.deepEqual(plainHttpWarnings('http://192.0.2.10:9200/x/', 'url'), [warning('url', '192.0.2.10')]);
+  assert.deepEqual(plainHttpWarnings('http://127.0.0.2/', 'url'), [warning('url', '127.0.0.2')]);
+  for (const quiet of ['https://grafana.example.com/', 'https://192.0.2.10:9200/', 'http://localhost:9200/', 'http://127.0.0.1:9200/', 'http://[::1]:9200/']) {
+    assert.deepEqual(plainHttpWarnings(quiet, 'url'), [], quiet);
   }
 });
 
@@ -383,6 +401,23 @@ test('encodedForms gives the base64 credential of basic auth and nothing for the
   assert.deepEqual(encodedForms({ bearerEnv: 'T' }, secrets), []);
   assert.deepEqual(encodedForms({ headerName: 'X-Key', headerEnv: 'H' }, secrets), []);
   assert.deepEqual(encodedForms(null, secrets), []);
+});
+
+test('encodedForms gives a bearer token or a header value as it is sent, without the spaces at its ends', () => {
+  const bearer = { bearerEnv: 'T' };
+  const header = { headerName: 'X-Key', headerEnv: 'H' };
+  assert.deepEqual(encodedForms(bearer, { T: ' tok-1  ' }), ['tok-1']);
+  assert.deepEqual(encodedForms(header, { H: 'hv-1 ' }), ['hv-1']);
+  assert.deepEqual(encodedForms(header, { H: ' a ' }), ['a']);
+  // A value of spaces only is sent as nothing: there is no form to hide but the value as given.
+  assert.deepEqual(encodedForms(bearer, { T: '   ' }), []);
+  // The form as a JSON body shows it, after the forms of the values as given.
+  assert.deepEqual(encodedForms(bearer, { T: ' say "hi" ' }), ['say "hi"', ' say \\"hi\\" ', 'say \\"hi\\"']);
+  // Basic auth sends the spaces inside the base64; a server that decodes and trims them shows the user name and the
+  // password without them, so those forms are hidden too. A value of spaces only gives no such form.
+  const basic = { basicUserEnv: 'U', basicPasswordEnv: 'P' };
+  assert.deepEqual(encodedForms(basic, { U: ' user', P: 'pass ' }), [Buffer.from(' user:pass ').toString('base64'), 'user', 'pass']);
+  assert.deepEqual(encodedForms(basic, { U: 'ann', P: '  ' }), [Buffer.from('ann:  ').toString('base64')]);
 });
 
 test('hideSecrets replaces every value, longest first', () => {
@@ -475,14 +510,7 @@ test('send: a redirect is never followed and is reported as an error, without a 
     assert.equal(seen.length, before + 1, `one request only for ${status}`);
     assert.ok(!result.stdout.includes('127.0.0.2'));
   }
-  const empty = await send({
-    baseUrl: 'https://service.example.com/',
-    headers: {},
-    ...readRequest(GOOD),
-    timeoutMs: 1000,
-    maxBytes: 100,
-    fetchImpl: async () => new Response(null, { status: 302, headers: { location: 'https://elsewhere.example.com/' } }),
-  });
+  const empty = await sendTo('/bare-redirect');
   assert.equal(empty.stdout, 'HTTP 302\ncontent-type: (none)\n\n');
 });
 

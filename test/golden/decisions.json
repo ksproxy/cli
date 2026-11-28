@@ -467,7 +467,7 @@
         "allowed": true,
         "rule": "uptime",
         "command": "uptime",
-        "prefix": "ssh -T -o BatchMode=yes -i .ssh/key -o ConnectTimeout=10 user@bastion --"
+        "prefix": "ssh -T -e none -o BatchMode=yes -i .ssh/key -o ConnectTimeout=10 user@bastion --"
       },
       "routeOn": null,
       "routeOff": null
@@ -481,7 +481,7 @@
         "allowed": true,
         "rule": "uptime",
         "command": "uptime",
-        "prefix": "ssh -T -o BatchMode=yes -i a -o ConnectTimeout=10 u@b -- ssh -T -o BatchMode=yes -p 2222 -o Port=22 -o ConnectTimeout=10 v@c --"
+        "prefix": "ssh -T -e none -o BatchMode=yes -i a -o ConnectTimeout=10 u@b -- ssh -T -e none -o BatchMode=yes -p 2222 -o Port=22 -o ConnectTimeout=10 v@c --"
       },
       "routeOn": null,
       "routeOff": null
@@ -500,7 +500,7 @@
           "rm",
           "x"
         ],
-        "prefix": "ssh -T -o BatchMode=yes -i .ssh/key -o ConnectTimeout=10 user@bastion --"
+        "prefix": "ssh -T -e none -o BatchMode=yes -i .ssh/key -o ConnectTimeout=10 user@bastion --"
       },
       "routeOn": {
         "argv": [
@@ -700,7 +700,7 @@
         "argv": [
           "df"
         ],
-        "prefix": "ssh -T -o BatchMode=yes -i .ssh/key -o ConnectTimeout=10 user@bastion --"
+        "prefix": "ssh -T -e none -o BatchMode=yes -i .ssh/key -o ConnectTimeout=10 user@bastion --"
       },
       "routeOn": {
         "argv": [

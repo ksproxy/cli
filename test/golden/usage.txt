@@ -274,7 +274,7 @@ REFUSED: not on the allowlist for this target. Allowed: uptime
 code: 0
 --- stdout
 ALLOWED by rule: uptime
-sent to jmp.example.com: ssh -T -o BatchMode=yes -i .ssh/key -o ConnectTimeout=10 user@bastion -- uptime
+sent to jmp.example.com: ssh -T -e none -o BatchMode=yes -i .ssh/key -o ConnectTimeout=10 user@bastion -- uptime
 --- stderr
 
 ### check ssh jmp uptime =x

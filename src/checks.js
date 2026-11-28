@@ -27,18 +27,24 @@ function parseUrl(value) {
 }
 
 // The URL of a service that ksproxy sends requests to: a reviewer's baseUrl, an http target's baseUrl.
-// https, or http on the loopback names only; no user name, password, query or fragment. at names the field.
+// http or https: TLS is the owner's choice, never required (plainHttpWarnings says what plain http means). No user
+// name, password, query or fragment. at names the field.
 export function checkServiceUrl(value, at) {
   const url = typeof value === 'string' ? parseUrl(value) : null;
   if (url === null) throw new InventoryError(`${at}: must be a URL`);
-  const local = url.protocol === 'http:' && LOCAL_HOSTS.includes(url.hostname);
-  if (url.protocol !== 'https:' && !local) {
-    throw new InventoryError(`${at}: must use https (http is accepted for localhost only)`);
-  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new InventoryError(`${at}: must use http or https`);
   if (url.username !== '' || url.password !== '' || url.search !== '' || url.hash !== '') {
     throw new InventoryError(`${at}: must not contain a user name, a password, a query or a fragment`);
   }
   return url;
+}
+
+// The warning of start and check for a URL that a kind has checked, in a list: one when it is plain http to a host
+// that is not this machine, none for https and for the loopback names. field names the field of the inventory.
+export function plainHttpWarnings(value, field) {
+  const url = new URL(value);
+  if (url.protocol !== 'http:' || LOCAL_HOSTS.includes(url.hostname)) return [];
+  return [`${field}: plain http: any credential, every request and every answer travel without TLS, and anyone on the way to ${url.hostname} can read them; use https when the server has it`];
 }
 
 // The name of an environment variable that holds a secret. start reads it and removes it from the environment of

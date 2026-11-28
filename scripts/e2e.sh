@@ -56,7 +56,8 @@ save_logs() {
   "${compose[@]}" "${every[@]}" cp runner:/home/node/out "$dir/runner" >/dev/null 2>&1 || true
   # The logs of the servers that record each call: SERVICE:FOLDER:NAME IN THE LOGS.
   local entry service from to
-  for entry in db:/pglog:postgres crm-db:/mylog:mariadb mongo:/mongolog:mongodb mq:/mqlog:rabbitmq \
+  for entry in db:/pglog:postgres inner-db:/pglog:inner-postgres crm-db:/mylog:mariadb mongo:/mongolog:mongodb \
+    inner-mongo:/mongolog:inner-mongodb mq:/mqlog:rabbitmq \
     grafana:/httplog:http es:/eslog:elasticsearch kafka:/kafkalog:kafka k3s:/k3slog:kube-apiserver; do
     IFS=: read -r service from to <<<"$entry"
     "${compose[@]}" "${every[@]}" cp "$service:$from" "$dir/$to" >/dev/null 2>&1 || true
