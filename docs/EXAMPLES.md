@@ -79,6 +79,63 @@ A server you reach with your own ssh setup. There is no secret in the entry: `ks
 - **Refused:** `ksproxy check ssh web1-ops sudo systemctl restart postgresql`: the rules name nginx only.
 - **Safety:** give the login a sudoers entry for exactly these three commands, without a password, since a call cannot answer a password prompt. Never write a rule such as `sudo ...`: it runs anything as root.
 
+**Another example:** count the rows of a large file on a server, and bring back only the number.
+
+The agent never gets the whole file. Each output stream is cut at 256 KiB, and `maxOutputKiB` can raise that to 4 MiB at most, so a large file does not fit. So the server does the counting, and only the number comes back.
+
+```json
+{
+  "name": "data1",
+  "host": "data1.example.com",
+  "description": "data server, counts the rows of one large file",
+  "allow": [
+    "regex(head -n [1-9][0-9]? /data/orders.csv)",
+    "wc -l /data/orders.csv",
+    "grep -c * /data/orders.csv",
+    "grep -c -i * /data/orders.csv",
+    "regex(/usr/local/bin/csvcount [a-z_]+ (eq|ne|gt|lt) [A-Za-z0-9_.:-]+)"
+  ]
+}
+```
+
+- **Can do:** read up to 99 lines from the top of the file to see its columns, count all its lines, and count the lines that hold a word. For a condition on one column, such as `status` equal to `open`, it can run the small script below.
+- **Allowed:** `ksproxy check ssh data1 head -n 5 /data/orders.csv`
+- **Allowed:** `ksproxy check ssh data1 grep -c open /data/orders.csv`: it prints one number, the count of the lines that hold `open`.
+- **Allowed:** `ksproxy check ssh data1 /usr/local/bin/csvcount status eq open`: the number of rows whose `status` is `open`.
+- **Refused:** `ksproxy check ssh data1 head -n 100000 /data/orders.csv`: `head` may show at most 99 lines.
+- **Refused:** `ksproxy check ssh data1 grep -c open /etc/passwd`: the rules name one file only.
+- **Refused:** `ksproxy check ssh data1 cat /data/orders.csv`: no rule gives the file itself to the agent.
+- **Refused:** `ksproxy check ssh data1 "/usr/local/bin/csvcount status eq open;id"`: `;` is shell syntax. A word of an ssh command may hold only letters, digits and `_ @ % + = : , . / -`, so there are no quotes, pipes or spaces inside a word.
+- **Safety:** use a login without `sudo` rights that can read that file and nothing sensitive. The rules match words; the rights of the login are what really stops a read. A count still says whether the file holds a text the agent guesses.
+
+How the counts work:
+
+- **`wc -l`** counts every line, the header line too. **`grep -c TEXT`** counts the lines that hold that text anywhere, also inside a longer word (`open` also counts `reopened`), and a `.` in it matches any character. It cannot see columns. When no line holds the text, grep prints `0` and ends with exit code 1, so the call is shown as failed.
+- **For a condition on one column,** the owner puts this script on the server, as `/usr/local/bin/csvcount`, and makes it executable. It is called as `csvcount COLUMN OP VALUE`, and `OP` is `eq`, `ne`, `gt` or `lt`. The path of the file is one fixed line at the top of the script, so the agent cannot choose another file:
+
+```sh
+#!/bin/sh
+# csvcount COLUMN OP VALUE   (OP is eq, ne, gt or lt)
+FILE=/data/orders.csv
+[ "$#" -eq 3 ] || { echo "usage: csvcount COLUMN OP VALUE"; exit 2; }
+exec awk -F, -v col="$1" -v op="$2" -v val="$3" '
+  BEGIN { if (op !~ /^(eq|ne|gt|lt)$/) { print "OP must be eq, ne, gt or lt"; bad = 1; exit 2 } }
+  { sub(/\r$/, "") }
+  NR == 1 {
+    for (i = 1; i <= NF; i++) if ($i == col) c = i
+    if (!c) { print "no such column"; bad = 1; exit 2 }
+    next
+  }
+  (op == "eq" && $c == val) || (op == "ne" && $c != val) ||
+  (op == "gt" && $c + 0 > val + 0) || (op == "lt" && $c + 0 < val + 0) { n++ }
+  END { if (!bad) print n + 0 }
+' "$FILE"
+```
+
+- **It splits on commas only.** A CSV file that has commas inside quoted fields needs a real CSV reader, with the same three arguments. The header names must match exactly, with no spaces or quotes around them.
+- **`gt` and `lt` compare numbers.** A cell or a value that is not a number counts as 0, and so does an empty cell. `eq` and `ne` compare as numbers when both sides look like numbers (`25.50` equals `25.5`), and as text otherwise. A blank line is a row whose cells are empty.
+- **For many different questions,** a read-only `postgres` target is the better tool: see [postgres](#postgres).
+
 ## kubernetes
 
 A cluster reached with a kubeconfig that you name. `ksproxy start` runs `kubectl proxy` with it; the agent's calls go through that proxy and never see the kubeconfig. Secret resources, `exec` and many other verbs and flags are always refused (see [RULES.md](RULES.md#the-kubernetes-command-gate)).

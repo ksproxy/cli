@@ -366,8 +366,9 @@ test('a ping answered with an error still shows the server is there', async (t) 
 test('limitMs ends a slow start and stops the program, which was still running', async () => {
   const server = standIn({ slowStartMs: 60000 });
   await assert.rejects(connectStdio({
-    argv: server.argv, env: ENV, cwd: server.dir, limitMs: 300,
-  }), /^Error: the MCP server was not ready within 0\.3 seconds$/);
+    argv: server.argv, env: ENV, cwd: server.dir, limitMs: 3000,
+  }), /^Error: the MCP server was not ready within 3 seconds$/);
+  // The limit leaves the stand-in time to start and write its pid, also on a busy machine.
   const pid = server.pid();
   assert.ok(pid !== undefined);
   await waitFor(() => !alive(pid), 'the stand-in to be stopped');

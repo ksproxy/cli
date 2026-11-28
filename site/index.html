@@ -217,6 +217,7 @@ footer li { margin: 0; }
       </tbody>
     </table>
   </div>
+  <p><strong>Behind another server.</strong> A <code>postgres</code>, <code>mysql</code>, <code>redis</code>, <code>mongodb</code>, <code>http</code>, <code>elasticsearch</code> or <code>rabbitmq</code> target may sit behind an ssh server: add <code>"tunnel": { "host": "bastion1" }</code>, and <code>jumps</code> for more servers. <code>ksproxy start</code> reaches the service through that server, and you start no ssh forwarding by hand. ksproxy does not tell the agent the route. More in <a href="https://github.com/ksproxy/cli/blob/main/docs/TUNNELS.md">the tunnels page</a>.</p>
   <p>Each kind has its own page: <a href="https://github.com/ksproxy/cli/blob/main/docs/EXAMPLES.md">examples for every kind</a>, <a href="https://github.com/ksproxy/cli/blob/main/docs/LOCAL-TARGETS.md">local targets</a>, <a href="https://github.com/ksproxy/cli/blob/main/docs/SERVICES.md">databases, queues and HTTP APIs</a>, <a href="https://github.com/ksproxy/cli/blob/main/docs/MCP-SERVERS.md">MCP servers</a>.</p>
 </section>
 
@@ -287,6 +288,7 @@ footer li { margin: 0; }
     <li><strong>Output is returned as it is.</strong> Only the credentials that ksproxy holds are hidden in it. A secret that a program or a service prints reaches the agent.</li>
     <li><strong>A local command or a local MCP server runs as you,</strong> without a sandbox. Give local targets the shortest allow list of all.</li>
   </ul>
+  <p>TLS to a service is your choice. On a <code>postgres</code> target, <code>"tls": "verify"</code> checks the certificate of the service. When a target sits behind a server and does not check the certificate, <code>ksproxy start</code> prints a warning, since the servers on the way can read the traffic.</p>
   <p>The full list is in <a href="https://github.com/ksproxy/cli/blob/main/SECURITY.md">SECURITY.md</a>.</p>
 </section>
 

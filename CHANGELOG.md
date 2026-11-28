@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The homepage tells about `tunnel` and about TLS.** A short block under "What the agent can reach" says that a service target may sit behind an ssh server (`tunnel`, with `jumps` for more servers), and a line says that TLS to a service is your choice.
+- **The README has a section "What you can do with it".** It lists six tasks, each with a link to the example or page that shows it.
+- **The README says what to do instead of a file transfer.** The bullet "no file transfer" now says to let the server filter or count, and to bring back only the result.
+- **`docs/EXAMPLES.md` has a new example for `ssh`: "Count the rows of a large file on a server".** It shows an entry with `head` (at most 99 lines), `wc -l`, `grep -c` and a small script `csvcount` for conditions on a column, with sample calls that the tests check. A kind's section may now hold more examples after its two, each marked `Another example`.
+
 ## [0.9.1] - 2026-11-28
 
 ### Changed

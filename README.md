@@ -11,6 +11,7 @@ Let AI agents run allowlisted ssh, kubectl, local, database, queue, HTTP API and
 
 **Contents**
 
+- [What you can do with it](#what-you-can-do-with-it)
 - [What it is for, and what it is not](#what-it-is-for-and-what-it-is-not)
 - [Install](#install)
 - [Quick start](#quick-start)
@@ -24,10 +25,19 @@ Let AI agents run allowlisted ssh, kubectl, local, database, queue, HTTP API and
 - [Security model and limits](#security-model-and-limits)
 - [Development](#development)
 
+## What you can do with it
+
+- **Read the logs of a service on a server,** with a command such as `journalctl -u nginx -n 200 --no-pager` ([ssh examples](docs/EXAMPLES.md#ssh)).
+- **Look at a cluster** without `exec`, port forwarding or secrets ([kubernetes examples](docs/EXAMPLES.md#kubernetes)).
+- **Read a few rows of a database** with a read-only user ([postgres examples](docs/EXAMPLES.md#postgres)). A database that only a bastion server can reach works too, with the limits in [docs/TUNNELS.md](docs/TUNNELS.md): add `"tunnel": { "host": "bastion1" }` to the target.
+- **Count the rows of a large file on a server** and bring back only the number ([ssh examples](docs/EXAMPLES.md#ssh), under "Another example").
+- **Call an HTTP API** whose token the agent never sees ([http examples](docs/EXAMPLES.md#http)).
+- **Use the tools of an MCP server** through an allow list ([mcp examples](docs/EXAMPLES.md#mcp)).
+
 ## What it is for, and what it is not
 
 - **For** developing and debugging with an AI agent: read logs, inspect a cluster, read a few rows, check a queue. When ksproxy is not sure, it refuses.
-- **One call, one answer.** No interactive shell, no open connection between calls, no streaming, no file transfer.
+- **One call, one answer.** No interactive shell, no open connection between calls, no streaming, no file transfer. To work with a large file, let the server filter or count, and bring back only the result: see [ssh examples](docs/EXAMPLES.md#ssh), under "Another example".
 - **Output is cut at 256 KiB** per stream, and the answer says so near its top, where a client that shortens long answers still shows it. On ssh, Kubernetes and local targets the line says how much is shown, and the answer also shows the last 16 KiB; the sizes are close, not exact. On the other targets the answer shows the first 256 KiB (a little less when paths were removed from it) with `[stdout cut at 256 KiB: the rest was left out]` and no end part, and a call that did not end on its own (a time limit, a broken reply) loses its last 1 KiB at least, back to the end of a line, so a short output of a call that timed out is not shown: make such a call end on its own. A hint of the kind says how to narrow the call (`tail -n 200`, a `LIMIT`, the API's paging). Raise `maxOutputKiB` for one target (at most 4 MiB). MongoDB returns at most 100 documents and MySQL 1,000 rows per call.
 - **A call has a time limit:** 60 seconds by default, 600 at most. A command already running on a server may go on there.
 - **Rules match words, not meaning.** The rights of the account behind each target are the real boundary: use read-only accounts.

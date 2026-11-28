@@ -19,8 +19,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DOC = fs.readFileSync(path.join(ROOT, 'docs', 'EXAMPLES.md'), 'utf8');
 const CONFIG_DIR = ['KSPROXY', 'CONFIG', 'DIR'].join('_');
 const STATE_DIR = ['KSPROXY', 'STATE', 'DIR'].join('_');
-const LABELS = { 'Read-only': 'read-only', 'Read and write': 'read and write' };
-const MARKER = /^\*\*(Read-only|Read and write):\*\*/;
+const LABELS = { 'Read-only': 'read-only', 'Read and write': 'read and write', 'Another example': 'another' };
+const MARKER = /^\*\*(Read-only|Read and write|Another example):\*\*/;
 const SAMPLE = /^- \*\*(Allowed|Refused):\*\* `([^`]+)`/;
 const KAFKA_CLIENTS = ['kafka-topics', 'kafka-consumer-groups', 'kafka-configs', 'kafka-acls', 'kafka-log-dirs', 'kafka-broker-api-versions'];
 // Outside quotes a shell would read these characters itself; inside double quotes these.
@@ -138,10 +138,13 @@ function worldFor(kind, entry) {
   return { PATH: bin, [CONFIG_DIR]: config, [STATE_DIR]: path.join(base, 'st') };
 }
 
-test('every kind has a section with a read-only and a read-and-write example, in the order of the kinds', () => {
+test('every kind has a section that opens with a read-only and a read-and-write example, in the order of the kinds', () => {
   assert.deepEqual(PAGE.map((section) => section.heading), KINDS.map((kind) => kind.key));
   for (const section of PAGE) {
-    assert.deepEqual(section.examples.map((example) => example.label), ['read-only', 'read and write'], section.heading);
+    const labels = section.examples.map((example) => example.label);
+    assert.deepEqual(labels.slice(0, 2), ['read-only', 'read and write'], section.heading);
+    // A kind may add more examples after these two, each marked "Another example".
+    assert.ok(labels.slice(2).every((label) => label === 'another'), section.heading);
   }
 });
 
@@ -158,7 +161,7 @@ test('every example is one valid inventory entry of its kind, with a sample call
   }
 });
 
-test('the read-only and the read-and-write entry of a kind have different names', () => {
+test('the examples of a kind have different names', () => {
   for (const section of PAGE) {
     const names = section.examples.map((example) => JSON.parse(example.json).name);
     assert.equal(new Set(names).size, names.length, section.heading);
