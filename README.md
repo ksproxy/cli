@@ -33,6 +33,7 @@ Let AI agents run allowlisted ssh, kubectl, local, database, queue, HTTP API and
 - **Count the rows of a large file on a server** and bring back only the number ([ssh examples](docs/EXAMPLES.md#ssh), under "Another example").
 - **Call an HTTP API** whose token the agent never sees ([http examples](docs/EXAMPLES.md#http)).
 - **Use the tools of an MCP server** through an allow list ([mcp examples](docs/EXAMPLES.md#mcp)).
+- **Let your agent propose a target** for you to read and apply: a prompt that makes it answer with one entry, the `ksproxy check` lines and the commands ([agent setup](docs/AGENT-SETUP.md)).
 
 ## What it is for, and what it is not
 
@@ -57,7 +58,7 @@ npm install -g @ksproxy/cli
 ## Quick start
 
 1. **`ksproxy init`** writes a sample inventory to `~/.config/ksproxy/inventory.json` (mode 0600). It never overwrites a file.
-2. **Add your targets,** each with an `allow` list. [docs/EXAMPLES.md](docs/EXAMPLES.md) has a read-only and a read-and-write target for every kind. Test a rule without opening anything: `ksproxy check ssh web1 df -h`.
+2. **Add your targets,** each with an `allow` list. [docs/EXAMPLES.md](docs/EXAMPLES.md) has a read-only and a read-and-write target for every kind. Test a rule without opening anything: `ksproxy check ssh web1 df -h`. An agent can propose an entry for you to read: see [docs/AGENT-SETUP.md](docs/AGENT-SETUP.md).
 3. **`ksproxy start`** asks which targets to open (or use `--all` or the kind flags), then stays in the foreground and prints one line per call. Run it with the environment variables your targets name; ssh may ask for a password in that terminal.
 4. **If it fails, run `ksproxy doctor`** with the same arguments. It checks every target and shows every problem in one run ([docs/DOCTOR.md](docs/DOCTOR.md)).
 5. **Connect your agent once** with the line `start` prints. For Claude Code: `claude mcp add ksproxy -- <node> --disable-sigusr1 <path to bin/ksproxy.js> mcp`.

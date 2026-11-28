@@ -12,6 +12,7 @@ const MARK = '**Contents**';
 const PAGES = {
   'README.md': 3,
   'SECURITY.md': 2,
+  'docs/AGENT-SETUP.md': 2,
   'docs/DEVELOPMENT.md': 2,
   'docs/DOCTOR.md': 2,
   'docs/JUMPS.md': 2,

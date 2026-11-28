@@ -7,6 +7,7 @@ import { main } from '../src/cli.js';
 import { validateInventory } from '../src/inventory.js';
 import { KINDS, cliName, kindByKey } from '../src/kinds/index.js';
 import { fakeProcess } from './start-helpers.js';
+import { shellWords } from './shell-words.js';
 import { tempDir } from './temp.js';
 
 // docs/EXAMPLES.md shows, for every kind, a read-only entry and a read-and-write entry, each with sample calls marked
@@ -23,10 +24,6 @@ const LABELS = { 'Read-only': 'read-only', 'Read and write': 'read and write', '
 const MARKER = /^\*\*(Read-only|Read and write|Another example):\*\*/;
 const SAMPLE = /^- \*\*(Allowed|Refused):\*\* `([^`]+)`/;
 const KAFKA_CLIENTS = ['kafka-topics', 'kafka-consumer-groups', 'kafka-configs', 'kafka-acls', 'kafka-log-dirs', 'kafka-broker-api-versions'];
-// Outside quotes a shell would read these characters itself; inside double quotes these.
-const SHELL_SPECIAL = '\\$`*?[]{}|&;<>()~!#';
-const DOUBLE_SPECIAL = '\\$`!';
-
 // The sections of the page: each "## kind" heading with its examples, each example with its label, the text of its
 // JSON block and its sample lines. Fenced blocks are skipped when looking for headings, markers and samples.
 function readPage(text) {
@@ -67,33 +64,6 @@ function readPage(text) {
   }
   assert.equal(fence, null, 'a fenced block is not closed');
   return sections;
-}
-
-// The words of a sample line as a shell would split them: single and double quotes group a word. A character that a
-// shell would read itself (a glob, a variable, a redirect) must be quoted, so that a person can paste the line.
-function shellWords(line) {
-  const words = [];
-  let word = null;
-  let quote = null;
-  for (const ch of line) {
-    if (quote !== null) {
-      assert.ok(quote === "'" || !DOUBLE_SPECIAL.includes(ch), `"${ch}" inside double quotes in: ${line}`);
-      if (ch === quote) quote = null;
-      else word += ch;
-    } else if (ch === "'" || ch === '"') {
-      quote = ch;
-      word ??= '';
-    } else if (ch === ' ') {
-      if (word !== null) words.push(word);
-      word = null;
-    } else {
-      assert.ok(!SHELL_SPECIAL.includes(ch), `"${ch}" must be quoted in: ${line}`);
-      word = (word ?? '') + ch;
-    }
-  }
-  assert.equal(quote, null, `a quote is not closed in: ${line}`);
-  if (word !== null) words.push(word);
-  return words;
 }
 
 const PAGE = readPage(DOC);
