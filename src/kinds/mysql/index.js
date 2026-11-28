@@ -8,6 +8,8 @@ import {
 } from '../engines/sql.js';
 
 const TUNNEL_VERIFY = '"tls": "verify" cannot be used through a tunnel, because the MySQL and MariaDB clients check the certificate\'s name against the address they connect to, which is 127.0.0.1 there; write "tls": "prefer" instead and leave out "caFile", which only "verify" uses';
+const MARIADB_WAY = 'set "tls" to "verify" (with "caFile" when this system does not trust the CA), or to "prefer"';
+const MARIADB_TUNNEL_WAY = 'set "tls" to "prefer": through a tunnel "verify" cannot be used, and the MariaDB client cannot require TLS without a check';
 const CLIENTS = ['mysql', 'mariadb'];
 const ROW_LIMIT = 1000;
 const VERSION_MS = 5000;
@@ -81,8 +83,9 @@ function checkClient(entry, where) {
 
 // Which client the program is, for its TLS options: the MariaDB client says MariaDB in its version, whatever its name
 // (the mysql of Debian is the MariaDB client), and any other is the MySQL client. Gives { family }, or { error, wayOut }.
-// The MariaDB client has no option that requires TLS without checking the certificate, so require is refused there.
-export async function clientFamily(target, program, { env, signal }) {
+// The MariaDB client has no option that requires TLS without checking the certificate, so require is refused there;
+// through a tunnel (ctx.tunnel is given) verify cannot be used either, so that way out names only prefer.
+export async function clientFamily(target, program, { env, signal, tunnel }) {
   const result = await runClient({
     program, words: ['--version'], env, timeoutMs: VERSION_MS, maxBytes: VERSION_MAX_BYTES, signal,
   });
@@ -96,7 +99,7 @@ export async function clientFamily(target, program, { env, signal }) {
   if (family === 'mariadb' && target.tls === 'require') {
     return {
       error: 'the MariaDB client cannot require TLS without a check',
-      wayOut: 'set "tls" to "verify" (with "caFile" when this system does not trust the CA), or to "prefer"',
+      wayOut: tunnel === undefined ? MARIADB_WAY : MARIADB_TUNNEL_WAY,
     };
   }
   return { family };

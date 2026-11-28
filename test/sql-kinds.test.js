@@ -419,6 +419,12 @@ test('tlsFailure: the fixed reason and way out for each TLS failure of the real 
     assert.deepEqual(tlsFailure(text, verify), { error: NO_TLS, wayOut: NONE_WAY('verify') }, text);
     assert.deepEqual(tlsFailure(text, required), { error: NO_TLS, wayOut: NONE_WAY('require') }, text);
   }
+  // With require nothing checks a certificate: a text that names one is not a TLS failure there.
+  for (const text of [
+    ...certificates,
+    'psql: error: connection to server at "db" (192.0.2.4), port 5432 failed: FATAL:  connection requires a valid client certificate',
+    "ERROR 1045 (28000): Access denied for user 'agent_ro'@'192.0.2.9' (using password: YES); this account requires X509 certificate",
+  ]) assert.equal(tlsFailure(text, required), null, text);
   const old = 'psql: error: connection to server at "db" (192.0.2.4), port 5432 failed: root certificate file "system" does not exist\nEither provide the file or change sslmode to disable server certificate verification.';
   assert.deepEqual(tlsFailure(old, verify), { error: OLD_PSQL, wayOut: OLD_WAY });
   for (const text of [
@@ -428,6 +434,34 @@ test('tlsFailure: the fixed reason and way out for each TLS failure of the real 
     'psql: error: connection to server at "db" (192.0.2.4), port 5432 failed: Connection refused',
     "ERROR 2002 (HY000): Can't connect to server on 'db' (115)",
   ]) assert.equal(tlsFailure(text, verify), null, text);
+});
+
+test('tlsFailure: the names of the target are taken out of the text first, so only the client\'s own words can match', () => {
+  const host = 'certificate-db.internal';
+  const target = {
+    host, user: 'certificate_ro', database: 'certificate.main', tls: 'verify', caFile: null,
+  };
+  // Another failure that only repeats the names of the target: not a TLS failure.
+  assert.equal(tlsFailure(`psql: error: connection to server at "${host}" (192.0.2.4), port 5432 failed: FATAL:  password authentication failed for user "certificate_ro"`, target), null);
+  assert.equal(tlsFailure('psql: error: connection to server at "CERTIFICATE-DB.INTERNAL" (192.0.2.4), port 5432 failed: FATAL:  database "Certificate.Main" does not exist', target), null);
+  // A real certificate text that also names the host still gives the certificate reason.
+  assert.deepEqual(tlsFailure(`psql: error: connection to server at "${host}" (192.0.2.4), port 5432 failed: server certificate for "other" does not match host name "${host}"`, target), { error: CERT, wayOut: SYSTEM_WAY(host) });
+  // A name with characters that mean something in a regular expression is taken out as plain text.
+  const odd = { ...target, host: 'a+b.example.com', user: '', database: undefined };
+  assert.equal(tlsFailure('failed for a+b.example.com', odd), null);
+  assert.deepEqual(tlsFailure('certificate verify failed for a+b.example.com', odd), { error: CERT, wayOut: SYSTEM_WAY('a+b.example.com') });
+  // A short name that does not hold the word stays in the text: a real certificate failure is still named.
+  const real = 'psql: error: connection to server failed: SSL error: certificate verify failed';
+  for (const names of [{ user: 'a' }, { host: 'cert' }, { database: 'c' }, { user: 'ate', database: 'cert' }]) {
+    assert.deepEqual(tlsFailure(real, { ...target, host: 'db.example.com', user: 'agent', database: 'main', ...names }), { error: CERT, wayOut: SYSTEM_WAY(names.host ?? 'db.example.com') }, JSON.stringify(names));
+  }
+  // A name that is exactly the word is not taken out: it would take the client's own word away.
+  const exact = 'psql: error: connection to server at "db1.example.com", port 5432 failed: SSL error: certificate verify failed';
+  for (const names of [{ host: 'certificate' }, { database: 'certificate' }, { user: 'CERTIFICATE' }]) {
+    assert.deepEqual(tlsFailure(exact, { ...target, host: 'db1.example.com', user: 'agent', database: 'main', ...names }), { error: CERT, wayOut: SYSTEM_WAY(names.host ?? 'db1.example.com') }, JSON.stringify(names));
+  }
+  // The other tests do not change.
+  assert.deepEqual(tlsFailure('server does not support SSL', { ...target, host: 'does not support SSL' }), { error: NO_TLS, wayOut: NONE_WAY('verify') });
 });
 
 // A temporary home, state folder and PATH for open: mysql and mariadb are the stand-in, and mysql-from-mariadb is a
@@ -539,6 +573,9 @@ test('open: a TLS failure skips the target with a fixed reason and says the way 
   // A failure that is not about TLS (a wrong password, a server that is down) opens the target: a call shows it.
   const refused = w.script('psql-refused', 'echo \'psql: error: connection to server at "db" (192.0.2.4), port 5432 failed: FATAL:  password authentication failed\' >&2\nexit 2');
   assert.deepEqual(await postgres.open(onePg({ tls: 'verify' }), w.ctx({ KSPROXY_PSQL: refused })), { ok: true, extras: { program: refused } });
+  // With require, a client that names a certificate in its error has not failed a check of one: the target opens.
+  const clientCert = w.script('psql-client-cert', 'echo \'psql: error: connection to server at "db" (192.0.2.4), port 5432 failed: FATAL:  connection requires a valid client certificate\' >&2\nexit 2');
+  assert.deepEqual(await postgres.open(onePg({ tls: 'require' }), w.ctx({ KSPROXY_PSQL: clientCert })), { ok: true, extras: { program: clientCert } });
   // A stop while the check runs ends it at once, and the target opens; start then closes what opened during a stop.
   const started = path.join(w.base, 'started');
   const slow = w.script('psql-slow', `echo up > '${started}'\nexec sleep 60`);
@@ -549,6 +586,14 @@ test('open: a TLS failure skips the target with a fixed reason and says the way 
   controller.abort();
   assert.deepEqual(await opening, { ok: true, extras: { program: slow } });
   assert.ok(Date.now() - began < 3000, 'the stop ends the check at once');
+  // A client that printed a certificate failure before it was stopped: its text is not read, and the target opens.
+  const startedCert = path.join(w.base, 'started-cert');
+  const slowCert = w.script('psql-slow-cert', `echo 'SSL error: certificate verify failed' >&2\necho up > '${startedCert}'\nexec sleep 60`);
+  const stopCert = new AbortController();
+  const openingCert = postgres.open(onePg({ tls: 'verify' }), w.ctx({ KSPROXY_PSQL: slowCert }, stopCert.signal));
+  await waitUntil(() => fs.existsSync(startedCert));
+  stopCert.abort();
+  assert.deepEqual(await openingCert, { ok: true, extras: { program: slowCert } });
 });
 
 test('the check at open runs select 1 with the settings of a call, and the password only in the environment', async () => {

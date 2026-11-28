@@ -280,6 +280,9 @@ export function uriPieces(uri) {
 const optionNames = (query) => (query === null ? [] : [...new URLSearchParams(query).keys()].map((name) => name.toLowerCase()));
 
 export const MONGO_PORT = 27017;
+// How long mongosh waits for the server through a tunnel, in milliseconds: the driver's own default. mongosh itself
+// waits only 2000 ms when every host is 127.0.0.1 or localhost and the string names no wait.
+export const TUNNEL_SELECTION_MS = 30000;
 // The refusals of a connection string through a tunnel. No text holds any part of the string.
 export const TUNNEL_REFUSALS = Object.freeze({
   srv: 'a mongodb+srv:// connection string cannot be used through a tunnel: the driver finds its hosts in DNS',
@@ -314,14 +317,17 @@ export function serviceAddress(uri) {
 
 // The connection string that mongosh gets through a tunnel, made as text: the host list replaced by address, a / when
 // there is no path, every directConnection option taken out (any spelling of the name, as optionNames reads it) and
-// directConnection=true added as the last option, before the fragment. Empty options are dropped. The user
-// information, the path, every other option and the fragment are kept as written: nothing is decoded and written again.
+// directConnection=true added as the last option, before the fragment. When no kept option is serverSelectionTimeoutMS
+// (any spelling, even with an empty value), serverSelectionTimeoutMS=TUNNEL_SELECTION_MS is added just before it:
+// mongosh would wait only 2 s for a string whose host is 127.0.0.1. Empty options are dropped. The user information,
+// the path, every other option and the fragment are kept as written: nothing is decoded and written again.
 export function throughTunnel(uri, address) {
   const {
     scheme, auth, path, query, fragment,
   } = uriPieces(uri);
   const kept = query === null ? [] : query.split('&').filter((piece) => piece !== '' && optionNames(piece)[0] !== 'directconnection');
-  return `${scheme}${auth}${address}${path === '' ? '/' : path}?${[...kept, 'directConnection=true'].join('&')}${fragment}`;
+  const wait = kept.some((piece) => optionNames(piece)[0] === 'serverselectiontimeoutms') ? [] : [`serverSelectionTimeoutMS=${TUNNEL_SELECTION_MS}`];
+  return `${scheme}${auth}${address}${path === '' ? '/' : path}?${[...kept, ...wait, 'directConnection=true'].join('&')}${fragment}`;
 }
 
 // The secrets of a connection string, each as written and percent-decoded: the password of the user information,

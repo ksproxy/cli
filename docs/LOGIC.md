@@ -585,7 +585,7 @@ flowchart TD
     H13 -->|"yes"| H8
     H13 -->|"no"| H14{"up now?"}
     H14 -->|"yes"| H15["UP with backMessage of the kind: folder is back for a local target, else connection is back"]
-    H14 -->|"no"| H16["DOWN with downMessage of the kind, given the opened entry too, diagram 5b, or tunnelGoneText when the shared connection is gone"]
+    H14 -->|"no"| H16["DOWN with downMessage of the kind, given the opened entry too, diagram 5b, or tunnelGoneText while the check of the shared connection fails"]
     H15 --> H8
     H16 --> H8
     H20 --> H6
@@ -2063,7 +2063,7 @@ Every line is in the format of the log (`formatLogLine`, events `doctor_ok` as O
 | `listener` | `no other listener is running` | `another ksproxy start is listening (pid N)` |
 | `token` | `start would make a new token`, or `the token can be used` | the texts of `start` |
 | `targets` | none | the error of `chooseTargets`, `unknown target "NAME"; known targets: ...`, or `nothing selected` |
-| `sockets` | none | `socket path too long ...`: a path of `start`, or one in the temporary folder, the socket of a first server of the service tunnels included |
+| `sockets` | none | `socket path too long ...`: a path of `start`, or one in the temporary folder, the socket of a first server of the service tunnels included; or `the shared connections to X and Y would use the same socket; write one of them in another form` |
 | `doctor` | none | `stopped: REASON` |
 
 ```mermaid
@@ -2136,11 +2136,15 @@ flowchart TD
     P5 -->|"yes"| P6["FAIL targets: nothing selected"]
     P5 -->|"no"| P7["M grows by the selected targets.<br/>otherInventories, everySecretFile and usedPorts, as start does, and the TLS key file when given, as startMany adds it"]
     P7 --> P8["bare: the env of the project without the variables of every loaded inventory"]
-    P8 --> P9{"prepareTargets of the selection with bare, the paths start would use, throws?"}
+    P8 --> P7a["routes: routesOf the selection, before anything is made"]
+    P7a --> P9{"prepareTargets of the selection with bare, the paths start would use, throws?"}
     P9 -->|"yes"| P10["FAIL sockets: its message, and go on"]
-    P9 -->|"no"| P11["makeDoctorFolder of env and the pid of the process: the folder d-XXXXXX in the root state folder, with its owner record"]
-    P10 --> P11
-    P11 --> P11a["openEnv: bare with STATE_FOLDER set to that folder, routesOf the selection, sharedMasters of openEnv for this project's run"]
+    P9 -->|"no"| P9a{"checkRouteSockets of the routes of the selection with sharedMasters of bare, which opens nothing, throws?"}
+    P10 --> P9a
+    P9a -->|"yes"| P10a["FAIL sockets: its message, the path in the state folder of start, and go on"]
+    P9a -->|"no"| P11["makeDoctorFolder of env and the pid of the process: the folder d-XXXXXX in the root state folder, with its owner record"]
+    P10a --> P11
+    P11 --> P11a["openEnv: bare with STATE_FOLDER set to that folder, sharedMasters of openEnv for this project's run"]
     P11a --> P12["ensureDir of the s and session folders of openEnv"]
     P12 --> P13{"prepareTargets of the selection with openEnv, then checkRouteSockets, throws?"}
     P13 -->|"yes"| P14["FAIL sockets: its message, no target of this project opens"]
@@ -4074,7 +4078,7 @@ flowchart TD
     A2 -->|"bearerEnv"| A4["that variable"]
     A2 -->|"basicUserEnv and basicPasswordEnv"| A5["both, user first"]
     A2 -->|"headerName and headerEnv"| A6["headerEnv"]
-    H1["headerNameProblem of name"] --> H2{"1 to 64 letters, digits and dashes, and not host, content-length,<br/>transfer-encoding, connection, cookie, authorization, accept or content-type in any case? A name that is not a string is a problem too"}
+    H1["headerNameProblem of name"] --> H2{"1 to 64 letters, digits and dashes, and not host, content-length,<br/>transfer-encoding, connection, cookie, authorization, accept, content-type, proxy-authorization, proxy-connection or trailer in any case?<br/>Node sets proxy-authorization and proxy-connection for a plain http request to a proxy, and refuses trailer when the request ends. A name that is not a string is a problem too"}
     H2 -->|"yes"| H3["null"]
     H2 -->|"no"| H4["must be letters, digits and dash, and not one of those"]
     P1["authProblem of auth and the secrets"] --> P2{"which form?"}
@@ -4133,7 +4137,11 @@ This diagram shows how the one request is sent. The engine sent it with `fetch` 
 ```mermaid
 flowchart TD
     N1["send of baseUrl, headers, method, segments, query, body, timeoutMs, maxBytes, signal and an optional connect"] --> N2["buildUrl, a refusal is thrown"]
-    N2 --> N3["stop: the time limit, and the signal of the call when one is given"]
+    N2 --> N10{"connect given?"}
+    N10 -->|"yes"| N11["forms: none, a tunnelled request never uses a proxy of the environment"]
+    N10 -->|"no"| N12["forms: proxyLoginForms of the proxyEnv of the global agent, which node:http and node:https share"]
+    N11 --> N3["stop: the time limit, and the signal of the call when one is given"]
+    N12 --> N3
     N3 --> N9{"stop has fired already?"}
     N9 -->|"yes"| T2["OK: timed out, exit code null, no output, and no connection is made: no ssh child of a tunnel starts"]
     N9 -->|"no"| N4["requestHeaders of the URL, the method, the headers and the body, the next diagram. No header comes from the agent"]
@@ -4141,36 +4149,60 @@ flowchart TD
     N5 --> N6{"it rejected?"}
     N6 -->|"yes, and stop fired"| T1["OK: timed out, exit code null, no output"]
     N6 -->|"yes, any other error"| F1["OK: exit code 1, stderr the service could not be reached, nothing of the error"]
-    N6 -->|"no"| Z1["continues in: send, the reply"]
+    N6 -->|"no"| Z1["the reply and release, continues in: send, the reply"]
 ```
 
 ### requestHeaders and exchange
 
-`FETCH_HEADERS` are the headers `fetch` added on its own: `accept-language` `*`, `sec-fetch-mode` `cors` and `user-agent` `node`. `ACCEPT_ENCODING` is what it asked for: `gzip, deflate`, and `br, gzip, deflate` over https. `BAD_PORTS` is the list of ports that `fetch` refused, kept so that a target on one of them fails as before: 1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77, 79, 87, 95, 101, 102, 103, 104, 109, 110, 111, 113, 115, 117, 119, 123, 135, 137, 139, 143, 161, 179, 389, 427, 465, 512, 513, 514, 515, 526, 530, 531, 532, 540, 548, 554, 556, 563, 587, 601, 636, 989, 990, 993, 995, 1719, 1720, 1723, 2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566, 6665, 6666, 6667, 6668, 6669, 6679, 6697 and 10080. The default port of a scheme (80 or 443) is never written in a URL, so it is never in the list. The header order is: host, `connection: close`, the given headers, `FETCH_HEADERS`, `accept-encoding`, `content-length`.
+`FETCH_HEADERS` are the headers `fetch` added on its own: `accept-language` `*`, `sec-fetch-mode` `cors` and `user-agent` `node`. `ACCEPT_ENCODING` is what it asked for: `gzip, deflate`, and `br, gzip, deflate` over https. `BAD_PORTS` is the list of ports that `fetch` refused, kept so that a target on one of them fails as before: 1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77, 79, 87, 95, 101, 102, 103, 104, 109, 110, 111, 113, 115, 117, 119, 123, 135, 137, 139, 143, 161, 179, 389, 427, 465, 512, 513, 514, 515, 526, 530, 531, 532, 540, 548, 554, 556, 563, 587, 601, 636, 989, 990, 993, 995, 1719, 1720, 1723, 2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566, 6665, 6666, 6667, 6668, 6669, 6679, 6697 and 10080. The default port of a scheme (80 or 443) is never written in a URL, so it is never in the list. The header order is: host, `connection: close`, the given headers, `FETCH_HEADERS`, `accept-encoding`, `content-length`. A name of `FETCH_HEADERS`, or `accept-encoding`, that the given headers hold already (the header form of auth with `headerName` `User-Agent`, for example) is left out, so each name is sent once, with the credential, as `fetch` sent one value. The headers go to Node as an object, not as a flat list: only then does Node add `proxy-authorization` (and `proxy-connection`) to a plain `http` request that goes to a proxy with a login. Without a proxy the bytes are the same as with the list. One difference of an object is kept as it is: a header name made only of digits, such as `123` (but not one that starts with `0` and has more digits), comes first, before `host`, because an object puts such keys before all others. The header form of auth allows such a name; the bytes are still a valid request.
 
 ```mermaid
 flowchart TD
     H1["requestHeaders of url, method, headers, body"] --> H2["host: the host of the URL, brackets of an IPv6 address and a port that is not the default kept"]
     H2 --> H3["connection close, then the given headers, accept application/json and any (ACCEPT), content-type application/json only with a body,<br/>each value as sentValue gives it, without spaces, tabs or line ends at its two ends, as fetch sent it"]
     H3 --> H4["FETCH_HEADERS, then accept-encoding from ACCEPT_ENCODING for the scheme"]
-    H4 --> H5{"a body?"}
+    H4 --> H9{"the given headers hold that name already?"}
+    H9 -->|"yes"| H10["left out: the name is sent once, with the given value"]
+    H9 -->|"no"| H11["added"]
+    H10 --> H5{"a body?"}
+    H11 --> H5
     H5 -->|"yes"| H6["content-length: its size in bytes"]
     H5 -->|"no, and a POST, PUT or PATCH"| H7["content-length 0"]
     H5 -->|"no, and a GET, HEAD or DELETE"| H8["no length"]
+    H6 --> H12["OK: one object of names and values in this order, so that Node adds proxy-authorization for a proxy.<br/>A name made only of digits comes first, before host, as an object puts such keys first: still a valid request"]
+    H7 --> H12
+    H8 --> H12
+```
+
+```mermaid
+flowchart TD
     E1["exchange of url, method, headers, body, signal, connect"] --> E2{"the port in BAD_PORTS?"}
     E2 -->|"yes"| X1["REJECT: no request is sent"]
     E2 -->|"no"| E3{"connect given?"}
-    E3 -->|"yes"| E4["the socket comes from connect, for https a TLS socket that connect made"]
-    E3 -->|"no"| E5["a new agent of node:http or node:https for this one request, without keep-alive,<br/>with the proxy of the environment only when the global agent has one, NODE_USE_ENV_PROXY"]
-    E4 --> E6["the request, the headers in this order, ALPN http/1.1 only, the stop signal, the body written at once.<br/>A listener of stop, removed when the request closes"]
+    E3 -->|"yes"| E4["the socket comes from connect, for https a TLS socket that connect made. No agent: nothing else is destroyed"]
+    E3 -->|"no"| E5["requestAgent of node:http or node:https, the diagram after this one"]
+    E4 --> E6["make the request, the headers in this order, ALPN http/1.1 only, the stop signal"]
     E5 --> E6
-    E6 --> E7{"what comes back?"}
-    E7 -->|"stop fires first, even when connect gave no socket and Node still waits for one"| X4["REJECT and destroy the request: a socket that comes later is destroyed too"]
-    E7 -->|"an error: a header that cannot be sent, no connection, no answer, a TLS failure"| X2["REJECT"]
-    E7 -->|"a 100 Continue that was not asked for, or a 101 switch of protocol"| X3["REJECT and destroy the request, the socket or the reply, as fetch failed"]
+    E6 --> E9{"making it threw, such as for a header value that cannot be sent?"}
+    E9 -->|"yes"| X2
+    E9 -->|"no"| E12["add the listener of stop, removed when the request closes"]
+    E12 --> E10["end the request, the body written at once"]
+    E10 --> E11{"ending it threw, such as for a trailer header without chunks?"}
+    E11 -->|"yes"| X3
+    E11 -->|"no"| E7{"what comes back first?"}
+    E7 -->|"stop fires first, even when connect gave no socket and Node still waits for one"| X4["REJECT, destroy the sockets of the agent and the request: a socket that comes later is destroyed too"]
+    E7 -->|"an error: no connection, no answer, a TLS failure, a refused CONNECT"| X2["REJECT and destroy the sockets of the agent"]
+    E7 -->|"a 100 Continue that was not asked for, or a 101 switch of protocol"| X3["REJECT, destroy the sockets of the agent, and the request, the socket or the reply, as fetch failed.<br/>A socket of connect goes with the request"]
     E7 -->|"a status below 100, such as 000 or 099: no usable answer, as fetch failed"| X3
     E7 -->|"a 102, a 103 or another 1xx"| E7
-    E7 -->|"a final reply, 600 to 999 too, as fetch gave them"| E8["OK: the reply, its body not read yet"]
+    E7 -->|"a final reply, 600 to 999 too, as fetch gave them"| E8["OK: the reply, its body not read yet, and release, which destroys the reply and the sockets of the agent.<br/>A later error or stop no longer destroys the agent: send releases it when it is done with the body"]
+```
+
+```mermaid
+flowchart TD
+    R1["requestAgent of transport"] --> R2["a new agent of node:http or node:https for this one request, without keep-alive,<br/>with proxyEnvOf the proxyEnv of the global agent: a proxy only with NODE_USE_ENV_PROXY, the variables and NO_PROXY read as fetch read them"]
+    R2 --> R3["its createConnection keeps every socket it makes, the one to a proxy too"]
+    R3 --> R4["OK: the agent and destroy, which destroys every socket it made.<br/>The destroy of Node's agent misses the socket to a proxy that refused a CONNECT or never answered, as Node never lists it"]
 ```
 
 ### send, the reply
@@ -4183,21 +4215,86 @@ flowchart TD
     C1 -->|"yes"| C2["no codings"]
     C1 -->|"no"| C3["the codings: headerOf content-encoding in lower case, split on commas, none when absent or empty"]
     C3 --> C4{"more than MAX_CODINGS, 5?"}
-    C4 -->|"yes"| F2["destroy the reply. OK: exit code 1, stderr the service could not be reached, as fetch failed"]
+    C4 -->|"yes"| F2["release. OK: exit code 1, stderr the service could not be reached, as fetch failed"]
     C4 -->|"no"| H1
     C2 --> H1["the head: HTTP STATUS, a new line, content-type: contentTypeOf the reply, an empty line"]
     H1 --> H3{"a status from 300 to 399?"}
-    H3 -->|"yes"| H4["destroy the reply, its body is not read and no second request is made"]
+    H3 -->|"yes"| H4["release, the body is not read and no second request is made"]
     H4 --> H5["OK: exit code 1, the head, stderr the service answered with a redirect, which is not followed. The location is never shown"]
+    S1["every stdout with text in this diagram, never stderr: shown of it"] --> S2{"any form of a proxy login?"}
+    S2 -->|"no"| S3["the text as it is"]
+    S2 -->|"yes"| S4["hideSecrets of the text and the forms: each covered run becomes the word hidden in square brackets,<br/>so a proxy that shows the request head gives no login to the agent"]
     H3 -->|"no"| L0["decodersOf the codings, the next diagram, joined after the reply by pipeline"]
     L0 --> L1["readLimited of the decoded body: chunks while the total of decoded bytes stays within maxBytes, the chunk that passes it is cut to fit, truncated is set and the stream is left and destroyed. A body of exactly maxBytes is not truncated"]
-    L1 --> L4["destroy the reply, so its connection is closed"]
+    L1 --> L4["release: destroy the reply and every socket of the agent, so no connection stays"]
     L4 --> L2{"the stream broke, the connection or a decoder?"}
     L2 -->|"yes, and stop fired"| T1["OK: timed out, exit code null, the head and the part read"]
     L2 -->|"yes, another error"| F1["OK: exit code 1, the head and the part read, stderr the reply was cut off, ownStderr, cutOff: the body did not end on its own"]
     L2 -->|"no"| L3{"a status from 200 to 299?"}
     L3 -->|"yes"| O1["OK: exit code 0, the head and the body as UTF-8 text, empty stderr, ownStderr, truncated when it was cut"]
     L3 -->|"no"| O2["OK: exit code 1, the same: a 404 is a failed call, not a refusal"]
+```
+
+### widenNoProxy, noProxyForms, proxyEnvOf and proxyLoginForms
+
+With `NODE_USE_ENV_PROXY=1` the agent of one request chooses the proxy variables and matches `NO_PROXY` by Node's rules. `fetch`, which sent the requests before, read them otherwise, and `proxyEnvOf` gives the agent a copy of the environment that Node reads as `fetch` read the original. Node takes `http_proxy`, `https_proxy` and `no_proxy` when they are not empty, and else the upper-case one; `fetch` took the lower-case one whenever it was set, also to an empty text, and for an `https` target the http proxy when no https proxy was given (unset or empty). So in the copy the upper-case variable of each pair is left out when the lower-case one is set, and when no https variable then gives a proxy, the http proxy that counts, if any, is the https proxy too. Which variable counts is as `fetch` chose it, but not every value: Node uses a proxy value only when it starts with `http://` or `https://` in lower case, so a value written with an upper-case scheme (`HTTP://...`), with a space before it, or with another scheme (`socks5://...`) was used by `fetch` and is not used by Node, and such a request goes direct. Its `NO_PROXY` and `no_proxy` are widened (`widenNoProxy`), so a host that `fetch` sent direct still goes direct. Node 24 splits the value on commas only and compares each entry, in lower case and without spaces at its ends, with the host (an IPv6 host without its brackets) and with the host, a colon and the port (the default port too): `*` is every host, `.name` is the name and its sub-names, `*.name` only its sub-names, a bare name only that name, and a range of two IPv4 addresses with `-` the addresses between them. `fetch` split on commas and white space, dropped one `*.` or `.` at the start, read what was left as the name and its sub-names, `[::1]` as that address, and `name:port` as the name and its sub-names on that port; `*` counted only as the whole value. Node has no form for the sub-names on one port, so `name:port` stays as written: it covers only that name on that port, and is never widened to every port. `*.name:port` and `.name:port` cover nothing in Node, so they also give `name:port`: the name on that port goes direct, its sub-names on that port still go to the proxy. `*.name` also gives `name`. These shorter forms come only for a plain name (`isPlainName`): not empty, without `*` or `:`, and not starting with `.`; so `*.*`, `*.*.corp.example` and `*..corp.example` stay as written, as `fetch` read them as no host. A bracketed IPv6 entry with a port, such as `[::1]:8080`, also stays as written when the form without brackets (`::1:8080`) is an IPv6 address of its own, which Node would send direct on every port. Four forms still go direct in Node where `fetch` sent them to the proxy. They are not rewritten into a form that goes to the proxy, because Node reads each of them as "go direct", which sends nothing to a third party, and dropping an entry the owner wrote would be a guess: a `*` inside a list (such as `a.example,*`), a `*` with spaces around it as the whole value (`" * "`, which Node reads as every host and `fetch` did not), a range of two IPv4 addresses (`192.0.2.1-192.0.2.9`), and an IPv6 address without brackets (`::1`). A value without an entry, such as `" "`, stays as written: Node reads it as it read the original. A proxy that echoes the request head would show its own login: `proxyLoginForms` gives the forms that `send` hides in stdout, for every proxy variable. The base64 form is always hidden. The password is hidden from `SHORT_PASSWORD`, 8 characters, on; with an empty password the user name is the secret (a token as the user) and is hidden from 8 characters on. With a password the user name is never hidden alone: a short word such as `a` would be hidden in every reply and break `application/json` into pieces.
+
+```mermaid
+flowchart TD
+    W1["widenNoProxy of a value"] --> W2["split on commas and white space, as fetch split it, the empty entries dropped"]
+    W2 --> W3{"any entry?"}
+    W3 -->|"no"| W4["OK: the value as written, so Node reads it as it read the original and does not take the other variable"]
+    W3 -->|"yes"| W5["OK: noProxyForms of each entry, joined by commas"]
+    P1["proxyEnvOf of proxyEnv"] --> P2{"undefined?"}
+    P2 -->|"yes"| P3["OK: undefined, no proxy"]
+    P2 -->|"no"| P5["a copy"]
+    P5 --> P6["for each pair http_proxy and HTTP_PROXY, https_proxy and HTTPS_PROXY, no_proxy and NO_PROXY:<br/>the upper-case one left out when the lower-case one is set, also to an empty text, as fetch chose"]
+    P6 --> P7{"https_proxy and HTTPS_PROXY both unset or empty?"}
+    P7 -->|"yes"| P8["https_proxy: the http_proxy or HTTP_PROXY that is left, if any, as fetch used the http proxy for https"]
+    P7 -->|"no"| P4
+    P8 --> P4["OK: the copy, NO_PROXY and no_proxy, where set, as widenNoProxy gives them"]
+```
+
+```mermaid
+flowchart TD
+    F1["noProxyForms of an entry"] --> F2{"a star alone?"}
+    F2 -->|"yes"| F3["OK: the entry as written"]
+    F2 -->|"no"| S1{"starts with a star and a dot, or a dot?"}
+    S1 -->|"yes"| S2{"the rest is a name, a colon and a port?"}
+    S2 -->|"yes"| S3{"isPlainName of that name: not empty, no star or colon, not starting with a dot?"}
+    S3 -->|"yes"| S4["OK: the entry and name colon port, as Node reads the entry as no host. Its sub-names on that port: no form"]
+    S3 -->|"no"| F3
+    S2 -->|"no"| S5{"a star and a dot, and the rest a plain name?"}
+    S5 -->|"yes"| F9["OK: the entry and the name without them: the name itself"]
+    S5 -->|"no: a dot and a name, which Node reads as fetch did, or no plain name, such as a star and a dot and a star"| F3
+    S1 -->|"no"| F4{"an IPv6 address in brackets, with or without a colon and a port?"}
+    F4 -->|"yes"| F5{"no port, or the form without brackets is not an IPv6 address of its own?"}
+    F5 -->|"yes"| F6["OK: the entry and the form without brackets, which Node compares"]
+    F5 -->|"no, such as ::1:8080, which Node would send direct on every port"| F3
+    F4 -->|"no"| F7{"an IP address, a name with a colon and a port, or starts with a bracket?"}
+    F7 -->|"yes"| F3
+    F7 -->|"no, a bare name"| F10["OK: the entry, and a dot and the entry: its sub-names"]
+```
+
+```mermaid
+flowchart TD
+    L1["proxyLoginForms of proxyEnv"] --> L2{"undefined?"}
+    L2 -->|"yes"| L3["OK: no form"]
+    L2 -->|"no"| L4["for each of HTTP_PROXY, http_proxy, HTTPS_PROXY, https_proxy"]
+    L4 --> L5{"set, a URL, and with a user name or a password?"}
+    L5 -->|"no"| L6["no form of it"]
+    L5 -->|"yes"| L7["the user name and the password, each percent-decoded as Node decodes them, as written when that fails"]
+    L7 --> L8["the base64 of user, colon, password that Node sends, always"]
+    L8 --> L13{"the password empty?"}
+    L13 -->|"yes"| L14["the secret is the user name, a token as the user"]
+    L13 -->|"no"| L15["the secret is the password. The user name alone never: a short word would be hidden in every reply"]
+    L14 --> L10{"the secret has at least SHORT_PASSWORD, 8, characters?"}
+    L15 --> L10
+    L10 -->|"yes"| L11["and the secret"]
+    L10 -->|"no"| L12["not the secret"]
+    L6 --> L9["OK: the forms of every variable"]
+    L11 --> L9
+    L12 --> L9
 ```
 
 ### headerOf, contentTypeOf, decodersOf and inflater
@@ -5712,7 +5809,7 @@ flowchart TD
 
 ## src/kinds/engines/tunnel.js
 
-The engine of the service tunnels: a service target reached through ssh servers. Each connection to the service is one ssh child that asks for a plain byte stream (`-W`) over a shared connection (an OpenSSH ControlMaster) to the first server, through the jumps of the route when it has some. It checks a route (`checkTunnel`), builds the exact arguments of one stream (`isolationArgs`, `streamArgs`, with the fixed name `TUNNEL_DESTINATION`), runs one stream (`openStream`, with its stderr kept up to `STDERR_CAP`, 4096 bytes), gives a loopback port to the kinds whose client is a program (`openListener`, at most `MAX_LISTENER_CONNECTIONS`, 16, at once), and keeps the shared connections of one run (`sharedMasters`, at most `MAX_JUMP_CONNECTIONS`, 8, connections with jumps at once over each). The inventory, the open order, the health check and the kinds use it; this file decides nothing about targets.
+The engine of the service tunnels: a service target reached through ssh servers. Each connection to the service is one ssh child that asks for a plain byte stream (`-W`) over a shared connection (an OpenSSH ControlMaster) to the first server, through the jumps of the route when it has some. It checks a route (`checkTunnel`), builds the exact arguments of one stream (`isolationArgs`, `streamArgs`, with the fixed name `TUNNEL_DESTINATION`), runs one stream (`openStream`, with its stderr kept up to `STDERR_CAP`, 4096 bytes), gives a loopback port to the kinds whose client is a program (`openListener`, at most `MAX_LISTENER_CONNECTIONS`, 16, at once), and keeps the shared connections of one run (`sharedMasters`, at most `MAX_JUMP_CONNECTIONS`, 8, connections with jumps at once over each, and at most `MAX_TARGET_JUMP_CONNECTIONS`, 6, of them for one target). The inventory, the open order, the health check and the kinds use it; this file decides nothing about targets.
 
 ### checkTunnel
 
@@ -5855,28 +5952,36 @@ flowchart TD
     M2 --> M3{"another host has that socket?"}
     M3 -->|"yes"| E1["ERROR: the shared connections to both hosts would use the same socket"]
     M3 -->|"no"| M4["the entry of that host, made once"]
-    O1["open of host"] --> O2{"socketFor throws?"}
+    O1["open of host"] --> O0{"closeAll was called?"}
+    O0 -->|"yes"| O5["FAIL: ok false and the shared connections are closed, ssh does not run, for any host"]
+    O0 -->|"no"| O2{"socketFor throws?"}
     O2 -->|"yes"| O3["FAIL: ok false and its message"]
     O2 -->|"no"| O4["openMaster once, the same promise on every later call, ok is kept"]
     N1["connector of host, jumps and to"] --> N2["the entry of the host, which throws for a path too long or a socket of another host, then streamArgs now, which may throw"]
     N2 --> N3["connect"]
-    N3 --> N4{"the connection is open?"}
+    N3 --> N4{"the connection is open, and closeAll was not called, for any host?"}
     N4 -->|"no"| E2["ERROR: the shared connection is not open"]
-    N4 -->|"yes"| N5{"jumps, and 8 streams with jumps are open over it?"}
+    N4 -->|"yes"| N7{"jumps, and 6 streams with jumps of this connector are open?"}
+    N7 -->|"yes"| E4["ERROR: at most 6 connections with jumps may be open at once for one target"]
+    N7 -->|"no"| N5{"jumps, and 8 streams with jumps are open over it?"}
     N5 -->|"yes"| E3["ERROR: at most 8 connections with jumps may be open at once over one shared connection"]
-    N5 -->|"no"| N6["OK: openStream, counted until it closes when it has jumps"]
+    N5 -->|"no"| N6["OK: openStream, counted for the connector and for the connection until it closes when it has jumps"]
 ```
 
 #### check and closeAll
 
 ```mermaid
 flowchart TD
-    K1["check of host"] --> K2{"known and open?"}
-    K2 -->|"no"| K3["false"]
-    K2 -->|"yes"| K4["checkMaster, and its answer is kept: a connection that failed once stays down for good"]
-    A1["closeAll"] --> A2["one after another, each host whose open was tried"]
+    K1["check of host"] --> K2{"closeAll not asked, the host known, and its open gave ok?"}
+    K2 -->|"no"| K3["false, and no ssh runs"]
+    K2 -->|"yes"| K4["checkMaster"]
+    K4 --> K5{"it passed, and closeAll was still not asked?"}
+    K5 -->|"yes"| K6["true: master.ok is true again, so connect works. Nothing is opened"]
+    K5 -->|"no"| K7["false: master.ok is false, so connect throws until a later check passes"]
+    A1["closeAll"] --> A0["at once: remember that it was called, which stops every open, check and connect for every host, and mark every connection closed and not open, so that no connect works on any of them<br/>from now on, also one whose close has not come yet, and no check makes one open again"]
+    A0 --> A2["one after another, each host whose open was tried"]
     A2 --> A3["wait for its open to end"]
-    A3 --> A4["mark it not open, then closeMaster"]
+    A3 --> A4["mark it not open again, then closeMaster"]
 ```
 
 ## src/start.js
@@ -6145,7 +6250,10 @@ flowchart TD
     O8b -->|"no"| O10["open, next diagram"]
     O8b -->|"yes"| O8c["openTunnel of the kind, the target, the secrets, the route parts, the env and the signal of the context"]
     O8c -->|"late"| O8d["gives late"]
-    O8c -->|"skipped"| O8e["lifecycle: target_skipped with its text, gives skipped, and firstServer when a first server failed"]
+    O8c -->|"skipped"| O8f{"a wayOut with it?"}
+    O8f -->|"yes"| O8g["say of the context with the way out: the ctx.say of open, a line of its own"]
+    O8f -->|"no"| O8e["lifecycle: target_skipped with its text, gives skipped, and firstServer when a first server failed"]
+    O8g --> O8e
     O8c -->|"the tunnel"| O10
 ```
 
@@ -6192,7 +6300,7 @@ flowchart TD
 
 ### The service tunnels: the routes and the first servers
 
-A service target with a route (`tunnel` in the inventory, kept beside the target by `src/inventory.js`) is opened through a shared connection to its first server (`sharedMasters` of `src/kinds/engines/tunnel.js`). `start` makes one `sharedMasters` of its env without credentials once the selection is known, and `doctor` one per project with the env of its temporary folder. `routesOf` gives the route of each selected target that has one, by `KIND:NAME`, in the order `start` opens the targets (`tunnelRoute` of the inventory that `loadInventory` gave, never a copy). `checkRouteSockets` checks the socket of every first server after `prepareTargets` and before anything opens: a path over its limit, or two hosts on one socket, is printed and `start` gives 1 (`doctor`: FAIL sockets). `routeText` is what the OPENING line adds, and `tunnelGoneText` the core's own DOWN text.
+A service target with a route (`tunnel` in the inventory, kept beside the target by `src/inventory.js`) is opened through a shared connection to its first server (`sharedMasters` of `src/kinds/engines/tunnel.js`). `start` makes one `sharedMasters` of its env without credentials once the selection is known. `doctor` makes one per project with the env of its temporary folder, which opens the first servers, and one more with the env without credentials (the state folder of `start`), only to check the socket paths that `start` will use: that one opens nothing. `routesOf` gives the route of each selected target that has one, by `KIND:NAME`, in the order `start` opens the targets (`tunnelRoute` of the inventory that `loadInventory` gave, never a copy). `checkRouteSockets` checks the socket of every first server after `prepareTargets` and before anything opens: a path over its limit, or two hosts on one socket, is printed and `start` gives 1 (`doctor`: FAIL sockets). `routeText` is what the OPENING line adds, and `tunnelGoneText` the core's own DOWN text.
 
 ```mermaid
 flowchart TD
@@ -6209,7 +6317,7 @@ flowchart TD
     T2 -->|"none"| T3["through HOST"]
     T2 -->|"one"| T4["through HOST, then 1 jump"]
     T2 -->|"more"| T5["through HOST, then N jumps"]
-    G1["tunnelGoneText of HOST"] --> G2["the shared connection to HOST is gone: the target stays down until ksproxy start is run again"]
+    G1["tunnelGoneText of HOST"] --> G2["the shared connection to HOST does not answer: run ksproxy start again if it stays down"]
 ```
 
 A first server that fails keeps its result in `masters`, `{ ok: false, error }` with `ssh exited with code N` as for an ssh target, and `openTunnel` skips each target behind it with that text. `NO_CERTIFICATE_WHY`, the one WARN of a tunnelled target whose kind has no `tunnelChecksCertificate` or whose hook does not give true, reads `the servers on the route can read and change the traffic: this target does not check the certificate of the service`; TLS is never required.
@@ -6233,16 +6341,29 @@ flowchart TD
     U10 -->|"yes"| U11["skipped: the loopback port could not be opened: MESSAGE"]
     U10 -->|"no"| U12["tunnel: host 127.0.0.1, port, hold: the listener's hold, nothing while down"]
     U9 -->|"no"| U13["tunnel: connect, and a hold that does nothing"]
-    U12 --> U14["the tunnel frozen, its control kept with keepTunnel: host, down, hold, check, close"]
+    U12 --> U14["the tunnel frozen, its control kept with keepTunnel: host, down, closed, hold, check, close"]
     U13 --> U14
-    U14 --> U15["trialOf, gate held: the kind, the entry of kind and target withTunnel, env and secrets,<br/>stepMs for the first server and each jump and one step more, the signal"]
-    U15 --> U16{"the signal fired?"}
-    U16 -->|"yes"| U17["close, gives late"]
-    U16 -->|"no, passed"| U18["gives the tunnel"]
-    U16 -->|"no, failed"| U19["routeFailure, then close: a reason gives skipped: the route failed: oneLine of it,<br/>else skipped: the service did not answer through the tunnel: oneLine of the detail"]
+    U14 --> U15["trialOf, gate held: the kind, the entry of kind and target withTunnel, env and secrets,<br/>stepMs for the first server and each jump and one step more, the signal. After it, see below"]
 ```
 
-`withTunnel` sets `tunnel` on an entry as a property that is not enumerable. `close` of the control marks the tunnel down, closes the listener (which waits for its holds), then destroys every stream still open and waits until each one's ssh is gone.
+#### openTunnel, after the trial
+
+```mermaid
+flowchart TD
+    U15["the trial ended, its gate released"] --> U16{"the signal fired?"}
+    U16 -->|"yes"| U17["close, gives late"]
+    U16 -->|"no, passed"| U18["gives the tunnel"]
+    U16 -->|"no, failed"| U19a["routeFailure, then close"]
+    U19a --> U19b{"the signal fired meanwhile?"}
+    U19b -->|"yes"| U19c["gives late, nothing is said"]
+    U19b -->|"no"| U19{"a reason?"}
+    U19 -->|"yes"| U20["skipped: the route failed: oneLine of it, no way out"]
+    U19 -->|"no"| U21{"the trial gave a wayOut?"}
+    U21 -->|"yes"| U22["skipped: oneLine of the detail as it is, and the wayOut"]
+    U21 -->|"no"| U23["skipped: the service did not answer through the tunnel: oneLine of the detail"]
+```
+
+`withTunnel` sets `tunnel` on an entry as a property that is not enumerable. `close` of the control marks the tunnel closed and down, closes the listener (which waits for its holds), then destroys every stream still open and waits until each one's ssh is gone.
 
 ### trialOf, within, routeFailure and oneLine
 
@@ -6255,11 +6376,14 @@ flowchart TD
     T5 -->|"a stop, or the stop fired before"| T6["failed: stopped"]
     T5 -->|"ms passed"| T7["failed: the check did not finish within N seconds"]
     T5 -->|"a throw, or not a boolean ok and a text detail"| T8["failed: the check failed"]
-    T5 -->|"ok and detail"| T9["as given"]
+    T5 -->|"ok and detail"| T9{"hasWayOut: wayOut is a text, and it and the detail are not empty once trimmed?"}
+    T9 -->|"yes"| T9a["ok and detail as given, and the wayOut"]
+    T9 -->|"no"| T9b["ok and detail as given, no wayOut"]
     T6 --> T10["finally: the signal fired"]
     T7 --> T10
     T8 --> T10
-    T9 --> T10
+    T9a --> T10
+    T9b --> T10
     W1["within of a promise, ms, fallback"] --> W2["the value of the promise, or the fallback once ms passed, the timer cleared"]
     F1["routeFailure of what the trial saw"] --> F2{"a connection could not be made?"}
     F2 -->|"yes"| F3["the first error, such as the shared connection is not open"]
@@ -6283,16 +6407,18 @@ flowchart TD
     C6 -->|"no"| C8["done"]
     C7 --> C8
     H1["stateNow of a health item"] --> H2{"the item has a tunnel?"}
-    H2 -->|"yes"| H3{"down already, or masters.check of its first server fails?"}
-    H3 -->|"yes"| H4["down for good: TUNNEL_GONE, the gate closed, the kind not asked"]
-    H3 -->|"no"| H5
+    H2 -->|"yes"| H3["masters.check of its first server, on this round, then tunnelChecked of the control and its answer"]
+    H3 --> H3a{"tunnelChecked: the control was closed, or the check failed?"}
+    H3a -->|"yes"| H4["down: TUNNEL_GONE, the gate closed, the kind not asked"]
+    H3a -->|"no"| H9["no longer down: the gate opens again, and the kind is asked. UP comes back only when its state is up too"]
+    H9 --> H5
     H2 -->|"no"| H5{"the kind has probe?"}
     H5 -->|"no"| H6["targetState"]
     H5 -->|"yes"| H7["probe of the kind while holdTunnel holds the gate, released after"]
     H4 --> H8["downText: tunnelGoneText of the first server for TUNNEL_GONE, else downMessage of the kind"]
 ```
 
-`cleanup` runs `closeOne` at once for every opened entry whose kind has `close` or that has a tunnel, then `closeAll` of the shared connections, one at a time after each open ended, then empties the socket folder. A check of a dead shared connection fails once and for good (`sharedMasters` keeps it), and no connection of a stream kind can be made over it.
+`cleanup` runs `closeOne` at once for every opened entry whose kind has `close` or that has a tunnel, then `closeAll` of the shared connections, one at a time after each open ended, then empties the socket folder. While the check of a shared connection fails, no connection of a stream kind can be made over it. A target is UP again only when a later check of the shared connection passes and the kind's own state is up: while the kind's state is down, the target stays DOWN and no new line is written. `tunnelChecked` sets `down` of the control from the check and gives it; once the control was closed (a stop, a late close) it stays down whatever a later check says. Nothing opens a shared connection again, so one that really dropped fails every later check, and its targets stay down until `start` is run again.
 
 ### bounded, emptyDirectory, closeStaleSockets, fileSize
 
@@ -7217,7 +7343,7 @@ Nothing is held without a bound. For ssh, kubernetes and local, `run` also keeps
 
 ### The tunnel of an opened entry: keepTunnel, tunnelControl and holdTunnel
 
-`start` and `doctor` keep the core's own state of each tunnel here, by the entry's tunnel object, never on the entry: no kind, record or file can reach it. A kind reads only `opened.tunnel`: `{ connect }` for a kind that takes the stream, `{ host, port, hold }` for a kind with `tunnelListener`. `answerCall` refuses a call on a target whose shared connection is gone with `TUNNEL_DOWN`, and holds the gate of the listener while `perform` runs.
+`start` and `doctor` keep the core's own state of each tunnel here, by the entry's tunnel object, never on the entry: no kind, record or file can reach it. A kind reads only `opened.tunnel`: `{ connect }` for a kind that takes the stream, `{ host, port, hold }` for a kind with `tunnelListener`. `answerCall` refuses a call on a target while the check of its shared connection fails with `TUNNEL_DOWN`, and holds the gate of the listener while `perform` runs.
 
 ```mermaid
 flowchart TD
@@ -7229,7 +7355,7 @@ flowchart TD
     H2 -->|"no"| H3["a release that does nothing"]
     H2 -->|"yes"| H4["hold of the control: the listener's hold, or a release that does nothing for a stream or while down"]
     A1["answerCall, after the review and the stop check"] --> A2{"the target's tunnel is down?"}
-    A2 -->|"yes"| A3["REFUSED with TUNNEL_DOWN: the connection to this target is down until ksproxy start is run again,<br/>short target down, audited, perform is not called"]
+    A2 -->|"yes"| A3["REFUSED with TUNNEL_DOWN: the connection to this target is down,<br/>short target down, audited, perform is not called"]
     A2 -->|"no"| A4["holdTunnel of the opened entry, then hiddenTexts and performWithin, the gate released after, also when they throw"]
 ```
 
@@ -7238,7 +7364,7 @@ flowchart TD
 | Short reason | Where |
 | --- | --- |
 | `target not open` | `answerCall`: the brokered target is not in the list of targets `start` opened, with the text `this target is not open in the session` |
-| `target down` | `answerCall`: the shared connection of the target's tunnel is gone, with the text `the connection to this target is down until ksproxy start is run again`; `perform` is not called |
+| `target down` | `answerCall`: the last check of the shared connection of the target's tunnel failed, with the text `the connection to this target is down`; `perform` is not called |
 | `call failed` | `answerCall`: `auditedDetailOf`, `decide`, `hiddenForms` or `perform` threw, or `perform` gave a result of the wrong shape, with the text `the call failed inside the session` |
 | `session stopped` | `answerCall`: the session stopped while `perform` ran, the reason is `the session stopped during the call`; or it stopped while the reviewer was asked, the reason is `the session stopped before the call ran` and `perform` is not called |
 | `invalid arguments` | `execTool` and `answerCall`: the call does not have the type the tool takes; or `execTool`: `auditedDetailOf` threw, with the text `invalid arguments: the call could not be written to the log` |
@@ -8434,7 +8560,7 @@ flowchart TD
 
 ## src/kinds/mongodb/document.js
 
-The command document of the `mongodb` kind: the strict reader `readCommand`, the fixed refusals `judgeCommand`, the words the rules see, the bounds `boundCommand` sets before a document is sent, `passwordParts`, and the connection string through a service tunnel: `uriPieces`, `serviceAddress` and `throughTunnel`. The limits are `MAX_DOCUMENT_BYTES` (65536), `MAX_DEPTH` (20) and `RESULT_LIMIT` (100). The lists `READ_COMMANDS`, `WRITE_COMMANDS`, `NEVER_COMMANDS`, `FORBIDDEN_KEYS`, `FORBIDDEN_STAGES`, `JOIN_STAGES` and `PROTOCOL_KEYS` are in the tables at the end of this section. Every refusal is an `AllowError` with a reason and a short text; `decide` of the kind turns it into a refusal without `unmatched`, so no rule, reviewer or `ksproxy check` gets past it.
+The command document of the `mongodb` kind: the strict reader `readCommand`, the fixed refusals `judgeCommand`, the words the rules see, the bounds `boundCommand` sets before a document is sent, `passwordParts`, and the connection string through a service tunnel: `uriPieces`, `serviceAddress` and `throughTunnel`. The limits are `MAX_DOCUMENT_BYTES` (65536), `MAX_DEPTH` (20) and `RESULT_LIMIT` (100). `TUNNEL_SELECTION_MS` (30000) is how long `mongosh` waits for the server through a tunnel, in milliseconds. The lists `READ_COMMANDS`, `WRITE_COMMANDS`, `NEVER_COMMANDS`, `FORBIDDEN_KEYS`, `FORBIDDEN_STAGES`, `JOIN_STAGES` and `PROTOCOL_KEYS` are in the tables at the end of this section. Every refusal is an `AllowError` with a reason and a short text; `decide` of the kind turns it into a refusal without `unmatched`, so no rule, reviewer or `ksproxy check` gets past it.
 
 ### readCommand
 
@@ -8686,8 +8812,11 @@ flowchart TD
     T3 -->|"no"| T4["no option kept"]
     T3 -->|"yes"| T5["the query split on each and sign, as written"]
     T5 --> T6["drop each empty piece, and each piece whose name by optionNames is directconnection, in any spelling"]
-    T4 --> T7["the options: those kept, then directConnection=true, joined by and signs"]
-    T6 --> T7
+    T4 --> T6a{"a kept piece whose name by optionNames is serverselectiontimeoutms, in any spelling, even with an empty value?"}
+    T6 --> T6a
+    T6a -->|"yes"| T7["the options: those kept, then directConnection=true, joined by and signs"]
+    T6a -->|"no"| T6b["the options: those kept, then serverSelectionTimeoutMS=TUNNEL_SELECTION_MS, 30000,<br/>then directConnection=true, joined by and signs. mongosh would wait only 2 s for a host 127.0.0.1"]
+    T6b --> T8
     T7 --> T8["scheme, auth as written, the loopback address in place of the host list"]
     T8 --> T9{"a path?"}
     T9 -->|"yes"| T10["the path as written"]
@@ -9310,22 +9439,24 @@ With a tunnel the context of `open` holds `tunnel`, and the TLS check goes throu
 flowchart TD
     C1["tlsCheck of the spec, the target, the program, env, secrets, signal and tunnel"] --> C2["the invocation of the kind for select 1, with the password from the secrets, TLS_CHECK_MS, 5 seconds, and the tunnel when there is one"]
     C2 --> C3["runClient with the program, at most 16 KiB and the signal of the context"]
-    C3 --> C4{"exit code 0?"}
-    C4 -->|"yes"| N1["null: the target opens"]
-    C4 -->|"no, also at the time limit and at a stop"| F1["tlsFailure of the standard error and the target"]
+    C3 --> C4{"exit code 0, or the time limit, or a stop?"}
+    C4 -->|"yes"| N1["null: the target opens, and the text of a client that was stopped is never read"]
+    C4 -->|"no"| F1["tlsFailure of the standard error and the target"]
     F1 --> F2{"root certificate file system does not exist?"}
     F2 -->|"yes"| R1["this psql cannot use the system's CAs, way out: that needs libpq 16 or later, name the CA in caFile"]
     F2 -->|"no"| F3{"does not support SSL, does not support it, or doesn't support it?"}
     F3 -->|"yes"| R2["the server does not offer TLS, way out: tls MODE needs TLS, set tls to prefer to connect without it"]
-    F3 -->|"no"| F4{"the word certificate, in any case?"}
-    F4 -->|"no"| N2["null: not about TLS, the target opens and a call shows the failure"]
+    F3 -->|"no"| F3a["withoutNames: the text in lower case, with the host, the user and the database of the target taken out as plain text only when the name holds the word certificate, in any case, and is longer than the word, the longest first; every other name stays, a name that is exactly the word too"]
+    F3a --> F4{"tls is verify, and the word certificate, in any case, in that text?"}
+    F4 -->|"no"| N2["null: not about TLS, the target opens and a call shows the failure. With require nothing checks a certificate"]
     F4 -->|"yes"| F5{"a caFile?"}
     F5 -->|"no"| R3["the server's TLS certificate did not verify, way out: checked against the system's CAs and the host name HOST, name the CA in caFile, or set tls to require or prefer"]
     F5 -->|"yes"| R4["the same reason, way out: checked against the CA in caFile and the host name HOST, check caFile and the names in the certificate"]
 ```
 
 - The check goes through the same client, settings and invocation as a call, so what it shows is what a call would do. It runs only for `verify` and `require`; a `prefer` target opens without contacting the server, as before.
-- Only a failure about TLS skips the target. A wrong password or a server that is down opens it as before, and the first call shows the error; so does a check that reaches its time limit or is stopped.
+- Only a failure about TLS skips the target. A wrong password or a server that is down opens it as before, and the first call shows the error; so does a check that reaches its time limit or is stopped, whose text is never read. With `require` an error that names a certificate, such as `connection requires a valid client certificate`, is not a TLS failure, since nothing checks the certificate there.
+- The word certificate is looked for only after each of the host, the user and the database of the target that holds the word and is longer than it was taken out of the text, as plain text and in any case (a short name such as `a` or `cert`, and a name that is exactly `certificate`, stay in the text: for a target with such a name, a failure whose text shows the name is read as a certificate failure), so that a host such as `certificate-db.internal` with a wrong password is not a TLS failure, while a certificate text that also names the host still is one, except when the client's own word is part of a longer name written in the text.
 - The texts are those of psql 17 (`SSL error: certificate verify failed`, `server certificate for ... does not match host name`, `server does not support SSL, but SSL was required`), of the MariaDB client (`TLS/SSL error: ...`) and of the MySQL client (`SSL connection error: ...`). A libpq older than 16 reads `PGSSLROOTCERT=system` as a file name and says that it does not exist. The reason and the way out are fixed texts and the host name; nothing of the client's output is shown.
 
 ### perform, the tool and the notes
@@ -9383,22 +9514,27 @@ flowchart TD
     D1["doctor of opened and the context"] --> D7["clientOf of the opened entry"]
     D7 --> D8{"opened has a program?"}
     D8 -->|"no, the trial before open"| D9["resolveProgram of program of the kind"]
-    D9 -->|"an error"| D10["FAIL: the error as the detail"]
-    D9 --> D11{"the family is known, or tls is prefer, or the kind has no clientFamily?"}
-    D8 -->|"yes"| D11
+    D9 -->|"an error: the program cannot be found"| D10a["FAIL: the error as the detail, never a way out"]
+    D9 --> D9a{"a caFile, and isReadableFile says it is not a file this user can read?"}
+    D9a -->|"yes"| D10b["FAIL: caFile PATH is not a file that can be read, the text of open, never a way out"]
+    D9a -->|"no"| D11{"the family is known, or tls is prefer, or the kind has no clientFamily?"}
+    D8 -->|"yes, open made it, and nothing is checked again"| D11
     D11 -->|"yes"| D12["the program, and the family opened has, if any"]
-    D11 -->|"no"| D13["clientFamily of the target and the program"]
-    D13 -->|"an error"| D10
+    D11 -->|"no"| D13["clientFamily of the target, the program and the context with the tunnel of opened"]
+    D13 -->|"an error and a way out"| D10c["FAIL: the error of clientFamily as the detail, its way out as wayOut"]
     D13 -->|"a family"| D12
     D12 --> D0["the target of opened, with the family"]
     D0 --> D2["the invocation of the kind for the statement select 1, with the password from the secrets, the time limit and the tunnel of opened, none when it has none"]
     D2 --> D3["runClient with the program, 16 KiB at most and the signal"]
-    D3 --> D4["clientVerdict named for the kind, with the detail select 1 answered for any exit code 0, and the secret values hidden"]
+    D3 --> D3a{"exit code not 0, not timed out or stopped, tls verify or require, and tlsFailure of stderr and the target gives a failure?"}
+    D3a -->|"yes"| D3b["FAIL: its error as the detail, its way out as wayOut, as open's TLS check names them"]
+    D3a -->|"no"| D4["clientVerdict named for the kind, with the detail select 1 answered for any exit code 0, and the secret values hidden"]
     D4 --> D5["OK: select 1 answered, or FAIL: authentication failed, connection refused, could not connect, exited with code N, could not be started, timed out or stopped"]
 ```
 
-- At a start with a tunnel the trial runs this check before `open`, so the entry has no program and no family. `clientOf` finds them as `open` does, so the check works on that entry; an entry that `open` made has them and nothing runs again. The trial never learns a family for `prefer`, which needs none.
-- The text of the error is the reason of the failed check; the way out that `open` says on a line of its own is not said here.
+- At a start with a tunnel the trial runs this check before `open`, so the entry has no program and no family. `clientOf` finds them as `open` does, and checks the `caFile` as `open` does, with the same text and no way out, so the check works on that entry; an entry that `open` made has them, and nothing runs or is checked again. `caFileError` gives the text of a `caFile` that cannot be read, for `open` and for `clientOf`. The trial never learns a family for `prefer`, which needs none.
+- A TLS failure gives the reason and the way out of `open`'s TLS check, also when the text of the client names the loopback address and port of a tunnel; the way out names the fields and the host name of the target, never the route or the port. A family that cannot be learned, or the MariaDB client with `require`, gives the way out of `clientFamily`. The trial passes `wayOut` to `openTunnel`, and `openTarget` says it on a line of its own before SKIPPED (`start`) and before SKIPPED and FAIL (`doctor`). The check of `doctor` after `open` keeps only the detail.
+- Any other failure, such as a wrong password or a server that is down, is the client's verdict without a way out; through a tunnel it still skips the target at `start`.
 
 ## src/kinds/postgres/index.js
 
@@ -9557,12 +9693,14 @@ A password with one of those characters, in a row that a call reads, is shown by
 
 ```mermaid
 flowchart TD
-    F1["clientFamily of the target, the program, env and signal"] --> F2["runClient of the program with --version, 5 seconds, at most 4 KiB"]
+    F1["clientFamily of the target, the program, env, signal and tunnel"] --> F2["runClient of the program with --version, 5 seconds, at most 4 KiB"]
     F2 --> F3{"exit code 0?"}
     F3 -->|"no"| E1["error: could not run PROGRAM --version, way out: ksproxy reads the version to choose the TLS options, check that the program runs, or set tls to prefer"]
     F3 -->|"yes"| F4{"MariaDB in the output?"}
     F4 -->|"yes"| F5{"tls is require?"}
-    F5 -->|"yes"| E2["error: the MariaDB client cannot require TLS without a check, way out: set tls to verify, with caFile when this system does not trust the CA, or to prefer"]
+    F5 -->|"yes"| F6{"through a tunnel: the context has a tunnel?"}
+    F6 -->|"no"| E2["error: the MariaDB client cannot require TLS without a check, way out: set tls to verify, with caFile when this system does not trust the CA, or to prefer"]
+    F6 -->|"yes"| E3["the same error, way out: set tls to prefer: through a tunnel verify cannot be used, and the MariaDB client cannot require TLS without a check"]
     F5 -->|"no"| M1["family mariadb"]
     F4 -->|"no"| M2["family mysql"]
     T1["tlsArgs of the target"] --> T2{"tls is prefer?"}

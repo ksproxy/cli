@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   NO_CERTIFICATE_WHY, TUNNEL_STEP_MS, checkRouteSockets, closeTarget, openFirstServers, openTarget, openTunnel, routeText,
-  routesOf, tunnelGoneText,
+  routesOf, tunnelChecked, tunnelGoneText,
 } from '../src/start.js';
 import { sharedMasters } from '../src/kinds/engines/tunnel.js';
 import { validateInventory } from '../src/inventory.js';
@@ -125,7 +125,7 @@ test('routeText names the first server and the number of jumps', () => {
   assert.equal(routeText(JUMPED), 'through bastion1, then 1 jump');
   assert.equal(routeText({ host: 'web1.example.com', jumps: ['ssh a@b', 'ssh c@d'] }), 'through web1.example.com, then 2 jumps');
   assert.equal(TUNNEL_STEP_MS, 10000);
-  assert.equal(tunnelGoneText('bastion1'), 'the shared connection to bastion1 is gone: the target stays down until ksproxy start is run again');
+  assert.equal(tunnelGoneText('bastion1'), 'the shared connection to bastion1 does not answer: run ksproxy start again if it stays down');
 });
 
 test('routesOf gives the route of each selected target that has one, in the order start opens them', () => {
@@ -362,6 +362,64 @@ test('a stop during the trial closes the tunnel and gives late, for both kinds',
   controller.abort();
   steer.onDoctor = null;
   assert.deepEqual(await opening(streamKind, TARGET(streamKind), ROUTE, s, { signal: controller.signal }), { late: true });
+  await s.masters.closeAll();
+});
+
+test('a stop that comes while a failed trial waits for its reason gives late, and nothing is said', async () => {
+  const s = setup();
+  const controller = new AbortController();
+  // The hook leaves a stream that is ending: its end, which the wait for the reason of the route waits for, fires the stop.
+  const kind = {
+    ...streamKind,
+    doctor: async (opened) => {
+      const stream = opened.tunnel.connect();
+      stream.once('close', () => controller.abort());
+      stream.destroy();
+      return { ok: false, detail: 'reason-1', wayOut: 'way-out-1' };
+    },
+  };
+  assert.deepEqual(await opening(kind, TARGET(streamKind), ROUTE, s, { signal: controller.signal }), { late: true });
+  await noChildLeft(s.env);
+  await s.masters.closeAll();
+});
+
+test('a way out counts only when it and the reason are texts that are not empty', async () => {
+  const s = setup();
+  const t = TARGET(streamKind);
+  const silent = 'the service did not answer through the tunnel: ';
+  const cases = [
+    [{ ok: false, detail: 'reason-1', wayOut: 'way-out-1' }, { skipped: 'reason-1', wayOut: 'way-out-1' }],
+    [{ ok: false, detail: 'reason-1', wayOut: '' }, { skipped: `${silent}reason-1` }],
+    [{ ok: false, detail: 'reason-1', wayOut: ' \n ' }, { skipped: `${silent}reason-1` }],
+    [{ ok: false, detail: 'reason-1', wayOut: 5 }, { skipped: `${silent}reason-1` }],
+    [{ ok: false, detail: '', wayOut: 'way-out-1' }, { skipped: silent }],
+    [{ ok: false, detail: '  ', wayOut: 'way-out-1' }, { skipped: silent }],
+  ];
+  for (const [answer, expected] of cases) {
+    const made = await opening({ ...streamKind, doctor: async () => answer }, t, ROUTE, s);
+    assert.deepEqual(made, expected, JSON.stringify(answer));
+  }
+  await s.masters.closeAll();
+});
+
+test('tunnelChecked: a check sets down, and once the control was closed it stays down whatever a late check says', async () => {
+  const s = setup();
+  const made = await opening(listenerKind, TARGET(listenerKind), ROUTE, s);
+  const control = tunnelControl({ tunnel: made.tunnel });
+  assert.equal(control.closed, false);
+  assert.equal(tunnelChecked(control, false), true);
+  assert.equal(control.down, true);
+  assert.equal(tunnelChecked(control, true), false);
+  assert.equal(control.down, false);
+  // A check that began before the close and ends after it: it passed, but the tunnel is closed.
+  const late = control.check();
+  await control.close();
+  assert.equal(control.closed, true);
+  assert.equal(tunnelChecked(control, await late), true);
+  assert.equal(control.down, true);
+  assert.equal(holdTunnel({ tunnel: made.tunnel })(), undefined);
+  assert.equal(await refused(made.tunnel.port), true);
+  await noChildLeft(s.env);
   await s.masters.closeAll();
 });
 

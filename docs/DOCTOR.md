@@ -84,6 +84,7 @@ $ ksproxy doctor
 
 - **Each line has the format of the log:** `OK` or `FAIL` and a short detail, cleaned, with every secret value hidden.
 - **The lines that `start` would print** while it opens a target (`WARN`, `SKIPPED`) are printed too.
+- **A socket path that is too long** is a `FAIL` on a line named `sockets`: the path of an ssh target and the path of the shared connection to the first server of a tunnel, both as `ksproxy start` would build them, and again in the temporary folder.
 - **With several projects** each line starts with `[NAME] `, as in `start`.
 - **The last line** is `N of M targets OK`.
 - **Exit code:** 0 when every checked target is `OK`, 1 otherwise, 2 for a usage error.

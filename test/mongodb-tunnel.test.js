@@ -167,24 +167,35 @@ test('tunnelTo: every refusal with its exact text, in any spelling of an option 
 
 test('throughTunnel: the host list replaced as text, directConnection=true once, a / added when there is no path', () => {
   const cases = [
-    [URI, `mongodb://report-user:${PASSWORD}@${LOOP}/shop?authSource=admin&directConnection=true`],
-    ['mongodb://h', `mongodb://${LOOP}/?directConnection=true`],
-    ['mongodb://h:27018', `mongodb://${LOOP}/?directConnection=true`],
-    ['mongodb://h?authSource=admin', `mongodb://${LOOP}/?authSource=admin&directConnection=true`],
-    ['mongodb://h/shop', `mongodb://${LOOP}/shop?directConnection=true`],
-    ['mongodb://u:p@h:27017/?directConnection=false&authSource=admin', `mongodb://u:p@${LOOP}/?authSource=admin&directConnection=true`],
-    ['mongodb://h/?DIRECTCONNECTION=false&a=1&direct%43onnection=x&directconnection&directConnection=true', `mongodb://${LOOP}/?a=1&directConnection=true`],
-    ['mongodb://h/?&a=1&&', `mongodb://${LOOP}/?a=1&directConnection=true`],
-    ['mongodb://h/?', `mongodb://${LOOP}/?directConnection=true`],
-    ['mongodb://h/db#frag', `mongodb://${LOOP}/db?directConnection=true#frag`],
-    ['mongodb://h#frag', `mongodb://${LOOP}/?directConnection=true#frag`],
-    ['mongodb://h/?a=1#f?directConnection=false', `mongodb://${LOOP}/?a=1&directConnection=true#f?directConnection=false`],
-    ['mongodb://@h/', `mongodb://@${LOOP}/?directConnection=true`],
-    ['mongodb://u:a/b@h/db', `mongodb://u:a/b@${LOOP}/db?directConnection=true`],
-    ['mongodb://u%3Ax:p%40ss@[2001:db8::1]:27018/', `mongodb://u%3Ax:p%40ss@${LOOP}/?directConnection=true`],
-    ['mongodb://h/?appName=a+b%20c&authMechanismProperties=AWS_SESSION_TOKEN:t%2Bk', `mongodb://${LOOP}/?appName=a+b%20c&authMechanismProperties=AWS_SESSION_TOKEN:t%2Bk&directConnection=true`],
+    [URI, `mongodb://report-user:${PASSWORD}@${LOOP}/shop?authSource=admin&serverSelectionTimeoutMS=30000&directConnection=true`],
+    ['mongodb://h', `mongodb://${LOOP}/?serverSelectionTimeoutMS=30000&directConnection=true`],
+    ['mongodb://h:27018', `mongodb://${LOOP}/?serverSelectionTimeoutMS=30000&directConnection=true`],
+    ['mongodb://h?authSource=admin', `mongodb://${LOOP}/?authSource=admin&serverSelectionTimeoutMS=30000&directConnection=true`],
+    ['mongodb://h/shop', `mongodb://${LOOP}/shop?serverSelectionTimeoutMS=30000&directConnection=true`],
+    ['mongodb://u:p@h:27017/?directConnection=false&authSource=admin', `mongodb://u:p@${LOOP}/?authSource=admin&serverSelectionTimeoutMS=30000&directConnection=true`],
+    ['mongodb://h/?DIRECTCONNECTION=false&a=1&direct%43onnection=x&directconnection&directConnection=true', `mongodb://${LOOP}/?a=1&serverSelectionTimeoutMS=30000&directConnection=true`],
+    ['mongodb://h/?&a=1&&', `mongodb://${LOOP}/?a=1&serverSelectionTimeoutMS=30000&directConnection=true`],
+    ['mongodb://h/?', `mongodb://${LOOP}/?serverSelectionTimeoutMS=30000&directConnection=true`],
+    ['mongodb://h/db#frag', `mongodb://${LOOP}/db?serverSelectionTimeoutMS=30000&directConnection=true#frag`],
+    ['mongodb://h#frag', `mongodb://${LOOP}/?serverSelectionTimeoutMS=30000&directConnection=true#frag`],
+    ['mongodb://h/?a=1#f?directConnection=false', `mongodb://${LOOP}/?a=1&serverSelectionTimeoutMS=30000&directConnection=true#f?directConnection=false`],
+    ['mongodb://@h/', `mongodb://@${LOOP}/?serverSelectionTimeoutMS=30000&directConnection=true`],
+    ['mongodb://u:a/b@h/db', `mongodb://u:a/b@${LOOP}/db?serverSelectionTimeoutMS=30000&directConnection=true`],
+    ['mongodb://u%3Ax:p%40ss@[2001:db8::1]:27018/', `mongodb://u%3Ax:p%40ss@${LOOP}/?serverSelectionTimeoutMS=30000&directConnection=true`],
+    ['mongodb://h/?appName=a+b%20c&authMechanismProperties=AWS_SESSION_TOKEN:t%2Bk', `mongodb://${LOOP}/?appName=a+b%20c&authMechanismProperties=AWS_SESSION_TOKEN:t%2Bk&serverSelectionTimeoutMS=30000&directConnection=true`],
   ];
   for (const [uri, rewritten] of cases) assert.equal(throughTunnel(uri, LOOP), rewritten, uri);
+});
+
+test('throughTunnel: the wait for the server is the driver\'s own 30 s, unless the string names one', () => {
+  assert.equal(throughTunnel('mongodb://u:p@db1.example.com/shop', '127.0.0.1:40123'),
+    'mongodb://u:p@127.0.0.1:40123/shop?serverSelectionTimeoutMS=30000&directConnection=true');
+  assert.equal(throughTunnel('mongodb://db1.example.com/?appName=a#f', '127.0.0.1:40123'),
+    'mongodb://127.0.0.1:40123/?appName=a&serverSelectionTimeoutMS=30000&directConnection=true#f');
+  for (const written of ['serverSelectionTimeoutMS=5000', 'SERVERSELECTIONTIMEOUTMS=5000', 'serverselectiontimeoutms=']) {
+    assert.equal(throughTunnel(`mongodb://db1.example.com/shop?${written}`, '127.0.0.1:40123'),
+      `mongodb://127.0.0.1:40123/shop?${written}&directConnection=true`);
+  }
 });
 
 // Each string, its rewritten form, and the texts a hidden part could be printed in: as it is, and inside a JSON string,
@@ -243,7 +254,7 @@ test('perform: the exact arguments and string with and without a tunnel; with on
   assert.deepEqual(without.argv, CLIENT_ARGS);
   assert.deepEqual(through.argv, CLIENT_ARGS);
   assert.equal(without.uri, URI, 'byte for byte the secret without a tunnel');
-  assert.equal(through.uri, `mongodb://report-user:${PASSWORD}@${LOOP}/shop?authSource=admin&directConnection=true`);
+  assert.equal(through.uri, `mongodb://report-user:${PASSWORD}@${LOOP}/shop?authSource=admin&serverSelectionTimeoutMS=30000&directConnection=true`);
   assert.equal(through.db, 'shop');
   assert.deepEqual(JSON.parse(plain.stdout), JSON.parse(tunnelled.stdout));
 
@@ -275,7 +286,7 @@ test('doctor works on the entry of the trial, without the extras of open, throug
   assert.deepEqual(answer, { ok: true, detail: 'ping answered' });
   assert.deepEqual(service.lines, ['PING']);
   const [line] = client.lines();
-  assert.equal(line.uri, `mongodb://report-user:${PASSWORD}@127.0.0.1:${service.port}/shop?authSource=admin&directConnection=true`);
+  assert.equal(line.uri, `mongodb://report-user:${PASSWORD}@127.0.0.1:${service.port}/shop?authSource=admin&serverSelectionTimeoutMS=30000&directConnection=true`);
   assert.deepEqual(line.argv, CLIENT_ARGS);
   // Without a program on PATH: a short reason, as open would give.
   const missing = await mongodb.doctor(withTunnel({ kind: 'mongodb', target: target() }, tunnel), {
@@ -344,7 +355,7 @@ test('a real start: the trial and the open through the tunnel, calls with the re
     assert.deepEqual(service.lines, ['PING']);
     assert.deepEqual(streamTargets(w), ['db1.example.com:27017']);
     const [trial] = w.client.lines();
-    const match = /^mongodb:\/\/report-user:Pa55%2Fw0rd-UNMISTAKABLE-9c1d@127\.0\.0\.1:(\d+)\/shop\?authSource=admin&directConnection=true$/.exec(trial.uri);
+    const match = /^mongodb:\/\/report-user:Pa55%2Fw0rd-UNMISTAKABLE-9c1d@127\.0\.0\.1:(\d+)\/shop\?authSource=admin&serverSelectionTimeoutMS=30000&directConnection=true$/.exec(trial.uri);
     assert.ok(match, trial.uri);
     const port = match[1];
 
@@ -405,6 +416,6 @@ test('ksproxy doctor passes on a tunnelled mongodb target, the trial and the che
   assert.deepEqual(service.lines, ['PING', 'PING']);
   const lines = w.client.lines();
   assert.equal(lines.length, 2);
-  for (const line of lines) assert.match(line.uri, /^mongodb:\/\/report-user:Pa55%2Fw0rd-UNMISTAKABLE-9c1d@127\.0\.0\.1:\d+\/shop\?authSource=admin&directConnection=true$/);
+  for (const line of lines) assert.match(line.uri, /^mongodb:\/\/report-user:Pa55%2Fw0rd-UNMISTAKABLE-9c1d@127\.0\.0\.1:\d+\/shop\?authSource=admin&serverSelectionTimeoutMS=30000&directConnection=true$/);
   assert.ok(!/127\.0\.0\.1:\d+/.test(proc.stdout.text), 'the loopback address is not in the lines of doctor');
 });

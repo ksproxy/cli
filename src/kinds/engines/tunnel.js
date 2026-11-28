@@ -18,6 +18,7 @@ import {
 const TUNNEL_KEYS = ['host', 'jumps'];
 export const MAX_LISTENER_CONNECTIONS = 16;
 export const MAX_JUMP_CONNECTIONS = 8;
+export const MAX_TARGET_JUMP_CONNECTIONS = 6;
 export const STDERR_CAP = 4096;
 // The name every stream ssh is given: the shared connection answers for it, and HostName ksproxy.invalid with
 // ProxyCommand /usr/bin/false keeps it from ever reaching a host by itself.
@@ -344,15 +345,22 @@ function masterSocket(host, env) {
 // The shared connections of one start (or one doctor run of a project): at most one per first server.
 //   socketFor(host): the socket path, checked for its length (throws), before anything opens.
 //   open(host): opens the connection once (openMaster); every later call gives the same result, { ok } or
-//     { ok: false, error }.
+//     { ok: false, error }. After closeAll it opens nothing, for any host, and gives
+//     { ok: false, error: 'the shared connections are closed' }.
 //   connector({ host, jumps }, to): checks the arguments now (throws streamArgs' errors) and gives connect(), which
-//     makes one stream over that connection (openStream), or throws when the connection is not open or when
-//     MAX_JUMP_CONNECTIONS streams with jumps are open over it already.
-//   check(host): checkMaster; once it fails, the connection counts as gone for good and connect() throws.
-//   closeAll(): closes every connection that was opened or tried (closeMaster), after its open has ended.
+//     makes one stream over that connection (openStream), or throws when the connection is not open or closeAll was
+//     called, when MAX_TARGET_JUMP_CONNECTIONS streams with jumps of this connector are open already, or when
+//     MAX_JUMP_CONNECTIONS streams with jumps are open over the connection already. Each connector is one target.
+//   check(host): false for a connection that never opened or that closeAll closed; else checkMaster, whose answer
+//     is kept: connect() throws while the last check failed, and works again once a check passes. Nothing is ever
+//     opened again.
+//   closeAll(): marks every connection closed and not open at once, so that no connect works on any of them from
+//     then on, then closes every connection that was opened or tried (closeMaster), one at a time, after its open
+//     has ended.
 export function sharedMasters(env = process.env) {
   const masters = new Map();
   const owners = new Map();
+  let shut = false;
 
   const entry = (host) => {
     const known = masters.get(host);
@@ -363,7 +371,7 @@ export function sharedMasters(env = process.env) {
       throw new Error(`the shared connections to ${other} and ${host} would use the same socket; write one of them in another form`);
     }
     const master = {
-      host, socket, opening: null, ok: false, jumped: 0,
+      host, socket, opening: null, ok: false, opened: false, closed: false, jumped: 0,
     };
     masters.set(host, master);
     owners.set(socket, host);
@@ -373,6 +381,7 @@ export function sharedMasters(env = process.env) {
   const opened = async (master) => {
     const result = await openMaster({ socket: master.socket, host: master.host }, env);
     master.ok = result.ok;
+    master.opened = result.ok;
     return result;
   };
 
@@ -381,6 +390,7 @@ export function sharedMasters(env = process.env) {
       return entry(host).socket;
     },
     open(host) {
+      if (shut) return Promise.resolve({ ok: false, error: 'the shared connections are closed' });
       let master;
       try {
         master = entry(host);
@@ -394,16 +404,22 @@ export function sharedMasters(env = process.env) {
       const master = entry(host);
       const args = streamArgs({ socket: master.socket, jumps, to });
       const jumped = jumps.length > 0;
+      let mine = 0;
       return () => {
-        if (!master.ok) throw new Error('the shared connection is not open');
+        if (!master.ok || master.closed || shut) throw new Error('the shared connection is not open');
+        if (jumped && mine >= MAX_TARGET_JUMP_CONNECTIONS) {
+          throw new Error(`at most ${MAX_TARGET_JUMP_CONNECTIONS} connections with jumps may be open at once for one target`);
+        }
         if (jumped && master.jumped >= MAX_JUMP_CONNECTIONS) {
           throw new Error(`at most ${MAX_JUMP_CONNECTIONS} connections with jumps may be open at once over one shared connection`);
         }
         const stream = openStream(args, env);
         if (jumped) {
           master.jumped += 1;
+          mine += 1;
           stream.once('close', () => {
             master.jumped -= 1;
+            mine -= 1;
           });
         }
         return stream;
@@ -411,11 +427,17 @@ export function sharedMasters(env = process.env) {
     },
     async check(host) {
       const master = masters.get(host);
-      if (master === undefined || !master.ok) return false;
-      master.ok = await checkMaster({ socket: master.socket, host }, env);
+      if (shut || master === undefined || !master.opened || master.closed) return false;
+      const ok = await checkMaster({ socket: master.socket, host }, env);
+      master.ok = ok && !master.closed;
       return master.ok;
     },
     async closeAll() {
+      shut = true;
+      for (const master of masters.values()) {
+        master.closed = true;
+        master.ok = false;
+      }
       for (const master of masters.values()) {
         if (master.opening === null) continue;
         await master.opening;

@@ -60,7 +60,7 @@ test('--version prints the version', async () => {
   const { env } = tempEnv();
   const r = await cli(['--version'], env);
   assert.equal(r.code, 0);
-  assert.equal(r.stdout.trim(), '0.9.0');
+  assert.equal(r.stdout.trim(), '0.9.1');
 });
 
 test('--help and no arguments print the usage', async () => {

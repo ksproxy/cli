@@ -376,10 +376,11 @@ const TUNNEL_CLOSE_MS = 5000;
 const TRIAL_EXIT_MS = 3000;
 const REASON_MAX = 300;
 const ADDRESS_FAILED = 'the address of the service could not be found';
-// The state a target with a tunnel has once its shared connection is gone, and the core's own DOWN text for it.
+// The state a target with a tunnel has while the check of its shared connection fails, and the core's own DOWN text
+// for it. Nothing opens the connection again, so one that really dropped stays down until start is run again.
 const TUNNEL_GONE = 'tunnel gone';
 export function tunnelGoneText(host) {
-  return `the shared connection to ${host} is gone: the target stays down until ksproxy start is run again`;
+  return `the shared connection to ${host} does not answer: run ksproxy start again if it stays down`;
 }
 export const NO_CERTIFICATE_WHY = 'the servers on the route can read and change the traffic: this target does not check the certificate of the service';
 
@@ -445,9 +446,13 @@ function within(promise, ms, fallback) {
   return Promise.race([promise, late]).finally(() => clearTimeout(timer));
 }
 
+// Whether the answer of a doctor hook has a way out that can be said: a text that is not empty after trimming, with a
+// detail that is not empty after trimming either.
+const hasWayOut = (r) => typeof r.wayOut === 'string' && r.wayOut.trim() !== '' && r.detail.trim() !== '';
+
 // The trial: the doctor hook of the kind, run once through the tunnel with the entry without the extras of open,
-// within ms and until stop fires: { ok, detail }. A kind without the hook passes. A hook that throws or gives another
-// shape fails with "the check failed".
+// within ms and until stop fires: { ok, detail, wayOut? }, wayOut when hasWayOut says it can be said. A kind without
+// the hook passes. A hook that throws or gives another shape fails with "the check failed".
 async function trialOf(kind, probe, ctx, ms, stop) {
   if (kind.doctor === undefined) return { ok: true, detail: 'no check' };
   const controller = new AbortController();
@@ -457,7 +462,7 @@ async function trialOf(kind, probe, ctx, ms, stop) {
     .then(() => kind.doctor(probe, { ...ctx, timeoutMs: ms, signal }))
     .then(
       (r) => (r !== null && typeof r === 'object' && typeof r.ok === 'boolean' && typeof r.detail === 'string'
-        ? { ok: r.ok, detail: r.detail }
+        ? { ok: r.ok, detail: r.detail, ...(hasWayOut(r) ? { wayOut: r.wayOut } : {}) }
         : failed),
       () => failed,
     );
@@ -480,15 +485,26 @@ async function routeFailure(seen) {
   return reasons.find((reason) => reason !== null) ?? null;
 }
 
+// Sets the down mark of a tunnel's control from a check of its shared connection, and gives it: down while the check
+// fails, and always down once the control was closed, so that a check that ends after a stop or a late close never
+// makes a closed tunnel look up again.
+export function tunnelChecked(control, ok) {
+  control.down = control.closed || !ok;
+  return control.down;
+}
+
 // What a stream kind's hold gives, and what takes the error of a stream so that it is never unhandled.
 const nothing = () => {};
 
 const oneLine = (text) => clip(text.trim().replace(/\s*\n\s*/g, '; '), REASON_MAX);
 
 // The tunnel of one target before its kind's open: the first server, tunnelTo, the connector, the listener for a kind
-// with tunnelListener, then the trial. Gives { tunnel } (kept with keepTunnel), { skipped, firstServer? }, or { late }
-// when the signal fired (all closed). The tunnel is { connect } or { host, port, hold }; its streams never throw an
-// unhandled error. listen opens the listener (openListener; a test gives one that fails).
+// with tunnelListener, then the trial. Gives { tunnel } (kept with keepTunnel), { skipped, firstServer? }, { skipped,
+// wayOut } when the trial failed with a way out and the route did not fail, or { late } when the signal fired (all
+// closed), also when it fired while a failed trial waited for the reason of its route. The tunnel is { connect } or
+// { host, port, hold }; its streams never throw an unhandled error. The control kept for it has closed, which its
+// close sets, so that tunnelChecked keeps it down. listen opens the listener (openListener; a test gives one that
+// fails).
 export async function openTunnel(kind, t, secrets, {
   route, masters, env, signal, stepMs = TUNNEL_STEP_MS, listen = openListener,
 }) {
@@ -519,7 +535,7 @@ export async function openTunnel(kind, t, secrets, {
     return stream;
   };
   const control = {
-    host: route.host, down: false, check: () => masters.check(route.host),
+    host: route.host, down: false, closed: false, check: () => masters.check(route.host),
   };
   let listener = null;
   let tunnel;
@@ -537,6 +553,7 @@ export async function openTunnel(kind, t, secrets, {
     tunnel = Object.freeze({ connect });
   }
   control.close = async () => {
+    control.closed = true;
     control.down = true;
     if (listener !== null) await listener.close();
     await Promise.all([...live].map((s) => new Promise((resolve) => {
@@ -565,7 +582,11 @@ export async function openTunnel(kind, t, secrets, {
   if (trial.ok) return { tunnel };
   const reason = await routeFailure(trialSeen);
   await control.close();
+  // A stop during the wait for the reason: nothing more is said.
+  if (signal.aborted) return { late: true };
   if (reason !== null) return { skipped: `the route failed: ${oneLine(reason)}` };
+  // A trial with a way out failed as open would: its reason as it is, and the way out for a line of its own.
+  if (trial.wayOut !== undefined) return { skipped: oneLine(trial.detail), wayOut: trial.wayOut };
   return { skipped: `the service did not answer through the tunnel: ${oneLine(trial.detail)}` };
 }
 
@@ -593,7 +614,8 @@ export function stopSignals() {
 // cannot be read, else open. open(call, secrets) gets the call of the kind's open with the context and the target's
 // secrets, and the secrets themselves; it gives the result of open, or { late } when it closed a target that opened
 // during a stop. An opened target goes to onOpened with its secrets, then UP or the WARN of open, the notes and the
-// short secrets follow; a failed open is SKIPPED with its error. Gives { opened, secrets }, { skipped } with the text
+// short secrets follow; a failed open is SKIPPED with its error. The way out of a failed trial goes to context.say,
+// the ctx.say of the kind's open, before its SKIPPED line. Gives { opened, secrets }, { skipped } with the text
 // of the SKIPPED line, or { late }.
 export async function openTarget(kind, t, {
   held, ports, context, lifecycle, open, onOpened, onSecrets = () => {}, tunnel: route,
@@ -624,6 +646,8 @@ export async function openTarget(kind, t, {
     const made = await openTunnel(kind, t, secrets.secrets, { ...route, env: context.env, signal: context.signal });
     if (made.late) return { late: true };
     if (made.skipped !== undefined) {
+      // The way out of a failed trial, said as the open of the kind says one: a line of its own before SKIPPED.
+      if (made.wayOut !== undefined) context.say(made.wayOut);
       line('target_skipped', made.skipped);
       return made;
     }
@@ -877,13 +901,13 @@ export async function start(options, startEnv = process.env, host = {}) {
       up: sessionTargets[i].state === 'up',
       tunnel: tunnelControl(o),
     }));
-    // A target with a tunnel asks its shared connection first: once it is gone the target stays down, its listener
-    // takes no connection, and its kind is not asked again. Then a kind with probe is asked with the target's
-    // secrets and its opened entry, while the listener's gate is held; every other target goes through targetState.
+    // A target with a tunnel asks its shared connection first, on every round: while that check fails the target is
+    // down, its listener takes no connection and its kind is not asked; once a check passes again it is no longer
+    // down, unless its control was closed (tunnelChecked). Then a kind with probe is asked with the target's secrets and its opened entry, while the listener's gate
+    // is held; every other target goes through targetState.
     const stateNow = async (item) => {
-      if (item.tunnel !== undefined && (item.tunnel.down || !(await item.tunnel.check()))) {
-        item.tunnel.down = true;
-        return TUNNEL_GONE;
+      if (item.tunnel !== undefined) {
+        if (tunnelChecked(item.tunnel, await item.tunnel.check())) return TUNNEL_GONE;
       }
       if (item.of.probe === undefined) return stateOf(item.target, env);
       const release = holdTunnel(item.opened);

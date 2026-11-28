@@ -388,8 +388,8 @@ test('the auth forms, the variables they name, and the checks on header names an
   for (const user of ['a:b', 'a\nb', 'a\u0085']) assert.equal(authProblem(basic, { USR: user, PWD_X: 'p' }), 'USR holds a character that is not allowed');
   assert.equal(authProblem(basic, { USR: 'u', PWD_X: 'p\r\nX-Evil: 1' }), 'PWD_X holds a character that is not allowed');
   assert.equal(headerNameProblem('X-Api-Key'), null);
-  for (const name of ['Host', 'content-length', 'Transfer-Encoding', 'connection', 'Cookie', 'AUTHORIZATION', 'accept', 'Content-Type', 'X Key', 'X:Key', '', 'x'.repeat(65), 5]) {
-    assert.equal(headerNameProblem(name), 'must be letters, digits and "-", and not one of host, content-length, transfer-encoding, connection, cookie, authorization, accept, content-type', String(name));
+  for (const name of ['Host', 'content-length', 'Transfer-Encoding', 'connection', 'Cookie', 'AUTHORIZATION', 'accept', 'Content-Type', 'Proxy-Authorization', 'proxy-connection', 'Trailer', 'X Key', 'X:Key', '', 'x'.repeat(65), 5]) {
+    assert.equal(headerNameProblem(name), 'must be letters, digits and "-", and not one of host, content-length, transfer-encoding, connection, cookie, authorization, accept, content-type, proxy-authorization, proxy-connection, trailer', String(name));
   }
 });
 

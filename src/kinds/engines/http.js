@@ -35,7 +35,13 @@ const DOTS_ONLY = /^\.+$/;
 const VHOST_SEGMENT = /^%2F$/i;
 const VHOST_WORD = '/%2F';
 const ACCEPT = 'application/json, */*';
-const FORBIDDEN_HEADERS = ['host', 'content-length', 'transfer-encoding', 'connection', 'cookie', 'authorization', 'accept', 'content-type'];
+// The names ksproxy or Node set themselves: Node sets proxy-authorization and proxy-connection for a plain http request to
+// a proxy of the environment, and a credential in a header of that name would not be sent. Node refuses a trailer header
+// when the request ends, as the request is not sent in chunks.
+const FORBIDDEN_HEADERS = [
+  'host', 'content-length', 'transfer-encoding', 'connection', 'cookie', 'authorization', 'accept', 'content-type',
+  'proxy-authorization', 'proxy-connection', 'trailer',
+];
 const HEADER_NAME_RE = /^[A-Za-z0-9-]{1,64}$/;
 // What a secret that goes into a header as it is may hold: printable ASCII, so it cannot split or end a header.
 const HEADER_VALUE_RE = /^[\x20-\x7e]+$/;
@@ -66,6 +72,19 @@ const EDGE_SPACE = /^[\t\n\r ]+|[\t\n\r ]+$/g;
 const ZLIB_SYNC = { flush: zlib.constants.Z_SYNC_FLUSH, finishFlush: zlib.constants.Z_SYNC_FLUSH };
 const BROTLI_SYNC = { flush: zlib.constants.BROTLI_OPERATION_FLUSH, finishFlush: zlib.constants.BROTLI_OPERATION_FLUSH };
 const ZSTD_SYNC = { flush: zlib.constants.ZSTD_e_continue, finishFlush: zlib.constants.ZSTD_e_end };
+// The variables of the environment that name a proxy and the hosts that go without one, as Node reads them, and each
+// lower-case name with its upper-case one.
+const PROXY_VARIABLES = ['HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy'];
+const NO_PROXY_VARIABLES = ['NO_PROXY', 'no_proxy'];
+const VARIABLE_PAIRS = [['http_proxy', 'HTTP_PROXY'], ['https_proxy', 'HTTPS_PROXY'], ['no_proxy', 'NO_PROXY']];
+// How fetch split NO_PROXY, the star and dot or the dot at the start of an entry that fetch dropped, an entry with a port
+// as fetch read it, and an IPv6 address in brackets with an optional port.
+const NO_PROXY_SEPARATOR = /[,\s]/;
+const STAR_DOT = /^\*?\./;
+const WITH_PORT = /^(.+):(\d+)$/;
+const BRACKETED_V6 = /^\[([^\]]*)\](|:\d+)$/;
+// The shortest password of a proxy login that is hidden on its own, as start warns for a secret shorter than 8.
+const SHORT_PASSWORD = 8;
 
 const refuse = (reason, short) => {
   throw new AllowError(reason, short);
@@ -386,72 +405,201 @@ function decodersOf(codings) {
   return names.every((name) => Object.hasOwn(DECODERS, name)) ? names.map((name) => DECODERS[name]()) : [];
 }
 
-// The request headers as one list of names and values, in the order fetch sent them: host, connection close (one
+// The request headers as one object of names and values, in the order fetch sent them: host, connection close (one
 // connection per request), the given headers with accept and the content type, the headers fetch added, the encodings
-// it asked for, and the length of the body, 0 for a POST, PUT or PATCH without one. Each value is sent as sentValue
-// gives it, which is the form encodedForms hides.
+// it asked for, and the length of the body, 0 for a POST, PUT or PATCH without one. A header that fetch added, or
+// accept-encoding, is left out when the given headers name it (their names are in lower case, see authHeader), so
+// each name is sent once. Each value is sent as sentValue gives it, which is the form encodedForms hides. An object,
+// not a flat list, lets Node add proxy-authorization for a plain http request that goes to a proxy.
 function requestHeaders(url, method, headers, body) {
   const given = {
     ...headers, accept: ACCEPT, ...(body === undefined ? {} : { 'content-type': 'application/json' }),
   };
+  const added = [...FETCH_HEADERS, ['accept-encoding', ACCEPT_ENCODING[url.protocol]]];
   let length = [];
   if (body !== undefined) length = [['content-length', String(Buffer.byteLength(body))]];
   else if (BODY_METHODS.includes(method)) length = [['content-length', '0']];
-  return [
+  return Object.fromEntries([
     ['host', url.host],
     ['connection', 'close'],
     ...Object.entries(given).map(([name, value]) => [name, sentValue(value)]),
-    ...FETCH_HEADERS,
-    ['accept-encoding', ACCEPT_ENCODING[url.protocol]],
+    ...added.filter(([name]) => !Object.hasOwn(headers, name)),
     ...length,
-  ].flat();
+  ]);
 }
 
-// Sends the request with node:http or node:https and waits for the head of the reply: the reply, or a rejection when
-// there is none (a port fetch refused, a header that cannot be sent, no connection, no answer, a 100 Continue that was
-// not asked for, a 101 switch of protocol, a status below 100, the stop signal). connect, when given, gives the socket to send on (for
-// https a TLS socket). Without it, an agent of this one request connects: it keeps no socket after the reply, and it
-// uses a proxy of the environment only when Node's own global agent does (NODE_USE_ENV_PROXY). Over TLS, ALPN offers
-// http/1.1 only, as fetch did.
+// A name that a shorter form of a NO_PROXY entry may be: not empty, without "*", not starting with ".", and without ":",
+// which would make it an IPv6 address that fetch never matched (fetch compared an IPv6 host with its brackets).
+const isPlainName = (name) => name !== '' && !/[*:]/.test(name) && !name.startsWith('.');
+
+// The forms of one NO_PROXY entry that make Node's matching read it as fetch read it. Node splits on commas only and
+// compares the host without brackets; fetch also split on white space, let "*.name" and ".name" cover the name and its
+// sub-names, a bare name too, and "name:port" the name and its sub-names on that port. So: "*" stays; "*.name:port" and
+// ".name:port", which cover nothing in Node, also give "name:port" (Node has no form for the sub-names on one port);
+// "*.name" also gives "name", and ".name" stays; each only for a plain name (isPlainName), else the entry stays as
+// written; "[v6]" and "[v6]:port" also come without the brackets, unless that form is an IPv6 address of its own (as
+// "::1:8080" is), which Node would send direct on every port; an IP address and an entry with a port stay; a bare name
+// also gives ".name".
+function noProxyForms(entry) {
+  if (entry === '*') return [entry];
+  const prefix = STAR_DOT.exec(entry);
+  if (prefix !== null) {
+    const rest = entry.slice(prefix[0].length);
+    const withPort = WITH_PORT.exec(rest);
+    if (withPort !== null) return isPlainName(withPort[1]) ? [entry, rest] : [entry];
+    return prefix[0] === '*.' && isPlainName(rest) ? [entry, rest] : [entry];
+  }
+  const bracketed = BRACKETED_V6.exec(entry);
+  if (bracketed !== null) {
+    const plain = `${bracketed[1]}${bracketed[2]}`;
+    return net.isIPv6(bracketed[1]) && (bracketed[2] === '' || !net.isIPv6(plain)) ? [entry, plain] : [entry];
+  }
+  if (net.isIP(entry) !== 0 || WITH_PORT.test(entry) || entry.startsWith('[')) return [entry];
+  return [entry, `.${entry}`];
+}
+
+// A NO_PROXY value as fetch read it, for Node's own matching: the entries split on commas and white space, the empty
+// ones dropped, each with its forms (noProxyForms), joined by commas. A value without an entry, such as " ", stays as
+// written: Node reads it as it read the original, and does not take the other variable for an empty one.
+export function widenNoProxy(value) {
+  const entries = value.split(NO_PROXY_SEPARATOR).filter((entry) => entry !== '');
+  return entries.length === 0 ? value : entries.flatMap(noProxyForms).join(',');
+}
+
+// The environment of the proxy for the agent of one request: none stays none; else a copy in which the variables count
+// as fetch chose them. Node takes the lower-case one when it is not empty, else the upper-case one; fetch took the
+// lower-case one whenever it was set, also to an empty text, and for https the http proxy when no https proxy was given.
+// So the upper-case one of each pair is left out of the copy when the lower-case one is set; then, when no https
+// variable gives a proxy (unset or empty), the http proxy that counts, if any, is the https proxy too; and NO_PROXY and
+// no_proxy, where they are set, are read as fetch read them (widenNoProxy).
+function proxyEnvOf(proxyEnv) {
+  if (proxyEnv === undefined) return undefined;
+  const copy = { ...proxyEnv };
+  for (const [lower, upper] of VARIABLE_PAIRS) {
+    if (copy[lower] !== undefined) delete copy[upper];
+  }
+  if (!copy.https_proxy && !copy.HTTPS_PROXY) copy.https_proxy = copy.http_proxy ?? copy.HTTP_PROXY;
+  for (const name of NO_PROXY_VARIABLES) {
+    if (copy[name] !== undefined) copy[name] = widenNoProxy(copy[name]);
+  }
+  return copy;
+}
+
+// The forms of the logins of the proxies of the environment that a reply may show: for each proxy address that is a
+// URL with a user name or a password, the base64 of user, colon, password that Node sends, each part percent-decoded as
+// Node decodes it (as written when that fails), and the password when it has at least SHORT_PASSWORD characters. With
+// an empty password the user name is the secret (a token as the user), and it is hidden when it has at least
+// SHORT_PASSWORD characters. With a password the user name alone is never hidden, nor a shorter password or user name:
+// a short word such as "a" would be hidden in every reply, and would break "application/json" into pieces. Every
+// proxy variable is read, also one that proxyEnvOf leaves out: hiding its login too does no harm.
+function proxyLoginForms(proxyEnv) {
+  if (proxyEnv === undefined) return [];
+  const decoded = (part) => {
+    try {
+      return decodeURIComponent(part);
+    } catch {
+      return part;
+    }
+  };
+  return PROXY_VARIABLES.flatMap((name) => {
+    const url = URL.parse(proxyEnv[name] ?? '');
+    if (url === null || (url.username === '' && url.password === '')) return [];
+    const user = decoded(url.username);
+    const password = decoded(url.password);
+    const secret = password === '' ? user : password;
+    return [Buffer.from(`${user}:${password}`).toString('base64'), ...(secret.length >= SHORT_PASSWORD ? [secret] : [])];
+  });
+}
+
+// The agent of node:http or node:https for one request, and destroy, which destroys every socket it made. Node's own
+// destroy of an agent misses the socket to a proxy whose CONNECT was refused or never answered: Node never adds it to
+// the lists of the agent. The agent uses a proxy of the environment only when Node's own global agent does
+// (NODE_USE_ENV_PROXY), with NO_PROXY read as fetch read it (proxyEnvOf).
+function requestAgent(transport) {
+  const agent = new transport.Agent({ proxyEnv: proxyEnvOf(transport.globalAgent.options.proxyEnv) });
+  const made = [];
+  const create = agent.createConnection;
+  agent.createConnection = (...args) => {
+    const socket = create.apply(agent, args);
+    made.push(socket);
+    return socket;
+  };
+  return { agent, destroy: () => made.forEach((socket) => socket.destroy()) };
+}
+
+// Sends the request with node:http or node:https and waits for the head of the reply: { response, release }, or a
+// rejection when there is none (a port fetch refused, a header that cannot be sent, no connection, no answer, a 100
+// Continue that was not asked for, a 101 switch of protocol, a status below 100, the stop signal). A throw of making or
+// ending the request (a header Node refuses) goes through fail too, so the sockets made are destroyed. connect, when given,
+// gives the socket to send on (for https a TLS socket), and nothing else is destroyed. Without it, the agent of this one
+// request connects (requestAgent): its sockets are destroyed on a rejection, and by release after a reply, so none of
+// them stays, also one to a proxy that refused a CONNECT and kept the connection. release destroys the reply too. Over
+// TLS, ALPN offers http/1.1 only, as fetch did.
 function exchange(url, {
   method, headers, body, signal, connect,
 }) {
   return new Promise((resolve, reject) => {
     if (BAD_PORTS.has(url.port)) throw new Error('a port fetch refuses');
     const transport = url.protocol === 'https:' ? https : http;
-    const way = connect === undefined
-      ? { agent: new transport.Agent({ proxyEnv: transport.globalAgent.options.proxyEnv }) }
-      : { createConnection: connect };
-    const request = transport.request(url, {
-      method, headers, signal, ALPNProtocols: ['http/1.1'], ...way,
-    });
+    const own = connect === undefined ? requestAgent(transport) : null;
+    const way = own === null ? { createConnection: connect } : { agent: own.agent };
+    // Only the first answer counts: an error that comes after the reply leaves the agent to release, as its body may be
+    // read still.
+    let settled = false;
+    const fail = (err) => {
+      if (settled) return;
+      settled = true;
+      own?.destroy();
+      reject(err);
+    };
+    let request;
+    try {
+      request = transport.request(url, {
+        method, headers, signal, ALPNProtocols: ['http/1.1'], ...way,
+      });
+    } catch (err) {
+      fail(err);
+      return;
+    }
     // The stop ends the wait whatever the request does: a connect that gives no socket leaves Node waiting for one, and
     // then the signal of the request alone does not end it. A socket that comes later is destroyed with the request.
     const onStop = () => {
-      reject(new Error('stopped'));
+      fail(new Error('stopped'));
       request.destroy();
     };
     signal.addEventListener('abort', onStop, { once: true });
     request.on('close', () => signal.removeEventListener('abort', onStop));
-    request.on('error', reject);
+    request.on('error', fail);
     request.on('continue', () => {
-      reject(new Error('a 100 Continue that was not asked for'));
+      fail(new Error('a 100 Continue that was not asked for'));
       request.destroy();
     });
     request.on('upgrade', (response, socket) => {
-      reject(new Error('a switch of protocol that was not asked for'));
+      fail(new Error('a switch of protocol that was not asked for'));
       socket.destroy();
     });
     request.on('response', (response) => {
       if (response.statusCode >= 100 && response.statusCode !== 101) {
-        resolve(response);
+        settled = true;
+        resolve({
+          response,
+          release: () => {
+            response.destroy();
+            own?.destroy();
+          },
+        });
         return;
       }
       // A 101, or a status below 100 such as 000 or 099, which fetch failed on: no usable answer.
-      reject(new Error('no usable answer'));
+      fail(new Error('no usable answer'));
       response.destroy();
     });
-    request.end(body);
+    try {
+      request.end(body);
+    } catch (err) {
+      fail(err);
+      request.destroy();
+    }
   });
 }
 
@@ -538,19 +686,25 @@ export function hideSecrets(text, values) {
 // Sends one request and reads the reply. Never follows a redirect. exitCode 0 for a 2xx status, 1 otherwise;
 // stdout is HTTP STATUS, the content type, an empty line and the body as text, cut at maxBytes. cutOff is true when
 // the body stopped before its end, as truncated is when it reached maxBytes. The body is decoded as fetch decoded it,
-// and maxBytes counts the decoded bytes. connect: see exchange. The reply is destroyed at the end, so no socket stays.
+// and maxBytes counts the decoded bytes. connect: see exchange. The reply is released at the end (the reply and the
+// agent of the request destroyed), so no socket stays.
+// Without connect, the login of a proxy of the environment is hidden in stdout (proxyLoginForms): a proxy may show it.
+// The global agents of node:http and node:https share one proxyEnv.
 export async function send({
   baseUrl, headers, method, segments, query, body, timeoutMs, maxBytes, signal, connect,
 }) {
   const url = new URL(buildUrl(baseUrl, segments, query));
+  const forms = connect === undefined ? proxyLoginForms(http.globalAgent.options.proxyEnv) : [];
+  const shown = (text) => (forms.length === 0 ? text : hideSecrets(text, forms));
   const stop = AbortSignal.any(signal === undefined ? [AbortSignal.timeout(timeoutMs)] : [signal, AbortSignal.timeout(timeoutMs)]);
   // A stop that came before the start makes no connection, so no ssh child of a tunnel is started for nothing.
   if (stop.aborted) return { ...TIMED_OUT };
   let response;
+  let release;
   try {
-    response = await exchange(url, {
+    ({ response, release } = await exchange(url, {
       method, headers: requestHeaders(url, method, headers, body), body, signal: stop, connect,
-    });
+    }));
   } catch {
     if (stop.aborted) return { ...TIMED_OUT };
     return { exitCode: 1, stdout: '', stderr: REACH_FAILED };
@@ -559,26 +713,26 @@ export async function send({
   const encoding = method === 'HEAD' || NO_BODY.includes(status) ? null : headerOf(response, 'content-encoding');
   const codings = encoding ? encoding.toLowerCase().split(',') : [];
   if (codings.length > MAX_CODINGS) {
-    response.destroy();
+    release();
     return { exitCode: 1, stdout: '', stderr: REACH_FAILED };
   }
   const head = `HTTP ${status}\ncontent-type: ${contentTypeOf(response)}\n\n`;
   if (status >= 300 && status < 400) {
-    response.destroy();
-    return { exitCode: 1, stdout: head, stderr: REDIRECT };
+    release();
+    return { exitCode: 1, stdout: shown(head), stderr: REDIRECT };
   }
   const decoders = decodersOf(codings);
   const read = await readLimited(decoders.length === 0 ? response : pipeline(response, ...decoders, () => {}), maxBytes);
-  response.destroy();
+  release();
   const ok = status >= 200 && status < 300;
   if (read.failed && stop.aborted) {
     return {
-      exitCode: null, stdout: head + read.text, stderr: '', timedOut: true,
+      exitCode: null, stdout: shown(head + read.text), stderr: '', timedOut: true,
     };
   }
   return {
     exitCode: ok && !read.failed ? 0 : 1,
-    stdout: head + read.text,
+    stdout: shown(head + read.text),
     stderr: read.failed ? CUT_OFF : '',
     ownStderr: true,
     truncated: read.truncated,

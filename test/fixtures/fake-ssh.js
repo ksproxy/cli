@@ -143,8 +143,17 @@ if (argv[0] === '-F' && argv[1] === '/dev/null') {
       fs.appendFileSync(process.env.KSPROXY_FAKE_SSH_TRACE, `${word}\n`);
     }
   };
+  // KSPROXY_FAKE_SSH_CHECK_FAIL_ONCE names a file: while it holds the host of this check, the check removes the file
+  // and fails once, with the socket left as it is.
+  const failOnce = () => {
+    const file = process.env.KSPROXY_FAKE_SSH_CHECK_FAIL_ONCE;
+    if (file === undefined || !fs.existsSync(file) || fs.readFileSync(file, 'utf8') !== last) return false;
+    fs.rmSync(file, { force: true });
+    return true;
+  };
   const finishCheck = () => {
     trace('end');
+    if (failOnce()) process.exit(255);
     process.exit(fs.existsSync(valueAfter('-S')) ? 0 : 255);
   };
   trace('begin');

@@ -174,8 +174,8 @@ test('an http entry is validated into a target, and every mistake is an inventor
   fails({ auth: { basicUserEnv: 'HOME', basicPasswordEnv: 'P' } }, 'http "g": auth.basicUserEnv: HOME is a variable the session needs; name a variable that must hold only the user name');
   fails({ auth: { basicUserEnv: 'U', basicPasswordEnv: 'SSH_X' } }, 'http "g": auth.basicPasswordEnv: SSH_X is a variable the session needs; name a variable that must hold only the password');
   fails({ auth: { headerName: 'X-Key', headerEnv: 'NODE_X' } }, 'http "g": auth.headerEnv: NODE_X is a variable the session needs; name a variable that must hold only the header value');
-  for (const headerName of ['Authorization', 'cookie', 'Host', 'X Key', 5]) {
-    fails({ auth: { headerName, headerEnv: 'K' } }, 'http "g": auth.headerName: must be letters, digits and "-", and not one of host, content-length, transfer-encoding, connection, cookie, authorization, accept, content-type');
+  for (const headerName of ['Authorization', 'cookie', 'Host', 'proxy-authorization', 'Proxy-Connection', 'TRAILER', 'X Key', 5]) {
+    fails({ auth: { headerName, headerEnv: 'K' } }, 'http "g": auth.headerName: must be letters, digits and "-", and not one of host, content-length, transfer-encoding, connection, cookie, authorization, accept, content-type, proxy-authorization, proxy-connection, trailer');
   }
   const rule = (i) => `http "g": allow[${i}]: an http rule is a method and a path, for example GET /api/search, and may end in +body to allow a JSON body`;
   for (const bad of ['GET', 'get /x', 'GET x', 'GET /x extra', 'GET //x', 'GET /.../x', '...', 'uptime']) fails({ allow: ['GET /ok', bad] }, rule(1));

@@ -251,14 +251,20 @@ export async function doctor(plan, env, host) {
     const { files, problem: secretFilesProblem } = everySecretFile(inventory, inventories);
     const ports = usedPorts(own, inventories);
     const bare = withoutVariables(own, credentials);
+    const routes = routesOf(inventory, selection);
     try {
       prepareTargets(selection, bare);
     } catch (err) {
       report(stream, false, { target: 'sockets', message: err.message }, heldValues);
     }
+    // The shared connection of a first server, in the state folder that start will use: opens nothing here.
+    try {
+      checkRouteSockets(routes, sharedMasters(bare));
+    } catch (err) {
+      report(stream, false, { target: 'sockets', message: err.message }, heldValues);
+    }
     const folder = makeDoctorFolder(env, proc.pid);
     const openEnv = { ...bare, [STATE_FOLDER]: folder };
-    const routes = routesOf(inventory, selection);
     const masters = sharedMasters(openEnv);
     try {
       ensureDir(socketDir(openEnv));

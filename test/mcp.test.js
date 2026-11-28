@@ -20,7 +20,7 @@ function emptyEnv() {
 
 test('SERVER_INFO', () => {
   assert.equal(SERVER_INFO.name, 'ksproxy');
-  assert.equal(SERVER_INFO.version, '0.9.0');
+  assert.equal(SERVER_INFO.version, '0.9.1');
 });
 
 test('initialize echoes a known protocol version', async () => {

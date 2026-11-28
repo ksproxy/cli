@@ -47,7 +47,7 @@ No test of `npm test` contacts a real server or cluster. `ssh` and `kubectl` are
 
 | Stub | What it does |
 |---|---|
-| `fake-ssh.js` | Creates and removes the control socket file and answers `-O check` and `-O exit`. It prints `ran <name> <command>` for an exec, and `fail` and `slow` commands give exit 3 and a 10 second wait. `KSPROXY_FAKE_SSH_CHECK_MS` delays each `-O check` answer, and `KSPROXY_FAKE_SSH_TRACE` appends `begin` and `end` to a file around it, which the health-check test uses to show that two checks never overlap. |
+| `fake-ssh.js` | Creates and removes the control socket file and answers `-O check` and `-O exit`. It prints `ran <name> <command>` for an exec, and `fail` and `slow` commands give exit 3 and a 10 second wait. `KSPROXY_FAKE_SSH_CHECK_MS` delays each `-O check` answer, and `KSPROXY_FAKE_SSH_TRACE` appends `begin` and `end` to a file around it, which the health-check test uses to show that two checks never overlap. `KSPROXY_FAKE_SSH_CHECK_FAIL_ONCE` names a file: a `-O check` of the host written in it removes the file and fails once, with the socket left as it is. |
 | `fake-kubectl.js` | Listens on the `--port` given to `proxy` and answers every request with `KSPROXY_FAKE_KUBECTL_STATUS` (default 200). For any other call it prints its arguments as JSON. |
 | `fake-ssh-nostay.js` | Opens a master without leaving a socket, so `-O check` fails. |
 | `fake-ssh-flood.js` | Prints 300000 bytes. |

@@ -96,5 +96,6 @@ export const TLS_TEXT = {
   NONE_WAY: (mode) => `"tls" is "${mode}", which needs TLS; set "tls" to "prefer" to connect without it`,
   OLD_WAY: 'using the system\'s CAs needs libpq 16 or later; name the CA that signed the server\'s certificate in "caFile"',
   MARIADB_WAY: 'set "tls" to "verify" (with "caFile" when this system does not trust the CA), or to "prefer"',
+  MARIADB_TUNNEL_WAY: 'set "tls" to "prefer": through a tunnel "verify" cannot be used, and the MariaDB client cannot require TLS without a check',
   VERSION_WAY: (program) => `ksproxy reads the version of the client to choose its TLS options; check that ${program} runs, or set "tls" to "prefer"`,
 };

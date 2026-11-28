@@ -757,9 +757,9 @@ function capBytes(text, maxBytes) {
   return { text: bytes.subarray(0, maxBytes).toString('utf8'), cut: true };
 }
 
-// The core's own state of the tunnel of each opened entry, by the entry's tunnel object: { host, down, hold, check,
-// close }. It is never on the entry, so no kind, no record and no file can reach it. start and doctor keep it here
-// when a tunnel opens (keepTunnel).
+// The core's own state of the tunnel of each opened entry, by the entry's tunnel object: { host, down, closed, hold,
+// check, close }; closed is set by close, and keeps down true whatever a later check says. It is never on the entry,
+// so no kind, no record and no file can reach it. start and doctor keep it here when a tunnel opens (keepTunnel).
 const TUNNELS = new WeakMap();
 
 export function keepTunnel(tunnel, control) {
@@ -780,8 +780,8 @@ export function holdTunnel(opened) {
   return control === undefined ? () => {} : control.hold();
 }
 
-// The refusal of a call on a target whose shared connection is gone: it stays down until start is run again.
-const TUNNEL_DOWN = 'the connection to this target is down until ksproxy start is run again';
+// The refusal of a call on a target while the check of its shared connection fails.
+const TUNNEL_DOWN = 'the connection to this target is down';
 
 // One brokered call inside ksproxy start, as the call server hands it over: the target comes from start's own
 // list of opened targets, never from session.json. Every refusal is audited here; an error is a refusal with a fixed text.

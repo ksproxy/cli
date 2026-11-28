@@ -8,7 +8,7 @@ import path from 'node:path';
 import { Duplex } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import {
-  MAX_JUMP_CONNECTIONS, MAX_LISTENER_CONNECTIONS, STDERR_CAP, openListener, openStream, sharedMasters, streamArgs,
+  MAX_JUMP_CONNECTIONS, MAX_LISTENER_CONNECTIONS, MAX_TARGET_JUMP_CONNECTIONS, STDERR_CAP, openListener, openStream, sharedMasters, streamArgs,
 } from '../src/kinds/engines/tunnel.js';
 import { ensureDir, socketDir } from '../src/paths.js';
 import { tempDir } from './temp.js';
@@ -25,6 +25,8 @@ const DONE_KEY = key('FAKE_SSH_STREAM_DONE');
 const COMMAND_KEY = key('FAKE_SSH_STREAM_COMMAND');
 const PID_KEY = key('FAKE_SSH_PID_LOG');
 const LOG_KEY = key('FAKE_SSH_LOG');
+const CHECK_FAIL_KEY = key('FAKE_SSH_CHECK_FAIL_ONCE');
+const CHECK_MS_KEY = key('FAKE_SSH_CHECK_MS');
 
 // Waits for a real condition, with a deadline.
 async function until(check, what, ms = 10000) {
@@ -375,6 +377,8 @@ test('openListener: the gate, the release and a hold taken after close', async (
     await closed(refused);
   }
   await closing;
+  assert.ok(pids(env).length > 0);
+  for (const pid of pids(env)) assert.equal(alive(pid), false, `child ${pid}`);
   await until(() => server.sockets.size === 0, 'no connection to the service after close');
   server.close();
 });
@@ -406,6 +410,8 @@ test('openListener: connections kept by another process end with the call, and t
   c.destroy();
   second();
   await listener.close();
+  assert.ok(pids(env).length > 0);
+  for (const pid of pids(env)) assert.equal(alive(pid), false, `child ${pid}`);
   await until(() => server.sockets.size === 0, 'no connection to the service after close');
   server.close();
 });
@@ -441,6 +447,8 @@ test('openListener: a connection ends with the holds that were taken when it was
   c();
   await closed(late);
   await listener.close();
+  assert.ok(pids(env).length > 0);
+  for (const pid of pids(env)) assert.equal(alive(pid), false, `child ${pid}`);
   await until(() => server.sockets.size === 0, 'no connection to the service after close');
   server.close();
 });
@@ -581,11 +589,155 @@ test('sharedMasters: a server that fails stays failed, a dead connection stays d
   fs.rmSync(masters.socketFor('good'));
   assert.equal(await masters.check('good'), false);
   assert.throws(() => connect(), { message: 'the shared connection is not open' });
-  fs.writeFileSync(masters.socketFor('good'), '');
+  // Nothing opens it again: the socket stays missing and every later check fails.
   assert.equal(await masters.check('good'), false);
+  assert.equal(fs.existsSync(masters.socketFor('good')), false);
 
   masters.socketFor('only-named');
   await masters.closeAll();
+});
+
+// The arguments of every ssh the fake ran, from its log.
+const logged = (log) => fs.readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+
+test('sharedMasters: a check that fails once does not end the connection; a later check brings it back', async () => {
+  const server = await echo();
+  const { env } = setup(server.port);
+  const log = path.join(env[STATE_KEY], 'ssh.log');
+  const failOnce = path.join(env[STATE_KEY], 'fail-once');
+  const masters = sharedMasters({ ...env, [LOG_KEY]: log, [CHECK_FAIL_KEY]: failOnce });
+  assert.deepEqual(await masters.open('bastion1'), { ok: true });
+  const connect = masters.connector({ host: 'bastion1', jumps: [] }, '10.0.0.5:5432');
+  assert.equal(await masters.check('bastion1'), true);
+  fs.writeFileSync(failOnce, 'bastion1');
+  assert.equal(await masters.check('bastion1'), false);
+  assert.equal(fs.existsSync(failOnce), false, 'the fake failed that check');
+  assert.equal(fs.existsSync(masters.socketFor('bastion1')), true, 'the socket is still there');
+  assert.throws(() => connect(), { message: 'the shared connection is not open' });
+  assert.equal(await masters.check('bastion1'), true);
+  const s = connect();
+  const got = collect(s);
+  s.end('back again');
+  assert.equal((await got).toString(), 'back again');
+  // It came back without being opened again.
+  assert.equal(logged(log).filter((argv) => argv.includes('-M')).length, 1);
+  await masters.closeAll();
+  server.close();
+});
+
+test('sharedMasters: after closeAll, and for a connection that never opened, check stays false', async () => {
+  const { env } = setup(1, { [key('FAKE_SSH_FAIL_HOST')]: 'badhost' });
+  const log = path.join(env[STATE_KEY], 'ssh.log');
+  const masters = sharedMasters({ ...env, [LOG_KEY]: log });
+  assert.deepEqual(await masters.open('bastion1'), { ok: true });
+  assert.deepEqual(await masters.open('badhost'), { ok: false, error: 'ssh exited with code 255' });
+  // A socket where the failed one would be: the fake would answer, but a connection that never opened is not asked.
+  fs.writeFileSync(masters.socketFor('badhost'), '');
+  const asked = () => logged(log).filter((argv) => argv.includes('-O') && argv.includes('check')).length;
+  const before = asked();
+  assert.equal(await masters.check('badhost'), false);
+  assert.equal(asked(), before);
+  await masters.closeAll();
+  fs.writeFileSync(masters.socketFor('bastion1'), '');
+  assert.equal(await masters.check('bastion1'), false);
+  assert.equal(asked(), before);
+  assert.throws(() => masters.connector({ host: 'bastion1', jumps: [] }, 'db:1')(), { message: 'the shared connection is not open' });
+});
+
+test('sharedMasters: after closeAll nothing opens, for a host first seen by socketFor or a new one', async () => {
+  const { env } = setup(1);
+  const log = path.join(env[STATE_KEY], 'ssh.log');
+  const masters = sharedMasters({ ...env, [LOG_KEY]: log });
+  assert.deepEqual(await masters.open('bastion1'), { ok: true });
+  masters.socketFor('seen');
+  await masters.closeAll();
+  const opens = () => logged(log).filter((argv) => argv.includes('-M')).length;
+  const before = opens();
+  for (const host of ['bastion1', 'seen', 'brand-new']) {
+    assert.deepEqual(await masters.open(host), { ok: false, error: 'the shared connections are closed' }, host);
+    fs.writeFileSync(masters.socketFor(host), '');
+    assert.equal(await masters.check(host), false, host);
+    assert.throws(() => masters.connector({ host, jumps: [] }, 'db:1')(), { message: 'the shared connection is not open' }, host);
+  }
+  assert.equal(opens(), before);
+});
+
+test('sharedMasters: a check that ends after closeAll began does not bring the connection back', async () => {
+  const { env } = setup(1);
+  const slow = sharedMasters({ ...env, [CHECK_MS_KEY]: '1500' });
+  assert.deepEqual(await slow.open('bastion1'), { ok: true });
+  const asking = slow.check('bastion1');
+  await slow.closeAll();
+  // The socket is back before the slow check looks for it, so the fake answers yes; closeAll wins all the same.
+  fs.writeFileSync(slow.socketFor('bastion1'), '');
+  assert.equal(await asking, false);
+  assert.throws(() => slow.connector({ host: 'bastion1', jumps: [] }, 'db:1')(), { message: 'the shared connection is not open' });
+});
+
+test('sharedMasters: once closeAll began, no connect works on any connection, also one whose close has not come yet', async () => {
+  const server = await echo();
+  const { dir, env } = setup(server.port);
+  // A stand-in ssh before the fake: once armed, the close of bastion1 waits until the test lets it go on.
+  const armed = path.join(dir, 'armed');
+  const closing = path.join(dir, 'closing');
+  const go = path.join(dir, 'go');
+  const wrapper = path.join(dir, 'slow-close-ssh.mjs');
+  fs.writeFileSync(wrapper, [
+    '#!/usr/bin/env node',
+    "import fs from 'node:fs';",
+    'const argv = process.argv.slice(2);',
+    `if (fs.existsSync(${JSON.stringify(armed)}) && argv.includes('exit') && argv.at(-1) === 'bastion1') {`,
+    `  fs.writeFileSync(${JSON.stringify(closing)}, '');`,
+    '  const end = Date.now() + 10000;',
+    `  while (!fs.existsSync(${JSON.stringify(go)}) && Date.now() < end) await new Promise((resolve) => { setTimeout(resolve, 10); });`,
+    '}',
+    `await import(${JSON.stringify(new URL('./fixtures/fake-ssh.js', import.meta.url).href)});`,
+  ].join('\n'), { mode: 0o755 });
+  const masters = sharedMasters({ ...env, [SSH_KEY]: wrapper });
+  assert.deepEqual(await masters.open('bastion1'), { ok: true });
+  assert.deepEqual(await masters.open('bastion2'), { ok: true });
+  const second = masters.connector({ host: 'bastion2', jumps: [] }, '10.0.0.5:5432');
+  const before = second();
+  const got = collect(before);
+  before.end('before closeAll');
+  assert.equal((await got).toString(), 'before closeAll');
+  fs.writeFileSync(armed, '');
+  const all = masters.closeAll();
+  // What connect gives while the first close waits: an error, or a stream that the test ends.
+  const tried = [];
+  const attempt = (connect) => {
+    try {
+      const s = connect();
+      tried.push(s);
+      return 'a stream';
+    } catch (err) {
+      return err.message;
+    }
+  };
+  let answers;
+  try {
+    await until(() => fs.existsSync(closing), 'the slow close of the first connection');
+    // The second connection is not closed yet, but closeAll began.
+    assert.equal(fs.existsSync(masters.socketFor('bastion2')), true);
+    answers = [attempt(second), attempt(masters.connector({ host: 'bastion1', jumps: [] }, '10.0.0.5:5432'))];
+  } finally {
+    for (const s of tried) s.destroy();
+    fs.writeFileSync(go, '');
+    await all;
+    server.close();
+  }
+  assert.deepEqual(answers, ['the shared connection is not open', 'the shared connection is not open']);
+  assert.equal(fs.existsSync(masters.socketFor('bastion2')), false);
+});
+
+test('sharedMasters: an open that ends after closeAll began gives no connection to connect', async () => {
+  const { env } = setup(1);
+  const masters = sharedMasters(env);
+  const opening = masters.open('bastion1');
+  const all = masters.closeAll();
+  assert.deepEqual(await opening, { ok: true });
+  assert.throws(() => masters.connector({ host: 'bastion1', jumps: [] }, 'db:1')(), { message: 'the shared connection is not open' });
+  await all;
 });
 
 test('sharedMasters: the arguments of a route are checked when the connector is made', async () => {
@@ -619,6 +771,35 @@ test('sharedMasters: at most 8 connections with jumps at once over one shared co
   await until(() => server.sockets.size === 11, 'eleven connections again');
   for (const s of streams) s.destroy();
   await Promise.all(streams.map(closed));
+  await masters.closeAll();
+  server.close();
+});
+
+test('sharedMasters: one target holds at most 6 of the 8 connections with jumps, so another still connects', async () => {
+  const server = await quiet();
+  const { env } = setup(server.port);
+  const masters = sharedMasters(env);
+  assert.deepEqual(await masters.open('bastion1'), { ok: true });
+  assert.equal(MAX_TARGET_JUMP_CONNECTIONS, 6);
+  const connectX = masters.connector({ host: 'bastion1', jumps: ['ssh u@192.0.2.10'] }, '10.0.0.5:5432');
+  const connectY = masters.connector({ host: 'bastion1', jumps: ['ssh u@192.0.2.10'] }, '10.0.0.6:5432');
+  const plain = masters.connector({ host: 'bastion1', jumps: [] }, '10.0.0.7:5432');
+  const xs = [];
+  for (let i = 0; i < 6; i += 1) xs.push(connectX());
+  assert.throws(() => connectX(), { message: 'at most 6 connections with jumps may be open at once for one target' });
+  const ys = [connectY(), connectY()];
+  assert.throws(() => connectY(), { message: 'at most 8 connections with jumps may be open at once over one shared connection' });
+  // A connector without jumps is never counted.
+  const plains = [plain(), plain(), plain()];
+  await until(() => server.sockets.size === 11, 'eleven connections');
+  xs[0].destroy();
+  await closed(xs[0]);
+  xs.push(connectX());
+  assert.throws(() => connectX(), /for one target/);
+  assert.throws(() => connectY(), /over one shared connection/);
+  const all = [...xs, ...ys, ...plains];
+  for (const s of all) s.destroy();
+  await Promise.all(all.map(closed));
   await masters.closeAll();
   server.close();
 });

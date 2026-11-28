@@ -25,6 +25,7 @@ const PID_KEY = key('FAKE_SSH_PID_LOG');
 const LOG_KEY = key('FAKE_SSH_LOG');
 const HOST_FAIL_KEY = key('FAKE_SSH_FAIL_HOST');
 const CHECK_MS_KEY = key('FAKE_SSH_CHECK_MS');
+const CHECK_FAIL_KEY = key('FAKE_SSH_CHECK_FAIL_ONCE');
 const HEALTH_KEY = key('HEALTH_MS');
 const STATE_KEY = key('STATE_DIR');
 const CONFIG_KEY = key('CONFIG_DIR');
@@ -196,6 +197,43 @@ test('a trial that fails skips the target and its open never runs: the route, th
   await noChildLeft(quiet);
 });
 
+test('a tunnelled target whose TLS check fails is SKIPPED with the reason and the way out of an untunnelled one', async () => {
+  const { doctor } = streamKind;
+  // The trial reaches the service, then gives a reason and a way out, as a kind's TLS check does.
+  streamKind.doctor = async (opened, ctx) => {
+    await doctor(opened, ctx);
+    return { ok: false, detail: 'reason-1', wayOut: 'way-out-1' };
+  };
+  try {
+    const w = await tunnelWorld({ tvs: [A] });
+    const run = launch(w, { all: true });
+    await ready(run);
+    await stopWith(run);
+    const lines = run.proc.stderr.text.split('\n');
+    const skippedAt = lines.findIndex((line) => / tvs +a +SKIPPED /.test(line));
+    assert.match(lines[skippedAt], /^\S+ +tvs +a +SKIPPED +reason-1$/);
+    // The way out is a line of its own right before SKIPPED, with the columns of a line the kind says, never in the
+    // audit log.
+    assert.match(lines[skippedAt - 1], /^\S+ +tvs +a +way-out-1$/);
+    assert.equal(lines.filter((line) => line.includes('way-out-1')).length, 1);
+    assert.deepEqual(said(w, 'target_skipped'), ['a reason-1']);
+    assert.equal(fs.readFileSync(w.auditLog, 'utf8').includes('way-out-1'), false);
+    assert.equal(tunnelEvents(w).some((e) => e.includes(' open ')), false);
+    await noChildLeft(w);
+
+    // A route failure in the same trial still wins, and no way out is said.
+    const route = await tunnelWorld({ tvs: [A], extraEnv: { [FAIL_KEY]: '0' } });
+    const second = launch(route, { all: true });
+    await ready(second);
+    await stopWith(second);
+    assert.deepEqual(said(route, 'target_skipped'), ['a the route failed: channel 0: open failed: connect failed: Connection refused']);
+    assert.equal(second.proc.stderr.text.includes('way-out-1'), false);
+    await noChildLeft(route);
+  } finally {
+    streamKind.doctor = doctor;
+  }
+});
+
 test('a stop during the first-server phase closes what opened and opens no target', async () => {
   const w = await tunnelWorld({ tvs: [A, C], ssh: [], extraEnv: { [CHECK_MS_KEY]: '400' } });
   const run = launch(w, { all: true });
@@ -243,7 +281,7 @@ test('a stop during open: a kind with close is closed again, a kind without one 
   }
 });
 
-test('a dead shared connection makes its targets DOWN for good, and a call on one fails cleanly', async () => {
+test('a dead shared connection makes its targets DOWN, a call on one fails cleanly, and they stay DOWN', async () => {
   const w = await tunnelWorld({ tvs: [A], tvl: [B], extraEnv: { [HEALTH_KEY]: '200' } });
   const run = launch(w, { all: true });
   await ready(run);
@@ -256,21 +294,70 @@ test('a dead shared connection makes its targets DOWN for good, and a call on on
     const [socket] = tnlSockets(w.socketDir);
     fs.rmSync(path.join(w.socketDir, socket));
     await waitFor(() => said(w, 'target_down').length === 2, 10000, 'the DOWN lines');
-    assert.deepEqual(said(w, 'target_down'), [`a ${tunnelGoneText('bastion1')}`, `b ${tunnelGoneText('bastion1')}`]);
-    const refusal = 'the connection to this target is down until ksproxy start is run again';
+    // The health loop checks the targets one after another: it checks the shared connection, then asks the kind. When
+    // the socket goes, at most one target is between its check and its probe, so at most one DOWN line carries the
+    // kind's own text; the other carries the text of the lost connection.
+    const gone = tunnelGoneText('bastion1');
+    const downs = said(w, 'target_down');
+    assert.equal(downs.length, 2);
+    // The target in flight gets its line first, so the lines come in either order: each is found by its name.
+    const [ofA, ofB] = ['a ', 'b '].map((name) => downs.find((line) => line.startsWith(name)));
+    assert.ok(ofA === `a ${gone}` || ofA === 'a tvs is not answering', String(ofA));
+    assert.ok(ofB === `b ${gone}` || ofB === 'b tvl is not answering', String(ofB));
+    assert.ok(downs.includes(`a ${gone}`) || downs.includes(`b ${gone}`), 'at least one line names the lost connection');
+    const refusal = 'the connection to this target is down';
     for (const [tool, name] of [['tvs_read', 'a'], ['tvl_read', 'b']]) {
-      const answer = await callTool(tool, { target: name, command: 'read k1' }, w.env);
-      assert.deepEqual(answer, { text: `REFUSED (${tool.slice(0, 3)} ${name}): ${refusal}`, isError: true });
+      const refused = { text: `REFUSED (${tool.slice(0, 3)} ${name}): ${refusal}`, isError: true };
+      let answer;
+      const before = [];
+      await waitFor(async () => {
+        answer = await callTool(tool, { target: name, command: 'read k1' }, w.env);
+        if (answer.isError && answer.text === refused.text) return true;
+        before.push(answer);
+        return false;
+      }, 10000, `the refusal of a call on ${name}`);
+      assert.deepEqual(answer, refused);
+      assert.ok(before.every((seen) => seen.isError === true), `an answer before the refusal was not an error: ${JSON.stringify(before)}`);
     }
     const audited = auditEntries(w).filter((e) => e.event === 'call' && e.decision === 'refused');
     assert.deepEqual(audited.map((e) => [e.target, e.short, e.reason]), [['a', 'target down', refusal], ['b', 'target down', refusal]]);
-    // Even with the socket back, it stays down: three more checks of web1 pass and no target comes back.
-    fs.writeFileSync(path.join(w.socketDir, socket), '');
-    const checks = () => events(w).filter((e) => e === 'check web1.example.com').length;
+    // Nothing opens the connection again: three more health rounds fail their check of bastion1, the targets stay
+    // DOWN with no new line, and the first server was opened once.
+    const checks = () => events(w).filter((e) => e === 'check bastion1').length;
     const now = checks();
-    await waitFor(() => checks() >= now + 3, 10000, 'three more health checks');
+    await waitFor(() => checks() >= now + 6, 10000, 'three more health rounds');
     assert.deepEqual(said(w, 'target_recovered'), []);
     assert.equal(said(w, 'target_down').length, 2);
+    assert.equal(events(w).filter((e) => e === 'master bastion1').length, 1);
+    assert.deepEqual(tnlSockets(w.socketDir), []);
+  } finally {
+    await stopWith(run);
+  }
+  await noChildLeft(w);
+});
+
+test('a shared connection whose check fails once comes back: DOWN, then UP, and a call works again', async () => {
+  const w = await tunnelWorld({ tvl: [B], extraEnv: { [HEALTH_KEY]: '200' } });
+  const failOnce = path.join(w.base, 'fail-once');
+  w.env[CHECK_FAIL_KEY] = failOnce;
+  const run = launch(w, { all: true });
+  await ready(run);
+  try {
+    await waitFor(() => service.lines.filter((l) => l === 'PING').length >= 2, 10000, 'a probe through the tunnel');
+    // One check of bastion1 fails, with the master and its socket left as they are.
+    fs.writeFileSync(failOnce, 'bastion1');
+    await waitFor(() => said(w, 'target_recovered').length === 1, 10000, 'the UP line');
+    assert.equal(fs.existsSync(failOnce), false, 'the fake failed one check');
+    assert.deepEqual(said(w, 'target_down'), [`b ${tunnelGoneText('bastion1')}`]);
+    assert.deepEqual(said(w, 'target_recovered'), [`b ${listenerKind.backMessage}`]);
+    const lines = run.proc.stderr.text;
+    assert.ok(lines.indexOf('DOWN') < lines.lastIndexOf('UP'), 'the DOWN line comes before the UP line');
+    assert.match(lines, /tvl +b +UP +/);
+    // The gate of the listener opens again: a call goes through the loopback port.
+    const answer = await callTool('tvl_read', { target: 'b', command: 'read k1' }, w.env);
+    assert.equal(answer.isError, false);
+    assert.match(answer.text, /VALUE read k1/);
+    assert.equal(events(w).filter((e) => e === 'master bastion1').length, 1);
   } finally {
     await stopWith(run);
   }
@@ -406,4 +493,36 @@ test('doctor: a stop during the first-server phase, and a socket path that is to
   assert.equal(r.code, 1);
   assert.match(r.out, /sockets +FAIL +socket path too long \(94 bytes, limit 83\)/);
   assert.deepEqual(events(long), []);
+});
+
+test('doctor checks the socket path that start will use for a first server', async () => {
+  const name = 'orders-reporting-eu1';
+  const w = await tunnelWorld({ tvs: [A] });
+  delete w.env[PROJECT_KEY];
+  writeProject(w, name, { tvs: [A] });
+  // A root of 50 bytes: the doctor folder gives a socket of 74 bytes, the state folder of start one of 88.
+  w.env[STATE_KEY] = path.join(w.base, 'r'.repeat(50 - w.base.length - 1));
+  const r = await doctorOf(w, ['--project', name]);
+  assert.equal(r.code, 1);
+  const lines = r.out.split('\n').filter((line) => /sockets +FAIL/.test(line));
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /socket path too long \(88 bytes, limit 83\)/);
+  assert.ok(lines[0].includes(`/p/${name}/`));
+  // Doctor goes on: the route itself is checked in its own folder.
+  assert.match(r.out, /tvs +a +OK +PONG/);
+});
+
+test('doctor says each socket path message once for an ssh target and a tunnelled target', async () => {
+  const name = 'orders-reporting-eu1';
+  const w = await tunnelWorld({ tvs: [A], ssh: [] });
+  delete w.env[PROJECT_KEY];
+  writeProject(w, name, { ssh: [{ name: 'web1', host: 'web1.example.com', allow: ['read *'] }], tvs: [A] });
+  w.env[STATE_KEY] = path.join(w.base, 'r'.repeat(50 - w.base.length - 1));
+  const r = await doctorOf(w, ['--project', name]);
+  assert.equal(r.code, 1);
+  const lines = r.out.split('\n').filter((line) => /sockets +FAIL/.test(line));
+  assert.equal(lines.length, 2);
+  assert.match(lines[0], /socket path too long \(84 bytes, limit 83\).*ssh-web1/);
+  assert.match(lines[1], /socket path too long \(88 bytes, limit 83\)/);
+  assert.equal(new Set(lines).size, 2);
 });

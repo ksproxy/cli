@@ -73,6 +73,8 @@ function checkCaFile(entry, tls, where) {
   return file;
 }
 
+const caFileError = (file) => `caFile ${file} is not a file that can be read`;
+
 function isReadableFile(file) {
   try {
     fs.accessSync(file, fs.constants.R_OK);
@@ -82,8 +84,22 @@ function isReadableFile(file) {
   }
 }
 
+// The text in lower case without the names of the target (host, user, database) that hold the word certificate and are
+// longer than it, taken out as plain text, the longest first: a host such as certificate-db.internal must not look like
+// a word of the client. Every other name stays, so that a short name such as a or cert, or a name that is exactly the
+// word, cannot break a real failure.
+function withoutNames(text, target) {
+  const names = [target.host, target.user, target.database]
+    .filter((name) => typeof name === 'string' && BAD_CERT.test(name) && name.length > 'certificate'.length);
+  return names.sort((a, b) => b.length - a.length)
+    .reduce((rest, name) => rest.split(name.toLowerCase()).join(''), text.toLowerCase());
+}
+
 // Why a failed TLS check skips the target, from the client's standard error: { error, wayOut }, or null when the
-// failure is not about TLS. error is the short reason of the SKIPPED line; wayOut names the fields that fix it.
+// failure is not about TLS. error is the short reason of the SKIPPED line; wayOut names the fields that fix it. A text
+// that names a certificate counts only for verify: with require nothing checks one, so such a text (a client
+// certificate the server asks for, for example) is not a TLS failure. The word is looked for only after the names of the
+// target that hold the word and are longer than it (host, user, database) were taken out of the text, so that a host such as certificate-db.internal is not one.
 export function tlsFailure(text, target) {
   if (OLD_LIBPQ.test(text)) {
     return { error: 'this psql cannot use the system\'s CAs', wayOut: 'using the system\'s CAs needs libpq 16 or later; name the CA that signed the server\'s certificate in "caFile"' };
@@ -91,7 +107,7 @@ export function tlsFailure(text, target) {
   if (NO_TLS.test(text)) {
     return { error: 'the server does not offer TLS', wayOut: `"tls" is "${target.tls}", which needs TLS; set "tls" to "prefer" to connect without it` };
   }
-  if (!BAD_CERT.test(text)) return null;
+  if (target.tls !== 'verify' || !BAD_CERT.test(withoutNames(text, target))) return null;
   return {
     error: 'the server\'s TLS certificate did not verify',
     wayOut: target.caFile === null
@@ -101,7 +117,8 @@ export function tlsFailure(text, target) {
 }
 
 // The TLS check when a target opens: select 1 through the client and the settings of a call. Gives what tlsFailure
-// gives for a failure; any answer, any other failure, the time limit and a stop give null.
+// gives for a failure; any answer, any other failure, the time limit and a stop give null: the text of a client that
+// ran into the time limit or was stopped is never read.
 async function tlsCheck(spec, target, program, {
   env, secrets, signal, tunnel,
 }) {
@@ -111,7 +128,7 @@ async function tlsCheck(spec, target, program, {
   const result = await runClient({
     program, fixedArgs, words, env, childEnv, folderPaths, timeoutMs: TLS_CHECK_MS, maxBytes: DOCTOR_MAX_BYTES, signal,
   });
-  return result.exitCode === 0 ? null : tlsFailure(result.stderr, target);
+  return result.exitCode === 0 || result.timedOut ? null : tlsFailure(result.stderr, target);
 }
 
 // What open learned about the client and every call needs: the mysql family, when there is one.
@@ -119,20 +136,23 @@ const learnedOf = (opened) => (opened.family === undefined ? {} : { family: open
 
 // What the doctor check needs and the opened entry may lack: the trial of a tunnelled target runs before open, so the
 // entry has no program and no family. Finds them as open does: { program, learned } (learned holds the family, or
-// nothing), or { error } when the program cannot be found or its family cannot be learned. An entry that open made
-// has both, and nothing runs again.
+// nothing), { error } when the program cannot be found or the caFile cannot be read (the text of open, never a way
+// out), or { error, wayOut } when the family cannot be learned or does not fit the TLS mode; clientFamily is told
+// whether the entry has a tunnel. An entry that open made has both, and nothing runs or is checked again.
 async function clientOf(spec, opened, ctx) {
   let { program } = opened;
+  const { target } = opened;
   if (program === undefined) {
-    const resolved = resolveProgram(spec.program(opened.target, ctx.env), ctx.env);
+    const resolved = resolveProgram(spec.program(target, ctx.env), ctx.env);
     if (resolved.error !== undefined) return { error: resolved.error };
     ({ program } = resolved);
+    if (target.caFile !== null && !isReadableFile(target.caFile)) return { error: caFileError(target.caFile) };
   }
-  if (opened.family !== undefined || opened.target.tls === 'prefer' || spec.clientFamily === undefined) {
+  if (opened.family !== undefined || target.tls === 'prefer' || spec.clientFamily === undefined) {
     return { program, learned: learnedOf(opened) };
   }
-  const learned = await spec.clientFamily(opened.target, program, ctx);
-  return learned.error === undefined ? { program, learned } : { error: learned.error };
+  const learned = await spec.clientFamily(target, program, { ...ctx, tunnel: opened.tunnel });
+  return learned.error === undefined ? { program, learned } : learned;
 }
 
 const tlsText = (target) => `TLS ${target.tls}${target.caFile === null ? '' : ' with caFile'}`;
@@ -252,7 +272,7 @@ export function sqlServiceKind(spec) {
       const { program } = resolved;
       if (target.tls === 'prefer') return { ok: true, extras: { program } };
       if (target.caFile !== null && !isReadableFile(target.caFile)) {
-        return { ok: false, error: `caFile ${target.caFile} is not a file that can be read` };
+        return { ok: false, error: caFileError(target.caFile) };
       }
       const learned = spec.clientFamily === undefined ? {} : await spec.clientFamily(target, program, ctx);
       const failure = learned.error === undefined ? await tlsCheck(spec, { ...target, ...learned }, program, ctx) : learned;
@@ -298,10 +318,15 @@ export function sqlServiceKind(spec) {
     },
     // The doctor check: select 1 through the same client and invocation as a call, through the tunnel when the entry has
     // one. The program and the family come from open, or are found here for the entry of the trial, which has none.
+    // A failure that open's TLS check would name, or a family that open would refuse, gives open's reason as detail
+    // and its way out as wayOut, so that the trial of a tunnelled target says what an untunnelled one says. A client
+    // that ran into the time limit or was stopped gets the usual verdict.
     async doctor(opened, ctx) {
       const { secrets, timeoutMs, signal } = ctx;
       const client = await clientOf(spec, opened, ctx);
-      if (client.error !== undefined) return { ok: false, detail: client.error };
+      if (client.error !== undefined) {
+        return { ok: false, detail: client.error, ...(client.wayOut === undefined ? {} : { wayOut: client.wayOut }) };
+      }
       const target = { ...opened.target, ...client.learned };
       const {
         fixedArgs, words, childEnv, folderPaths,
@@ -309,6 +334,8 @@ export function sqlServiceKind(spec) {
       const result = await runClient({
         program: client.program, fixedArgs, words, env: ctx.env, childEnv, folderPaths, timeoutMs, maxBytes: DOCTOR_MAX_BYTES, signal,
       });
+      const failure = result.exitCode === 0 || result.timedOut || target.tls === 'prefer' ? null : tlsFailure(result.stderr, target);
+      if (failure !== null) return { ok: false, detail: failure.error, wayOut: failure.wayOut };
       return clientVerdict(result, {
         name: spec.word, describe: () => 'select 1 answered', hidden: hiddenOf(secrets, spec.printedForms(secrets[target.passwordEnv])), signal,
       });
